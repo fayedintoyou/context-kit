@@ -94,7 +94,8 @@ test('context excludes inbox unless requested; stdin capture is searchable and l
   assert.deepEqual((await cli(['--root', workspace, 'search', 'zebra'])).json.results, []);
   const found = await cli(['--root', workspace, 'search', 'zebra', '--inbox']);
   assert.equal(found.json.results.length, 1);
-  assert.equal(found.json.results[0].status, 'unreviewed');
+  assert.equal(found.json.results[0].inbox, true);
+  assert.equal(found.json.results[0].curated, false);
   assert.equal(found.json.results[0].path, captured.json.path.replace('hubs/personal/', ''));
   assert.equal((await cli(['--root', workspace, 'validate'])).code, 0);
 
@@ -258,7 +259,7 @@ test('context reports OKF trust and staleness', async t => {
   assert.equal(okf['offsetless.md'].stale, false);
   assert.ok(result.json.warnings.some(warning => /offsetless\.md: stale_after needs .*UTC offset/.test(warning)));
   const found = await cli(['--root', workspace, 'search', 'zanzibar']);
-  assert.equal(found.json.results[0].status, 'curated');
+  assert.equal(found.json.results[0].curated, true);
   assert.equal(found.json.results[0].okf.trust, 'human-reviewed');
 });
 

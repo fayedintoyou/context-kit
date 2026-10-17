@@ -29,8 +29,12 @@ node bin/hub.mjs validate
 npm test
 ```
 
-Output is JSON. `context` returns the explicitly listed documents in manifest
-order. It does not perform semantic retrieval, execute instructions, fetch remote
+Output is JSON. `context` returns a hub's curated starting documents in manifest
+order. To explore further, browse progressively: `browse <hub-id> [directory]`
+lists one directory (concepts with OKF type, title, description and trust, plus
+subdirectories and the index), and `read <hub-id> <concept-id>` opens one concept
+with its outgoing links classified, so you follow only what you need. `search`
+covers every concept. It does not perform semantic retrieval, execute instructions, fetch remote
 sources, or include linked hubs automatically. Commands work from any directory.
 
 ## Your own workspace

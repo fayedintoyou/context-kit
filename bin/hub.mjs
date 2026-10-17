@@ -8,13 +8,15 @@ const help = `Usage: node bin/hub.mjs [--root <directory>] <command>
   init <new-directory> [--kit <npm-spec>]
   list | validate
   context <hub-id> [--inbox]
+  browse <hub-id> [directory] [--offset <n>] [--inbox]
+  read <hub-id> <concept-id> [--frontmatter] [--inbox]
   search <text> [--inbox]
   read-skill <hub-id> <reference>
   capture <hub-id> <title> [--by <actor>]   (UTF-8 body on stdin)
   specs stores | specs list | specs read <spec-id> | specs audit   [--store <id>]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
-  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--help']);
+  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--help']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
     const [command, ...args] = positional;
@@ -25,9 +27,11 @@ try {
     } else {
       if (options['--kit']) fail('INVALID_INPUT', '--kit applies only to init');
       if (options['--by'] && command !== 'capture') fail('INVALID_INPUT', '--by applies only to capture');
+      if (options['--offset'] !== undefined && command !== 'browse') fail('INVALID_INPUT', '--offset applies only to browse');
+      if (options['--frontmatter'] && command !== 'read') fail('INVALID_INPUT', '--frontmatter applies only to read');
       const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', actor: options['--by'] || KIT_ACTOR, allowWrite: true };
-      const count = { list: 0, validate: 0, context: 1, search: 1, 'read-skill': 2, capture: 2 };
-      if (options['--inbox'] && !['context', 'search'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context/search');
+      const count = { list: [0], validate: [0], context: [1], browse: [1, 2], read: [2], search: [1], 'read-skill': [2], capture: [2] };
+      if (options['--inbox'] && !['context', 'search', 'browse', 'read'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context, search, browse and read');
       if (options['--store'] && (command !== 'specs' || args[0] === 'stores')) fail('INVALID_INPUT', '--store applies only to specs list/read/audit');
       const store = options['--store'] ? { store: options['--store'] } : {};
       if (command === 'specs') {
@@ -37,11 +41,16 @@ try {
         else if (args[0] === 'read' && args.length === 2) result = await execute(selection, 'read_spec', { id: args[1], ...store });
         else fail('INVALID_INPUT', help);
       } else {
-        if (!Object.hasOwn(count, command) || args.length !== count[command]) fail('INVALID_INPUT', help);
+        if (!Object.hasOwn(count, command) || !count[command].includes(args.length)) fail('INVALID_INPUT', help);
         const includeInbox = Boolean(options['--inbox']);
         if (command === 'list') result = await execute(selection, 'list_hubs');
         if (command === 'validate') result = await execute(selection, 'validate_hubs');
         if (command === 'context') result = await execute(selection, 'get_context', { id: args[0], includeInbox });
+        if (command === 'browse') {
+          const offset = options['--offset'] === undefined ? 0 : Number(options['--offset']);
+          result = await execute(selection, 'browse_hub', { id: args[0], path: args[1] ?? '', offset, includeInbox });
+        }
+        if (command === 'read') result = await execute(selection, 'read_concept', { id: args[0], concept: args[1], frontmatter: Boolean(options['--frontmatter']), includeInbox });
         if (command === 'search') result = await execute(selection, 'search_context', { query: args[0], includeInbox });
         if (command === 'read-skill') result = await execute(selection, 'read_skill', { id: args[0], reference: args[1] });
         if (command === 'capture') {
