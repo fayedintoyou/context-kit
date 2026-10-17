@@ -19,10 +19,12 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   skills | addons
   read-skill <hub-id> <reference> [--file <path>]
   capture <hub-id> <title> [--by <actor>]   (UTF-8 body on stdin)
-  specs stores | specs list | specs read <spec-id> | specs audit   [--store <id>]
+  repos add <hub-id> [<upstream>] [--path <checkout>] [--alias a,b] [--title <t>] [--concept <id>] [--description <d>]
+  repos | repos locate <repo> <path> | repos clone <repo> [<path>] | repos scan <directory> | repos sync
+  specs stores | specs list | specs read <spec-id> | specs audit | specs garden   [--store <id>]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
-  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--allow-write', '--global-mcp', '--name', '--help']);
+  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--allow-write', '--global-mcp', '--name', '--help', '--path', '--alias', '--title', '--concept', '--description']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
     const [command, ...args] = positional;
@@ -48,18 +50,32 @@ try {
       else fail('INVALID_INPUT', help);
     } else {
       if (options['--kit']) fail('INVALID_INPUT', '--kit applies only to init');
-      if (options['--by'] && command !== 'capture') fail('INVALID_INPUT', '--by applies only to capture');
+      if (options['--by'] && command !== 'capture' && !(command === 'repos' && args[0] === 'add')) fail('INVALID_INPUT', '--by applies only to capture and repos add');
       if (options['--offset'] !== undefined && command !== 'browse') fail('INVALID_INPUT', '--offset applies only to browse');
       if (options['--frontmatter'] && command !== 'read') fail('INVALID_INPUT', '--frontmatter applies only to read');
       if (options['--file'] && command !== 'read-skill') fail('INVALID_INPUT', '--file applies only to read-skill');
       const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', actor: options['--by'] || KIT_ACTOR, allowWrite: true };
       const count = { help: [0, 1], addons: [0], skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [2], search: [1], 'read-skill': [2], capture: [2] };
       if (options['--inbox'] && !['context', 'search', 'browse', 'read'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context, search, browse and read');
-      if (options['--store'] && (command !== 'specs' || args[0] === 'stores')) fail('INVALID_INPUT', '--store applies only to specs list/read/audit');
+      if (options['--store'] && (command !== 'specs' || args[0] === 'stores')) fail('INVALID_INPUT', '--store applies only to specs list/read/audit/garden');
       const store = options['--store'] ? { store: options['--store'] } : {};
-      if (command === 'specs') {
+      const addFlags = ['--path', '--alias', '--title', '--concept', '--description'];
+      if (addFlags.some(flag => options[flag]) && !(command === 'repos' && args[0] === 'add')) fail('INVALID_INPUT', `${addFlags.join(', ')} apply only to repos add`);
+      if (command === 'repos') {
+        if (args[0] === 'add' && [2, 3].includes(args.length)) {
+          const fields = { id: args[1], ...(args[2] ? { upstream: args[2] } : {}), aliases: list(options['--alias']) ?? [],
+            ...Object.fromEntries(['title', 'concept', 'description'].filter(key => options[`--${key}`]).map(key => [key, options[`--${key}`]])) };
+          result = options['--path'] ? await execute(selection, 'add_repo_checkout', { ...fields, path: options['--path'] }) : await execute(selection, 'add_repo', fields);
+        } else if (args.length === 0) result = await execute(selection, 'list_repos');
+        else if (args[0] === 'locate' && args.length === 3) result = await execute(selection, 'locate_repo', { repository: args[1], path: args[2] });
+        else if (args[0] === 'clone' && [2, 3].includes(args.length)) result = await execute(selection, 'clone_repo', { repository: args[1], ...(args[2] ? { path: args[2] } : {}) });
+        else if (args[0] === 'sync' && args.length === 1) result = await execute(selection, 'sync_repos');
+        else if (args[0] === 'scan' && args.length === 2) result = await execute(selection, 'scan_repos', { directory: args[1] });
+        else fail('INVALID_INPUT', help);
+      } else if (command === 'specs') {
         if (args[0] === 'stores' && args.length === 1) result = await execute(selection, 'list_spec_stores');
         else if (args[0] === 'list' && args.length === 1) result = await execute(selection, 'list_specs', store);
+        else if (args[0] === 'garden' && args.length === 1) result = await execute(selection, 'garden_specs', store);
         else if (args[0] === 'audit' && args.length === 1) result = await execute(selection, 'audit_specs', store);
         else if (args[0] === 'read' && args.length === 2) result = await execute(selection, 'read_spec', { id: args[1], ...store });
         else fail('INVALID_INPUT', help);

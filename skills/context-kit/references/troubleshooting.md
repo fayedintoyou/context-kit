@@ -18,6 +18,11 @@
 | `WRONG_SPEC_ROOT`, `ADAPTER_FAILED`, `ADAPTER_FORMAT` | OpenSpec resolved another root or failed; check the repository and stores |
 | `SNAPSHOT_CHANGED` | Files changed during an audit; rerun on a stable tree |
 | `DUPLICATE_REQUIREMENT` | A spec repeats a requirement name |
+| `INVALID_REPOSITORY` | A Repository concept lacks a git `resource`, has bad `aliases`, or shares an alias (see `repositories`) |
+| `UNKNOWN_REPOSITORY`, `AMBIGUOUS_REPOSITORY` | No repository, or more than one, has that name; use `repos` and the id |
+| `NOT_A_CHECKOUT`, `REMOTE_MISMATCH` | `repos locate` needs the top of a git checkout whose remote is the upstream |
+| `REPOSITORY_EXISTS`, `CONCEPT_EXISTS` | `repos add` found the upstream, an alias or the concept already in use |
+| `DESTINATION_EXISTS`, `CLONE_FAILED` | `repos clone` needs a new path and a reachable upstream |
 
 ## Common problems
 
@@ -27,5 +32,8 @@
   `agents install`.
 - **Install reports a conflict**: a skill or MCP server with that name already
   exists and is not Context Kit's. Remove it, rename with `--name`, or `--force`.
+- **my-repos misses a repository after a pull**: the workspace wasn't a git
+  checkout when you installed, or a hook you wrote was kept. Check `agents status`,
+  run `agents install` again, and `repos sync`.
 - **Claude Code rejects a server name**: some names are reserved; pass `--name`.
 - **`ls -t` fails**: your `ls` may be aliased; use `/bin/ls`.

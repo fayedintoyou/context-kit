@@ -18,12 +18,19 @@ CLI: `context-kit [--root <dir>] <command>`; inside a workspace, `npm run hub --
 | `read <hub> <concept-id>` | `read_concept` | One concept (`--frontmatter`, `--inbox`) |
 | `search <text>` | `search_context` | Text across concepts (`--inbox`) |
 | `capture <hub> <title>` | `capture_note` | New unreviewed note from stdin (`--by`) |
+| `repos add <hub> [<upstream>]` | `add_repo` | Registers a repository in a hub (`--path`, `--alias`, `--title`, `--concept`, `--description`); MCP needs `--allow-write` and takes no path |
+| `repos` | `list_repos` | Registered repositories and local checkouts |
+| `repos locate <repo> <path>` | | Records an existing checkout (CLI only) |
+| `repos clone <repo> [<path>]` | | Clones and records a repository (CLI only) |
+| `repos scan <directory>` | | Records matching checkouts one level deep (CLI only) |
+| `repos sync` | | Rebuilds the `my-repos` skill from Repository concepts (CLI only) |
 | `skills` | `list_skills` | Declared skills |
 | `read-skill <hub> <reference>` | `read_skill` | A skill or its files (`--file`) |
 | `specs stores` | `list_spec_stores` | Readable shared stores (specs addon) |
 | `specs list` | `list_specs` | Canonical specs (`--store`) |
 | `specs read <id>` | `read_spec` | One spec (`--store`) |
 | `specs audit` | `audit_specs` | Structural audit (`--store`) |
+| `specs garden` | `garden_specs` | Spec gardening signals (`--store`) |
 
 MCP server: `context-kit-mcp --root <workspace> [--allow-write] [--no-skill-prompts]`
 (`npm run mcp` in a workspace). Its root is fixed at startup; tools cannot change it.
