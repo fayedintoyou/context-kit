@@ -476,7 +476,9 @@ test('store slices must name a declared party and repository slices none', async
     }
     const [embed] = (await cli('specs', 'archivable', '--store', 'shared')).changes;
     assert.equal(embed.plan, 'invalid');
-    assert.ok(embed.blockers.some(blocker => message.test(blocker.message ?? '')), JSON.stringify(embed));
+    const invalid = embed.blockers.find(blocker => blocker.code === 'invalid_plan');
+    assert.equal(invalid?.error.code, 'INVALID_CONFIG', JSON.stringify(embed));
+    assert.match(invalid.error.message, message);
   }
   // A malformed repo names its slice.
   for (const [value, slice] of [['Mobile', 'api'], ['null', 'api'], ['""', 'api']]) {
