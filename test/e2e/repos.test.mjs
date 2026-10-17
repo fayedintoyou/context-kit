@@ -178,6 +178,21 @@ test('the routing skill gives the exact commands for a missing checkout', async 
   assert.ok(text.includes('repos locate personal/main/room <path>'));
 });
 
+// spec: repository-registry / Workflow guidance before changes
+test('the routing skill tells agents to read each repository\'s instructions before changing it', async t => {
+  const { workspace, cli, register } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await register('personal', 'kit', { title: 'the kit', resource: 'https://github.com/me/kit' });
+  await cli('agents', 'status');
+  const text = await readFile(join(workspace, '.state/generated/my-repos/SKILL.md'), 'utf8');
+  const section = text.slice(text.indexOf('## Before changing a repository'));
+  assert.ok(section.length < text.length, 'has a before-changing section');
+  assert.match(section, /`AGENTS\.md` \(or `CLAUDE\.md`\)/);
+  const read = `cd ${JSON.stringify(workspace)} && npm run -s hub -- read personal/main`;
+  assert.ok(section.includes(`${read} room\``));
+  assert.ok(section.includes(`${read} kit\``));
+});
+
 // spec: repository-registry / No repositories
 test('a workspace without repositories generates no routing skill', async t => {
   const { workspace, cli } = await fixture(t);
