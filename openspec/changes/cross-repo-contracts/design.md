@@ -50,8 +50,10 @@
 
 3. **Party matching uses every remote.** A checkout's `origin` may be SSH while the
    party uses HTTPS. A fork's `upstream` remote may be the party. Matching any remote
-   through `normalizeUpstream` covers both. Two parties can't share an upstream, so a
-   match is unambiguous.
+   through `normalizeUpstream` covers both. Two parties can't share an upstream, so
+   each remote matches at most one party. A checkout with remotes matching two parties
+   of one contract plays the first of them in the contract's listed order, as
+   documented. A remote that doesn't normalize is skipped without hiding the others.
 
 ## Risks / Trade-offs
 

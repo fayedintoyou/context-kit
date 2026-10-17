@@ -12,5 +12,5 @@ upstreams. No network.
 
 ## 2. Slice `contract-labels`
 
-- [ ] 2.1 Add `contract` to store `list_specs`/`read_spec` results, and `party` to referenced-store specs in repository listings, matched against all of the repository's remotes. Link `test/e2e/specs.test.mjs` to "Contract lists its parties" and "A repository sees its contracts"
-- [ ] 2.2 Document contract labels and `party` in `skills/context-kit/references/specs.md`, then run `node bin/hub.mjs validate` and `npm test` (all green, every scenario linked)
+- [x] 2.1 Add `contract` to store `list_specs`/`read_spec` results, and `party` to referenced-store specs in repository listings, matched against all of the repository's remotes. Link `test/e2e/specs.test.mjs` to "Contract lists its parties" and "A repository sees its contracts"
+- [x] 2.2 Document contract labels and `party` in `skills/context-kit/references/specs.md`, then run `node bin/hub.mjs validate` and `npm test` (all green, every scenario linked)

@@ -96,8 +96,10 @@ contracts:
 ```
 
 A contract names a canonical spec or one an active change of the store adds.
-Only stores declare parties; a repository's own `openspec/` has none. See the
-`specs` help topic.
+Store spec listings and reads label each spec with `contract` (its parties, or
+null), and a repository listing a referenced store adds `party`, the party whose
+upstream matches one of its git remotes, or null. Only stores declare parties; a
+repository's own `openspec/` has none. See the `specs` help topic.
 
 Paths must resolve inside their allowed root, including through symlinks. IDs use
 lowercase letters, digits, hyphens and slash-separated segments. Unknown manifest
