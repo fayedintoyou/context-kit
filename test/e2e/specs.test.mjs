@@ -443,6 +443,15 @@ test('a repository listing names the party it plays in each referenced contract'
   await git('remote', 'set-url', 'origin', 'git@github.com:someone/fork.git');
   await git('remote', 'add', 'upstream', game + '.git');
   assert.deepEqual(await labels(), [{ ...embedding, party: 'game' }, { ...format, party: 'game' }, auth]);
+  // A malformed remote is skipped without hiding the others.
+  await git('remote', 'add', 'unrelated', 'file:///tmp/%ZZ');
+  assert.deepEqual(await labels(), [{ ...embedding, party: 'game' }, { ...format, party: 'game' }, auth]);
+  // Remotes matching two parties of one contract play the first in its listed order.
+  await git('remote', 'set-url', 'origin', site);
+  assert.deepEqual(await labels(), [{ ...embedding, party: 'site' }, { ...format, party: 'game' }, auth]);
+  await writeFile(join(store, 'openspec/parties.yaml'),
+    partiesFile({ 'game-embedding': ['game', 'site'], 'level-format': ['game', 'editor'] }, { site, game, editor }));
+  assert.deepEqual((await labels())[0], { id: 'game-embedding', contract: { parties: ['game', 'site'] }, party: 'game' });
 
   // A referenced store's broken parties file is a warning, not a failure of this listing.
   await writeFile(join(store, 'openspec/parties.yaml'), partiesFile({ 'game-embedding': ['site', 'web'] }));

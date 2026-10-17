@@ -54,7 +54,11 @@ when the parties file names it, otherwise `contract: null`. When a repository's
 `specs list` includes a referenced store, each of that store's specs also
 carries `party`: the contract party whose upstream matches any of the
 repository's git remotes (SSH and HTTPS forms match), or `null` when it plays
-none, isn't a git checkout, or the spec is no contract (`contract: null`). The
+none, isn't a git checkout, or the spec is no contract (`contract: null`). When
+its remotes match more than one party of a contract (say `origin` is one party
+and `upstream` another), it plays the first of them in the contract's listed
+order. Remotes come from the git checkout containing the repository, which for
+an OpenSpec root nested in a larger repository is the outer one. The
 repository's own specs carry neither field.
 
 An invalid file (bad YAML, party name or upstream, a shared upstream, an
