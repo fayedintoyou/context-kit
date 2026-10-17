@@ -48,6 +48,13 @@ processes, `<producer>/<version>` for agents and tools. Link concepts with
 ordinary Markdown links; root-relative links (`/preferences.md`) are stable when
 files move. Broken links, unknown types and extra keys are allowed.
 
+A concept with `type: Repository` registers one of your repositories. Its
+`resource` must be the git upstream (`https://github.com/<owner>/<name>`, an SSH
+URL, or `file://` for a local one) and optional `aliases` lists other names for it.
+`validate` rejects a Repository without a git upstream, with `aliases` that is not
+a list of names, or sharing an alias or title with another. Local checkout paths
+are never stored in hubs (see the `repositories` help topic).
+
 `index.md` files carry no frontmatter, except `okf_version` in the hub-root index.
 Every `##` heading in a `log.md` is a `YYYY-MM-DD` date.
 

@@ -57,7 +57,7 @@ through each agent's own CLI.
 | Addon | Gives you |
 |---|---|
 | `core` (always) | OKF hubs, progressive `browse`/`read`, `search`, `capture`, skills |
-| `specs` | OpenSpec specs from repositories and shared stores, structural audits, the audit skill |
+| `specs` | OpenSpec specs from repositories and shared stores, structural audits, gardening signals and review skills |
 | `reflect` | Turn a conversation's learnings into reviewed edits on skills and hubs |
 | `review` | Independent plan and output review |
 
@@ -102,13 +102,16 @@ client over stdio. The root is fixed at startup. Capture is offered only with
 
 ## Specs
 
-`specs list|read <id>|audit` read a repository's canonical OpenSpec specs through
+`specs list|read <id>|audit|garden` read a repository's canonical OpenSpec specs through
 the pinned OpenSpec CLI. Pending change deltas are not canonical. Specs may also
 live in a shared OpenSpec store used across repositories: `specs stores` lists the
 stores hubs declare, and `--store <id>` reads one. A repository's own listing and
 audit also show stores it references, kept separate. Audits are structural;
 [audit-canonical-specs](skills/audit-canonical-specs/SKILL.md) describes the
-evidence-based semantic review.
+evidence-based semantic review. `specs garden` reports size, history, locks,
+lexical overlap, trace and optional taxonomy checks;
+[garden-canonical-specs](skills/garden-canonical-specs/SKILL.md) investigates those
+signals and proposes one maintenance change for review.
 
 ## Contribute
 
@@ -128,7 +131,8 @@ files. The MCP server also offers every declared skill as a prompt, so a client
 can invoke it directly; Claude Code shows them as `/mcp__<server>__<skill>`.
 
 Bundled skills: `context-kit` (help for using Context Kit, always installed), `independent-review` (plan and output review),
-`audit-canonical-specs` (evidence-based spec audits) and `reflect` (three
+`audit-canonical-specs` (evidence-based spec audits), `garden-canonical-specs`
+(spec maintenance proposals) and `reflect` (three
 parallel reviewers turn a conversation's learnings into proposed edits on skills
 and hub knowledge, applied only after approval). Improve them with `reflect`
 itself.

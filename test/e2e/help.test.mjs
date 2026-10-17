@@ -32,7 +32,7 @@ test('help lists and shows topics over CLI and MCP, even with broken addon confi
   const { env, root, cli } = await workspace(t);
   const listed = await cli('help');
   assert.deepEqual(listed.json.topics.map(topic => topic.topic), ['addons-and-install', 'capturing', 'commands', 'getting-started',
-    'knowledge', 'navigating', 'skills', 'specs', 'troubleshooting']);
+    'knowledge', 'navigating', 'repositories', 'skills', 'specs', 'troubleshooting']);
   assert.ok(listed.json.topics.every(topic => topic.title && topic.summary));
   const shown = await cli('help', 'getting-started');
   assert.equal(shown.json.content, await readFile(join(references, 'getting-started.md'), 'utf8'));

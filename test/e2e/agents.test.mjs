@@ -61,7 +61,7 @@ test('install puts enabled skills and the MCP server into both agents', async t 
   const installed = await agents('install');
   assert.equal(installed.code, 0, JSON.stringify(installed.error));
   for (const [dir, agent] of [[join(base, 'claude/skills'), 'claude'], [join(base, 'codex/skills'), 'codex']]) {
-    assert.deepEqual((await readdir(dir)).sort(), ['audit-canonical-specs', 'context-kit', 'independent-review', 'reflect'], agent);
+    assert.deepEqual((await readdir(dir)).sort(), ['audit-canonical-specs', 'context-kit', 'garden-canonical-specs', 'independent-review', 'reflect'], agent);
   }
   assert.match(await readFile(join(base, 'claude/skills/reflect/SKILL.md'), 'utf8'), /^disable-model-invocation: true$/m);
   const codexReflect = await readFile(join(base, 'codex/skills/reflect/SKILL.md'), 'utf8');
@@ -75,7 +75,7 @@ test('install puts enabled skills and the MCP server into both agents', async t 
     ['claude', ['mcp', 'add', '-s', 'user', 'context-workspace', '--', ...server]],
     ['codex', ['mcp', 'add', 'context-workspace', '--', ...server]]]);
   const status = await agents('status');
-  assert.equal(status.json.items.length, 10);
+  assert.equal(status.json.items.length, 12);
   assert.ok(status.json.items.every(item => item.state === 'installed'), JSON.stringify(status.json.items));
 
   const again = await agents('install');
@@ -217,7 +217,159 @@ test('setup creates a pinned instance and installs it into agents', async t => {
   assert.deepEqual(JSON.parse(await readFile(join(target, 'package.json'), 'utf8')).dependencies, { 'context-kit': `file:${kit}` });
   assert.deepEqual(JSON.parse(await readFile(join(target, 'context-kit.json'), 'utf8')).addons, ['reflect']);
   assert.deepEqual((await readdir(join(base, 'claude/skills'))).sort(), ['context-kit', 'reflect']);
-  assert.deepEqual(result.json.agents.results.map(item => `${item.kind}:${item.name}:${item.action}`), ['skill:context-kit:installed', 'skill:reflect:installed', 'mcp:my-context:installed']);
+  assert.deepEqual(result.json.agents.results.map(item => `${item.kind}:${item.name}:${item.action}`), ['skill:context-kit:installed', 'skill:reflect:installed', 'mcp:my-context:installed',
+    'hook:post-merge:skipped', 'hook:post-rewrite:skipped']);
   const add = (await calls()).find(call => call.args.includes('add') && call.args.includes('my-context'));
   assert.ok(add.args.includes(join(target, 'node_modules/context-kit/bin/mcp.mjs')) || add.args.includes(join(kit, 'bin/mcp.mjs')));
+});
+
+const repository = (workspace, name, fields) => writeFile(join(workspace, 'hubs/personal', `${name}.md`),
+  `---\ntype: Repository\n${Object.entries(fields).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n')}\n---\n\n# ${name}\n`);
+async function gitCheckout(path, origin) {
+  await mkdir(path, { recursive: true });
+  await promisify(execFile)('git', ['init', '-q'], { cwd: path });
+  await promisify(execFile)('git', ['remote', 'add', 'origin', origin], { cwd: path });
+  return realpath(path);
+}
+
+// spec: agent-installation / Install the routing skill
+test('install copies the generated my-repos skill into both agents, even with --link', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room', aliases: ['fayelore.com'] });
+  const installed = await agents('install', '--link');
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  for (const agent of ['claude', 'codex']) {
+    const path = join(base, agent, 'skills/my-repos');
+    assert.equal((await lstat(path)).isSymbolicLink(), false, agent);
+    assert.match(await readFile(join(path, 'SKILL.md'), 'utf8'), /^name: my-repos$/m);
+  }
+  const status = await agents('status');
+  assert.deepEqual(status.json.items.filter(item => item.name === 'my-repos').map(item => [item.agent, item.mode, item.state]),
+    [['claude', 'copy', 'installed'], ['codex', 'copy', 'installed']]);
+});
+
+// spec: agent-installation / Last repository removed
+test('reinstalling after the last repository is gone removes my-repos', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await agents('install');
+  assert.ok(await exists(join(base, 'claude/skills/my-repos')));
+  await rm(join(workspace, 'hubs/personal/room.md'));
+  const again = await agents('install');
+  assert.equal(byAction(again.json.results)['claude:skill:my-repos'], 'removed');
+  assert.equal(await exists(join(base, 'claude/skills/my-repos')), false);
+  assert.equal(await exists(join(base, 'codex/skills/my-repos')), false);
+});
+
+// spec: agent-installation / Pulled hub changes
+test('status reports my-repos stale after a new repository arrives, and install updates it', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await agents('install');
+  await repository(workspace, 'garden', { title: 'the garden', resource: 'https://github.com/me/garden' });
+  const stale = await agents('status');
+  assert.deepEqual(stale.json.items.filter(item => item.name === 'my-repos').map(item => item.state), ['stale', 'stale']);
+  await agents('install');
+  assert.match(await readFile(join(base, 'codex/skills/my-repos/SKILL.md'), 'utf8'), /the garden/);
+  assert.ok((await agents('status')).json.items.every(item => item.state === 'installed'));
+});
+
+// spec: agent-installation / Locating refreshes the skill
+test('locating a repository updates installed copies without reinstalling', async t => {
+  const { base, workspace, run, agents, calls } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await agents('install');
+  // An edited copy is left alone and reported.
+  await writeFile(join(base, 'codex/skills/my-repos/SKILL.md'), 'mine\n');
+  const before = (await calls()).length;
+  const path = await gitCheckout(join(base, 'room'), 'https://github.com/me/room');
+  const located = await run(['--root', workspace, 'repos', 'locate', 'room', path]);
+  assert.equal(located.code, 0, JSON.stringify(located.error));
+  assert.deepEqual(byAction(located.json.skills), { 'claude:skill:my-repos': 'updated', 'codex:skill:my-repos': 'conflict' });
+  assert.ok((await readFile(join(base, 'claude/skills/my-repos/SKILL.md'), 'utf8')).includes(`https://github.com/me/room at ${path}`));
+  assert.equal(await readFile(join(base, 'codex/skills/my-repos/SKILL.md'), 'utf8'), 'mine\n');
+  assert.equal((await calls()).length, before, 'no agent CLI calls');
+});
+
+// spec: agent-installation / Sync after editing repositories
+test('repos sync rebuilds my-repos from the Repository concepts without touching MCP', async t => {
+  const { base, workspace, run, agents, calls } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room', aliases: ['room'] });
+  await agents('install');
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room', aliases: ['room', 'fayelore.com'] });
+  const before = (await calls()).length;
+  const synced = await run(['--root', workspace, 'repos', 'sync']);
+  assert.equal(synced.code, 0, JSON.stringify(synced.error));
+  assert.deepEqual(byAction(synced.json.results), { 'claude:skill:my-repos': 'updated', 'codex:skill:my-repos': 'updated' });
+  for (const agent of ['claude', 'codex']) {
+    assert.match((await readFile(join(base, agent, 'skills/my-repos/SKILL.md'), 'utf8')).split('\n---')[0], /^description: .*fayelore\.com/m, agent);
+  }
+  assert.equal((await calls()).length, before, 'no agent CLI calls');
+  assert.ok((await agents('status')).json.items.every(item => item.state === 'installed'));
+});
+
+// spec: agent-installation / Sync before any install
+test('repos sync before any install renders the skill and says to install', async t => {
+  const { workspace, run } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const synced = await run(['--root', workspace, 'repos', 'sync']);
+  assert.equal(synced.code, 0, JSON.stringify(synced.error));
+  assert.deepEqual(synced.json.results, []);
+  assert.match(synced.json.next, /agents install/);
+  assert.match(await readFile(synced.json.skill, 'utf8'), /^name: my-repos$/m);
+});
+
+// A workspace that is a git checkout tracking a bare remote, plus a second clone that
+// stands in for another machine pushing hub changes.
+async function gitWorkspace(base, workspace) {
+  const git = (cwd, ...args) => promisify(execFile)('git', args, { cwd, env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+  await git(workspace, 'init', '-q', '-b', 'main');
+  await git(workspace, 'add', '-A');
+  await git(workspace, 'commit', '-qm', 'workspace');
+  const remote = join(base, 'remote.git');
+  await git(base, 'clone', '-q', '--bare', workspace, remote);
+  await git(workspace, 'remote', 'add', 'origin', remote);
+  await git(workspace, 'fetch', '-q', 'origin');
+  await git(workspace, 'branch', '-q', '--set-upstream-to', 'origin/main');
+  const other = join(base, 'other');
+  await git(base, 'clone', '-q', remote, other);
+  return { git, other };
+}
+
+// spec: agent-installation / A pull rebuilds the skill
+test('a pull that brings a new repository rebuilds the installed my-repos skill', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const { git, other } = await gitWorkspace(base, workspace);
+  const installed = await agents('install');
+  assert.deepEqual(installed.json.results.filter(item => item.kind === 'hook').map(item => [item.name, item.action]), [['post-merge', 'installed'], ['post-rewrite', 'installed']]);
+  assert.match(await readFile(join(workspace, '.git/hooks/post-merge'), 'utf8'), /repos sync/);
+  // Elsewhere, someone registers a repository and pushes; here, a plain pull.
+  await repository(other, 'garden', { title: 'the garden', resource: 'https://github.com/me/garden' });
+  await git(other, 'add', '-A');
+  await git(other, 'commit', '-qm', 'garden');
+  await git(other, 'push', '-q');
+  await git(workspace, 'pull', '-q', '--no-rebase');
+  for (const agent of ['claude', 'codex']) assert.match(await readFile(join(base, agent, 'skills/my-repos/SKILL.md'), 'utf8'), /the garden/, agent);
+  const status = await agents('status');
+  assert.ok(status.json.items.every(item => item.state === 'installed'), JSON.stringify(status.json.items));
+  assert.deepEqual(status.json.items.filter(item => item.kind === 'hook').map(item => item.name), ['post-merge', 'post-rewrite']);
+});
+
+// spec: agent-installation / Existing hooks are kept
+test('install keeps a post-merge hook it did not write, and uninstall removes only its own', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  await gitWorkspace(base, workspace);
+  const mine = '#!/bin/sh\necho mine\n';
+  await writeFile(join(workspace, '.git/hooks/post-merge'), mine, { mode: 0o755 });
+  const installed = await agents('install');
+  const hooks = Object.fromEntries(installed.json.results.filter(item => item.kind === 'hook').map(item => [item.name, item]));
+  assert.equal(hooks['post-merge'].action, 'conflict');
+  assert.match(hooks['post-merge'].reason, /post-merge exists and was not installed by Context Kit/);
+  assert.equal(hooks['post-rewrite'].action, 'installed');
+  assert.equal(await readFile(join(workspace, '.git/hooks/post-merge'), 'utf8'), mine);
+  const removed = await agents('uninstall');
+  assert.deepEqual(removed.json.results.filter(item => item.kind === 'hook').map(item => [item.name, item.action]), [['post-rewrite', 'removed']]);
+  assert.equal(await exists(join(workspace, '.git/hooks/post-rewrite')), false);
+  assert.equal(await readFile(join(workspace, '.git/hooks/post-merge'), 'utf8'), mine);
 });

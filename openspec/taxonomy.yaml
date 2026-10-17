@@ -1,0 +1,21 @@
+domains:
+  addons:
+    purpose: "Let a workspace choose which Context Kit functionality it uses: an always-on core for OKF knowledge plus optional addons, all running on one shared core."
+  agent-installation:
+    purpose: "Install a workspace's enabled Context Kit skills and MCP server into Claude Code and Codex with one command, and keep those installs inspectable and reversible."
+  agent-interface:
+    purpose: "Expose one validated set of Context Kit operations to people through the CLI and to agents through a local MCP server, with the same results and coded errors."
+  canonical-spec-audit:
+    purpose: "Read canonical OpenSpec specs from a repository or from shared stores used across repositories, with provenance, and produce honest structural audits that leave semantic compliance to evidence-based review."
+  context-workspaces:
+    purpose: "Let people and agents keep context in an explicit workspace separate from the toolkit, retrieve curated documents and skills within bounds, and capture unreviewed notes safely."
+  freshness-policy:
+    purpose: "Tell people and agents, on every read, whether a concept can be used as written, should be checked against its sources, or must be regenerated, according to a policy each hub tunes per kind of knowledge."
+  help:
+    purpose: "Teach people and agents how to use Context Kit from the tool itself, through one set of help topics that stays complete as the tool changes."
+  knowledge-format:
+    purpose: "Keep hub knowledge in the Open Knowledge Format so it is portable to other tools, and surface OKF provenance, trust and lifecycle signals to people and agents."
+  progressive-disclosure:
+    purpose: "Let people and agents discover hub knowledge step by step: list what a directory holds, open one concept by its OKF ID, and follow its links, instead of loading everything at once."
+  skill-library:
+    purpose: "Ship reusable methods as skills that people and agents can list, read in full and invoke directly, so the toolkit's own methods, such as reflection on finished work, travel with it."

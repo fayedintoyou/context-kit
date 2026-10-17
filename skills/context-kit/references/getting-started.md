@@ -30,6 +30,11 @@ npm run validate                              # check every hub
 
 Output is JSON. Run `context-kit help` for the topic list.
 
+Register the repositories you work on so agents go straight to them (see
+`repositories`): `npm run hub -- repos add <hub> <github-url> --alias <names>`, or
+`repos scan ~` on a new machine to find checkouts of repositories already listed.
+A hub can be personal or shared by a team through Git; both work the same way.
+
 ## Upgrade
 
 Change the `context-kit` dependency in the workspace's `package.json` to a newer
