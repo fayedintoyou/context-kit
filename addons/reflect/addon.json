@@ -1,0 +1,5 @@
+{
+  "name": "reflect",
+  "description": "Turn a conversation's learnings into reviewed edits on skills and hub knowledge.",
+  "skills": ["reflect"]
+}
