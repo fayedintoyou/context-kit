@@ -2,6 +2,9 @@
 
 Git-backed context and working methods for agents and people. A hub describes an
 area of activity, points to relevant resources, and explains how to work there.
+Each hub is an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf)
+(OKF) v0.2 bundle, so other OKF tools can read it, and every document carries OKF
+provenance, trust and freshness signals.
 The same small format can describe personal projects or business domains spanning
 many repositories. Sharing a format does not imply sharing data or credentials.
 

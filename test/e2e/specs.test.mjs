@@ -40,7 +40,7 @@ async function fixture(t) {
   const workspace = join(base, 'workspace');
   const hub = join(workspace, 'hubs/platform');
   await mkdir(hub, { recursive: true });
-  await writeFile(join(hub, 'README.md'), 'Platform context');
+  await writeFile(join(hub, 'README.md'), '---\ntype: Guide\n---\n\nPlatform context\n');
   await writeFile(join(hub, 'hub.json'), JSON.stringify({ version: 1, id: 'team/platform', description: 'Platform',
     documents: ['README.md'], skills: [], links: [], specStores: ['platform'] }));
   await writeSpec(workspace, 'local-only');

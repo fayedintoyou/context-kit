@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { initWorkspace, selectRoot } from '../lib/workspace.mjs';
+import { initWorkspace, selectRoot, KIT_ACTOR } from '../lib/workspace.mjs';
 import { execute } from '../lib/operations.mjs';
 import { parseArgs } from '../lib/arguments.mjs';
 import { fail, errorData } from '../lib/files.mjs';
@@ -10,11 +10,11 @@ const help = `Usage: node bin/hub.mjs [--root <directory>] <command>
   context <hub-id> [--inbox]
   search <text> [--inbox]
   read-skill <hub-id> <reference>
-  capture <hub-id> <title>      (UTF-8 body on stdin)
+  capture <hub-id> <title> [--by <actor>]   (UTF-8 body on stdin)
   specs stores | specs list | specs read <spec-id> | specs audit   [--store <id>]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
-  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--help']);
+  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--help']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
     const [command, ...args] = positional;
@@ -24,7 +24,8 @@ try {
       result = await initWorkspace(args[0], { kit: options['--kit'] });
     } else {
       if (options['--kit']) fail('INVALID_INPUT', '--kit applies only to init');
-      const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', allowWrite: true };
+      if (options['--by'] && command !== 'capture') fail('INVALID_INPUT', '--by applies only to capture');
+      const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', actor: options['--by'] || KIT_ACTOR, allowWrite: true };
       const count = { list: 0, validate: 0, context: 1, search: 1, 'read-skill': 2, capture: 2 };
       if (options['--inbox'] && !['context', 'search'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context/search');
       if (options['--store'] && (command !== 'specs' || args[0] === 'stores')) fail('INVALID_INPUT', '--store applies only to specs list/read/audit');

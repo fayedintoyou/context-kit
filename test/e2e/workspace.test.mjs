@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, realpath, symlink } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 
 const kit = await realpath(fileURLToPath(new URL('../../', import.meta.url)));
 
@@ -30,6 +31,12 @@ async function fixture(t) {
   assert.equal(init.code, 0, init.stderr);
   return { base, workspace, cli, hub: join(workspace, 'hubs/personal') };
 }
+const concept = (type, body, extra = '') => `---\ntype: ${type}\n${extra}---\n\n${body}\n`;
+const frontmatter = text => {
+  const match = text.match(/^---\n([\s\S]*?)\n---\n\n/);
+  assert.ok(match, 'starts with OKF frontmatter');
+  return { data: parseYaml(match[1]), body: text.slice(match[0].length) };
+};
 const snapshot = async directory => Object.fromEntries(await Promise.all((await readdir(directory, { recursive: true, withFileTypes: true }))
   .filter(entry => entry.isFile()).map(async entry => [join(entry.parentPath, entry.name), await readFile(join(entry.parentPath, entry.name), 'utf8')])));
 
@@ -69,8 +76,12 @@ test('context excludes inbox unless requested; stdin capture is searchable and l
   assert.equal(captured.json.status, 'unreviewed');
   assert.match(captured.json.path, /^hubs\/personal\/inbox\/\d{13}-[0-9a-f-]{36}\.md$/);
   const note = await readFile(join(workspace, captured.json.path), 'utf8');
-  assert.match(note, /^# Finding\n/);
-  assert.match(note, /Source: cli\nStatus: unreviewed\n\nZebra crossings need review\./);
+  const parsed = frontmatter(note);
+  assert.equal(parsed.data.type, 'Note');
+  assert.equal(parsed.data.status, 'draft');
+  assert.match(parsed.data.generated.by, /^context-kit\/\d+\.\d+\.\d+$/);
+  assert.match(parsed.data.generated.at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  assert.match(parsed.body, /^# Finding\n\nZebra crossings need review\.\n$/);
   for (const [path, content] of Object.entries(before)) assert.equal(await readFile(path, 'utf8'), content);
 
   const curated = await cli(['--root', workspace, 'context', 'personal/main']);
@@ -163,6 +174,7 @@ test('validation rejects escaped, missing, duplicate and unlinked hub content', 
   const retrieved = await cli(['--root', workspace, 'context', 'personal/main']);
   assert.equal(retrieved.error.code, 'PATH_ESCAPE');
   assert.equal(retrieved.stdout, '');
+  await rm(join(hub, 'linked.md'));
   const missing = await expectInvalid({ documents: ['missing.md'] }, /missing\.md/);
   assert.equal(missing.error.code, 'NOT_FOUND');
   assert.doesNotMatch(missing.error.message, new RegExp(base));
@@ -170,7 +182,7 @@ test('validation rejects escaped, missing, duplicate and unlinked hub content', 
   await writeFile(manifestPath, JSON.stringify(original));
   await mkdir(join(workspace, 'hubs/copy'));
   await writeFile(join(workspace, 'hubs/copy/hub.json'), JSON.stringify(original));
-  await writeFile(join(workspace, 'hubs/copy/README.md'), 'Copy');
+  await writeFile(join(workspace, 'hubs/copy/README.md'), concept('Guide', 'Copy'));
   const duplicate = await cli(['--root', workspace, 'context', 'personal/main']);
   assert.notEqual(duplicate.code, 0);
   assert.match(duplicate.error.message, /Duplicate hub ID/);
@@ -188,5 +200,92 @@ test('CONTEXT_KIT_ROOT selects the workspace, and --root takes precedence', asyn
   const captured = await cli(['capture', 'personal/main', 'Via env'], 'body', { CONTEXT_KIT_ROOT: workspace });
   assert.equal(captured.code, 0, captured.stderr);
   assert.equal(captured.json.root, workspace);
+});
+
+// spec: knowledge-format / Concept without a type
+// spec: knowledge-format / Reserved file structure
+// spec: knowledge-format / Permissive consumption
+// spec: knowledge-format / Conformant starter
+test('hubs must be conformant OKF bundles', async t => {
+  const { workspace, cli, hub } = await fixture(t);
+  const index = await readFile(join(hub, 'index.md'), 'utf8');
+  assert.equal(frontmatter(index).data.okf_version, '0.2');
+  assert.match(index, /^\* \[Personal context\]\(README\.md\) - /m);
+  assert.equal(frontmatter(await readFile(join(hub, 'README.md'), 'utf8')).data.type, 'Guide');
+  assert.equal((await cli(['--root', workspace, 'validate'])).code, 0);
+
+  const invalid = async (file, content, pattern) => {
+    await mkdir(join(hub, file, '..'), { recursive: true });
+    await writeFile(join(hub, file), content);
+    const result = await cli(['--root', workspace, 'validate']);
+    assert.notEqual(result.code, 0, file);
+    assert.equal(result.error.code, 'INVALID_OKF');
+    assert.match(result.error.message, pattern);
+    await rm(join(hub, file));
+  };
+  await invalid('notes.md', '# No frontmatter\n', /hubs\/personal\/notes\.md: missing YAML frontmatter/);
+  await invalid('untyped.md', '---\ntitle: Untyped\n---\n\nBody\n', /untyped\.md: frontmatter needs a non-empty type/);
+  await invalid('nested/index.md', '---\ntitle: Nope\n---\n\n# Nested\n', /nested\/index\.md: index files may only declare okf_version/);
+  await invalid('log.md', '# Log\n\n## Last week\n* **Update**: x\n', /log\.md: log date headings must be YYYY-MM-DD/);
+
+  await writeFile(join(hub, 'index.md'), index.replace('okf_version: "0.2"', 'okf_version: "9.9"'));
+  await writeFile(join(hub, 'log.md'), '# Log\n\n## 2026-10-17\n* **Creation**: Added things.\n');
+  await mkdir(join(hub, 'deep'));
+  await writeFile(join(hub, 'deep/odd.md'), concept('Totally New Kind', 'See [missing](/nowhere.md) and [also](./gone.md).', 'flavour: unusual\nsomething_else: [1, 2]\n'));
+  assert.equal((await cli(['--root', workspace, 'validate'])).code, 0);
+  const read = await cli(['--root', workspace, 'context', 'personal/main']);
+  assert.equal(read.json.okfVersion, '9.9');
+  assert.ok(read.json.warnings.some(warning => /okf_version 9\.9/.test(warning)));
+});
+
+// spec: knowledge-format / Trust tiers and staleness
+// spec: knowledge-format / Offsetless staleness
+test('context reports OKF trust and staleness', async t => {
+  const { workspace, cli, hub } = await fixture(t);
+  await writeFile(join(hub, 'reviewed.md'), concept('Policy', 'Zanzibar policy.', 'verified: { by: human:example, at: 2026-01-01T00:00:00Z }\nstale_after: 2026-01-02T00:00:00Z\n'));
+  await writeFile(join(hub, 'checked.md'), concept('Policy', 'Checked.', 'verified:\n  - { by: process:nightly, at: 2026-01-01T00:00:00Z }\nstale_after: 2999-01-01T00:00:00Z\nstatus: deprecated\n'));
+  await writeFile(join(hub, 'offsetless.md'), concept('Policy', 'Offsetless.', 'stale_after: 2001-01-01T00:00:00\n'));
+  const manifestPath = join(hub, 'hub.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  manifest.documents = ['README.md', 'reviewed.md', 'checked.md', 'offsetless.md'];
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  const result = await cli(['--root', workspace, 'context', 'personal/main']);
+  assert.equal(result.code, 0, result.stderr);
+  const okf = Object.fromEntries(result.json.documents.map(document => [document.path, document.okf]));
+  assert.deepEqual([okf['reviewed.md'].trust, okf['reviewed.md'].stale, okf['reviewed.md'].status], ['human-reviewed', true, 'stable']);
+  assert.deepEqual([okf['checked.md'].trust, okf['checked.md'].stale, okf['checked.md'].status], ['machine-confirmed', false, 'deprecated']);
+  assert.deepEqual([okf['README.md'].trust, okf['README.md'].stale, okf['README.md'].status, okf['README.md'].type], ['unverified', false, 'stable', 'Guide']);
+  assert.equal(okf['offsetless.md'].stale, false);
+  assert.ok(result.json.warnings.some(warning => /offsetless\.md: stale_after needs .*UTC offset/.test(warning)));
+  const found = await cli(['--root', workspace, 'search', 'zanzibar']);
+  assert.equal(found.json.results[0].status, 'curated');
+  assert.equal(found.json.results[0].okf.trust, 'human-reviewed');
+});
+
+// spec: knowledge-format / Stray file
+test('a stray file warns on reads but fails validation', async t => {
+  const { workspace, cli, hub } = await fixture(t);
+  await writeFile(join(hub, 'scratch.md'), 'just some notes\n');
+  const read = await cli(['--root', workspace, 'context', 'personal/main']);
+  assert.equal(read.code, 0, read.stderr);
+  assert.deepEqual(read.json.documents.map(document => document.path), ['README.md']);
+  assert.ok(read.json.warnings.some(warning => /^scratch\.md: missing YAML frontmatter/.test(warning)));
+  assert.equal((await cli(['--root', workspace, 'search', 'notes'])).code, 0);
+  assert.equal((await cli(['--root', workspace, 'validate'])).error.code, 'INVALID_OKF');
+  await writeFile(join(hub, 'README.md'), 'curated but not a concept\n');
+  assert.equal((await cli(['--root', workspace, 'context', 'personal/main'])).error.code, 'INVALID_OKF');
+});
+
+// spec: context-workspaces / Captured note records its author
+// spec: context-workspaces / Actor cannot be forged
+test('CLI captures record --by and reject malformed actors before writing', async t => {
+  const { workspace, cli, hub } = await fixture(t);
+  const captured = await cli(['--root', workspace, 'capture', 'personal/main', 'Mine', '--by', 'human:example'], 'Hand written.\n');
+  assert.equal(captured.code, 0, captured.stderr);
+  assert.equal(frontmatter(await readFile(join(workspace, captured.json.path), 'utf8')).data.generated.by, 'human:example');
+  const bad = await cli(['--root', workspace, 'capture', 'personal/main', 'Bad', '--by', 'not an actor'], 'x');
+  assert.equal(bad.error.code, 'INVALID_INPUT');
+  assert.equal((await readdir(join(hub, 'inbox'))).length, 1);
+  assert.equal((await cli(['--root', workspace, 'list', '--by', 'human:example'])).error.code, 'INVALID_INPUT');
 });
 

@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, realpath, symlink } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -21,17 +22,23 @@ async function fixture(t) {
   const workspace = join(base, 'workspace');
   await exec(process.execPath, [join(kit, 'bin/hub.mjs'), 'init', workspace], { env });
   const cli = async (...args) => JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, ...args], { env })).stdout);
-  const connect = async (...flags) => {
+  const open = info => async (...flags) => {
     const transport = new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', workspace, ...flags],
       env, cwd: base, stderr: 'pipe' });
-    const client = new Client({ name: 'context-kit-test', version: '0.0.0' });
+    const client = new Client(info);
     await client.connect(transport);
     t.after(() => client.close());
     return client;
   };
+  const connect = Object.assign(open({ name: 'context-kit-test', version: '0.0.0' }), { as: open });
   return { base, workspace, cli, connect, hub: join(workspace, 'hubs/personal') };
 }
 const parse = result => JSON.parse(result.content[0].text);
+const frontmatter = text => {
+  const match = text.match(/^---\n([\s\S]*?)\n---\n\n/);
+  assert.ok(match, 'note starts with OKF frontmatter');
+  return { data: parseYaml(match[1]), body: text.slice(match[0].length) };
+};
 
 // spec: agent-interface / Read-only server
 test('default server is read-only and no tool accepts a root', async t => {
@@ -55,6 +62,7 @@ test('default server is read-only and no tool accepts a root', async t => {
   assert.equal(parse(await client.callTool({ name: 'nope', arguments: {} })).error.code, 'UNKNOWN_OPERATION');
 });
 
+// spec: context-workspaces / Captured note records its author
 test('--allow-write exposes capture_note and captures are found via search', async t => {
   const { connect, workspace } = await fixture(t);
   const client = await connect('--allow-write');
@@ -66,7 +74,12 @@ test('--allow-write exposes capture_note and captures are found via search', asy
   const result = await client.callTool({ name: 'capture_note', arguments: { id: 'personal/main', title: 'Agent finding', body: 'Quokka habitats.' } });
   assert.ok(!result.isError, result.content[0].text);
   assert.equal(result.structuredContent.status, 'unreviewed');
-  assert.match(await readFile(join(workspace, result.structuredContent.path), 'utf8'), /Source: mcp\nStatus: unreviewed\n\nQuokka habitats\./);
+  const note = frontmatter(await readFile(join(workspace, result.structuredContent.path), 'utf8'));
+  assert.equal(note.data.type, 'Note');
+  assert.equal(note.data.status, 'draft');
+  assert.equal(note.data.generated.by, 'context-kit-test/0.0.0');
+  assert.equal(note.data.verified, undefined);
+  assert.match(note.body, /^# Agent finding\n\nQuokka habitats\.\n$/);
   const found = await client.callTool({ name: 'search_context', arguments: { query: 'quokka', includeInbox: true } });
   assert.equal(found.structuredContent.results.length, 1);
   assert.equal((await client.callTool({ name: 'search_context', arguments: { query: 'quokka' } })).structuredContent.results.length, 0);
@@ -118,3 +131,15 @@ test('server rejects unexpected startup arguments with a coded stderr error', as
   assert.equal(error.stdout, '');
   assert.equal(JSON.parse(error.stderr).error.code, 'INVALID_INPUT');
 });
+
+// spec: context-workspaces / Actor cannot be forged
+test('an MCP client cannot claim a human or process actor', async t => {
+  const { connect, workspace } = await fixture(t);
+  const client = await connect.as({ name: 'human:alice', version: '1.0' })('--allow-write');
+  const result = await client.callTool({ name: 'capture_note', arguments: { id: 'personal/main', title: 'Claim', body: 'Body.' } });
+  assert.ok(!result.isError, result.content[0].text);
+  const by = frontmatter(await readFile(join(workspace, result.structuredContent.path), 'utf8')).data.generated.by;
+  assert.doesNotMatch(by, /^(?:human|process|team):/);
+  assert.equal(by, 'human-alice/1.0');
+});
+

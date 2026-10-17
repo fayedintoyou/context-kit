@@ -8,6 +8,12 @@ import { selectRoot } from '../lib/workspace.mjs';
 import { parseArgs } from '../lib/arguments.mjs';
 import { errorData, fail } from '../lib/files.mjs';
 
+// OKF actor (§7) for the connected client, from its declared name and version.
+function clientActor(info) {
+  const clean = value => String(value ?? '').replace(/[^A-Za-z0-9._+-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100);
+  const name = clean(info?.name), version = clean(info?.version);
+  return `${name || 'unknown-client'}/${version || 'unknown'}`;
+}
 try {
   const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--allow-write']);
   if (positional.length) fail('INVALID_INPUT', 'Usage: node bin/mcp.mjs [--root <directory>] [--allow-write]');
@@ -21,7 +27,7 @@ try {
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
   server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
     try {
-      const result = await execute(selection, params.name, params.arguments ?? {});
+      const result = await execute({ ...selection, actor: clientActor(server.getClientVersion()) }, params.name, params.arguments ?? {});
       return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result };
     } catch (error) {
       return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: errorData(error) }) }] };
