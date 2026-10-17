@@ -31,5 +31,8 @@
   `agents install`.
 - **Install reports a conflict**: a skill or MCP server with that name already
   exists and is not Context Kit's. Remove it, rename with `--name`, or `--force`.
+- **my-repos misses a repository after a pull**: the workspace wasn't a git
+  checkout when you installed, or a hook you wrote was kept. Check `agents status`,
+  run `agents install` again, and `repos sync`.
 - **Claude Code rejects a server name**: some names are reserved; pass `--name`.
 - **`ls -t` fails**: your `ls` may be aliased; use `/bin/ls`.

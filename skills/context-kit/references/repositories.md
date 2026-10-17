@@ -52,3 +52,9 @@ The skill is generated from the Repository concepts; don't edit it. After changi
 them (a new repository, new aliases, a pull), run `repos sync`. It rebuilds the
 skill's description, metadata and list and updates every installed copy, without
 re-registering MCP servers. Until then `agents status` reports the skill `stale`.
+
+You rarely need to: when the workspace is a git checkout, `agents install` adds
+`post-merge` and `post-rewrite` hooks that run `repos sync` after every pull, so
+repositories someone else registered reach your agents automatically. The hooks
+are per machine (they live in `.git/hooks`, not in the workspace), so each machine
+gets them from its own `agents install`.

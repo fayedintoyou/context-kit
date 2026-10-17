@@ -36,6 +36,9 @@ It is not an addon that can be disabled.
   repositories or the local paths changed since it was rendered (e.g. after a
   `git pull` of the workspace); `agents install` reconciles it, and `repos sync`
   rebuilds it from the repository entries (titles, aliases, upstreams) on demand.
+  In a workspace that is a git checkout, `agents install` also adds `post-merge` and
+  `post-rewrite` hooks that run `repos sync`, so every pull keeps it current for
+  anyone using Context Kit.
 
 ## Capabilities
 

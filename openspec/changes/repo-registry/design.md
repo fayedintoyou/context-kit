@@ -90,6 +90,17 @@ workspace (`init` writes it to `.gitignore`). Both agents accept the frontmatter
    repository name, matching how checkouts sit in the home directory today. An
    explicit path overrides it.
 
+9. **Pull hooks are per machine, written by `agents install`.** The hook runs this
+   machine's Node and core by absolute path, like the MCP registration, so it
+   can't be committed to the workspace. The installer writes it into the
+   checkout's hooks directory (`git rev-parse --git-path hooks`, which honors
+   `core.hooksPath`), marks it as managed, and records it with a hash, like
+   skills. Alternative: a tracked `.githooks/` directory plus
+   `core.hooksPath`. Rejected because setting `core.hooksPath` silently turns off
+   every hook already in `.git/hooks`, and tracked hooks can't hold
+   machine-specific paths. A workspace that isn't a git checkout yet reports the
+   hooks as skipped.
+
 ## Risks / Trade-offs
 
 - [Many repositories make a long description and weaker triggering] → Drop aliases

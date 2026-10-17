@@ -24,6 +24,17 @@
 - **WHEN** a workspace registers a repository but has never installed agents, and a caller runs `repos sync`
 - **THEN** the rendered skill exists in the workspace and the result says to run `agents install`
 
+### Requirement: Sync after pulls
+When the workspace is a git checkout, `agents install` SHALL install `post-merge` and `post-rewrite` hooks in that checkout's hooks directory that run `repos sync` and never fail the git command. It SHALL not overwrite a hook it did not install unless forced, `agents status` SHALL report the hooks, and `agents uninstall` SHALL remove them when unchanged.
+
+#### Scenario: A pull rebuilds the skill
+- **WHEN** a workspace checkout has the routing skill and sync hooks installed, and a pull brings in a new Repository concept
+- **THEN** after the pull the installed skill names the new repository, without running `agents install`
+
+#### Scenario: Existing hooks are kept
+- **WHEN** the checkout already has a `post-merge` hook that Context Kit did not install
+- **THEN** install leaves it unchanged and reports a conflict naming it, and uninstall removes only the hooks it installed
+
 ### Requirement: Generated skills stay current
 `agents status` SHALL report an installed generated skill as `stale` when rendering it now would differ from what was installed, such as after hub edits or a pull that change repositories, and `agents install` SHALL update it. `repos locate`, `repos clone` and `repos scan` SHALL update an installed, unchanged routing skill in every place it is installed, and SHALL leave one edited since install alone and say so.
 

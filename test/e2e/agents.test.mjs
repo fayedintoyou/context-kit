@@ -217,7 +217,8 @@ test('setup creates a pinned instance and installs it into agents', async t => {
   assert.deepEqual(JSON.parse(await readFile(join(target, 'package.json'), 'utf8')).dependencies, { 'context-kit': `file:${kit}` });
   assert.deepEqual(JSON.parse(await readFile(join(target, 'context-kit.json'), 'utf8')).addons, ['reflect']);
   assert.deepEqual((await readdir(join(base, 'claude/skills'))).sort(), ['context-kit', 'reflect']);
-  assert.deepEqual(result.json.agents.results.map(item => `${item.kind}:${item.name}:${item.action}`), ['skill:context-kit:installed', 'skill:reflect:installed', 'mcp:my-context:installed']);
+  assert.deepEqual(result.json.agents.results.map(item => `${item.kind}:${item.name}:${item.action}`), ['skill:context-kit:installed', 'skill:reflect:installed', 'mcp:my-context:installed',
+    'hook:post-merge:skipped', 'hook:post-rewrite:skipped']);
   const add = (await calls()).find(call => call.args.includes('add') && call.args.includes('my-context'));
   assert.ok(add.args.includes(join(target, 'node_modules/context-kit/bin/mcp.mjs')) || add.args.includes(join(kit, 'bin/mcp.mjs')));
 });
@@ -316,4 +317,59 @@ test('repos sync before any install renders the skill and says to install', asyn
   assert.deepEqual(synced.json.results, []);
   assert.match(synced.json.next, /agents install/);
   assert.match(await readFile(synced.json.skill, 'utf8'), /^name: my-repos$/m);
+});
+
+// A workspace that is a git checkout tracking a bare remote, plus a second clone that
+// stands in for another machine pushing hub changes.
+async function gitWorkspace(base, workspace) {
+  const git = (cwd, ...args) => promisify(execFile)('git', args, { cwd, env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+  await git(workspace, 'init', '-q', '-b', 'main');
+  await git(workspace, 'add', '-A');
+  await git(workspace, 'commit', '-qm', 'workspace');
+  const remote = join(base, 'remote.git');
+  await git(base, 'clone', '-q', '--bare', workspace, remote);
+  await git(workspace, 'remote', 'add', 'origin', remote);
+  await git(workspace, 'fetch', '-q', 'origin');
+  await git(workspace, 'branch', '-q', '--set-upstream-to', 'origin/main');
+  const other = join(base, 'other');
+  await git(base, 'clone', '-q', remote, other);
+  return { git, other };
+}
+
+// spec: agent-installation / A pull rebuilds the skill
+test('a pull that brings a new repository rebuilds the installed my-repos skill', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const { git, other } = await gitWorkspace(base, workspace);
+  const installed = await agents('install');
+  assert.deepEqual(installed.json.results.filter(item => item.kind === 'hook').map(item => [item.name, item.action]), [['post-merge', 'installed'], ['post-rewrite', 'installed']]);
+  assert.match(await readFile(join(workspace, '.git/hooks/post-merge'), 'utf8'), /repos sync/);
+  // Elsewhere, someone registers a repository and pushes; here, a plain pull.
+  await repository(other, 'garden', { title: 'the garden', resource: 'https://github.com/me/garden' });
+  await git(other, 'add', '-A');
+  await git(other, 'commit', '-qm', 'garden');
+  await git(other, 'push', '-q');
+  await git(workspace, 'pull', '-q', '--no-rebase');
+  for (const agent of ['claude', 'codex']) assert.match(await readFile(join(base, agent, 'skills/my-repos/SKILL.md'), 'utf8'), /the garden/, agent);
+  const status = await agents('status');
+  assert.ok(status.json.items.every(item => item.state === 'installed'), JSON.stringify(status.json.items));
+  assert.deepEqual(status.json.items.filter(item => item.kind === 'hook').map(item => item.name), ['post-merge', 'post-rewrite']);
+});
+
+// spec: agent-installation / Existing hooks are kept
+test('install keeps a post-merge hook it did not write, and uninstall removes only its own', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  await gitWorkspace(base, workspace);
+  const mine = '#!/bin/sh\necho mine\n';
+  await writeFile(join(workspace, '.git/hooks/post-merge'), mine, { mode: 0o755 });
+  const installed = await agents('install');
+  const hooks = Object.fromEntries(installed.json.results.filter(item => item.kind === 'hook').map(item => [item.name, item]));
+  assert.equal(hooks['post-merge'].action, 'conflict');
+  assert.match(hooks['post-merge'].reason, /post-merge exists and was not installed by Context Kit/);
+  assert.equal(hooks['post-rewrite'].action, 'installed');
+  assert.equal(await readFile(join(workspace, '.git/hooks/post-merge'), 'utf8'), mine);
+  const removed = await agents('uninstall');
+  assert.deepEqual(removed.json.results.filter(item => item.kind === 'hook').map(item => [item.name, item.action]), [['post-rewrite', 'removed']]);
+  assert.equal(await exists(join(workspace, '.git/hooks/post-rewrite')), false);
+  assert.equal(await readFile(join(workspace, '.git/hooks/post-merge'), 'utf8'), mine);
 });
