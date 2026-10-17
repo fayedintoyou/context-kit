@@ -198,6 +198,22 @@ A party's own `<change>` of the same name, or another store's
 `other:<change>`, never counts for it, and is neither its evidence nor a stray
 trailer. Packets give the qualified trailers.
 
+A party slice's packet (`specs next|slice --store <id>`, `next_slices`,
+`read_slice`) carries its destination, so a worker started anywhere, such as a
+fresh worktree of the party or another agent harness, can act on it alone:
+
+- `store`: the store id;
+- `repo: { party, upstream, checkout, remote }`: the party, its upstream, the
+  recorded checkout (`null` when none is recorded) and the **party remote** in it
+  (`null` when there is none). Branch from and open the pull request against that
+  remote, not `origin`, which in a fork's checkout is the fork;
+- `base`: the party's base branch and its fetched tip (see below), `null` while
+  the party's evidence can't be read;
+- `dependencies`: each with `repo`, the party its commits landed in;
+- `trailers`: `OpenSpec-Change: <store-id>:<change>` and `OpenSpec-Slice: <slice>`.
+
+A repository's packets have none of `store`, `repo` or a dependency's `repo`.
+
 Evidence comes from the party's checkout as the workspace records it (the
 `--root` the CLI or MCP server runs with), looked up by the party upstream
 whether or not a hub registers it; record one with `repos locate` or

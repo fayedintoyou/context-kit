@@ -538,7 +538,7 @@ test('a store slice lands from its qualified trailer on its party checkout defau
   assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), result);
   // The landed dependency appears in the ready slice's packet.
   const next = await cli('specs', 'next', 'embed', '--store', 'shared');
-  assert.deepEqual(next.packets.map(packet => [packet.slice.id, packet.dependencies]), [['api', [{ id: 'storage', state: 'landed', commits: [commit] }]]]);
+  assert.deepEqual(next.packets.map(packet => [packet.slice.id, packet.dependencies]), [['api', [{ id: 'storage', repo: 'game', state: 'landed', commits: [commit] }]]]);
 });
 
 // spec: change-progress / Same change name elsewhere
@@ -577,6 +577,10 @@ test('a party with no recorded checkout leaves its slices unknown with remedies'
   assert.deepEqual([next.packets, next.reason], [[], 'nothing_ready']);
   assert.deepEqual(next.waiting.map(({ id, state, reason }) => [id, state, reason]), [['storage', 'unknown', 'checkout_missing'], ['api', 'blocked', undefined], ['client', 'blocked', undefined]]);
   assert.deepEqual(await mcp('next_slices', { change: 'embed', store: 'shared' }), next);
+  // Its packet still names where it lands, with no checkout or base to work from yet.
+  const packet = await mcp('read_slice', { change: 'embed', slice: 'storage', store: 'shared' });
+  assert.deepEqual([packet.store, packet.repo, packet.base, packet.trailers], ['shared',
+    { party: 'game', upstream: upstream('game'), checkout: null, remote: null }, null, 'OpenSpec-Change: shared:embed\nOpenSpec-Slice: storage']);
   // Following a remedy makes the party's evidence readable.
   await partyCheckout(context, 'game');
   assert.deepEqual(states(await status(cli)), { storage: 'ready', api: 'blocked', client: 'blocked' });
@@ -649,6 +653,42 @@ test('a fork checkout is judged against the party remote and asks gh about the p
   await game.git('push', '-q', 'upstream', 'dev:main');
   await game.git('fetch', '-q', 'upstream');
   assert.equal(states(await status(cli)).storage, 'landed');
+});
+
+// spec: change-progress / Packet for a party slice
+test('a party slice packet names its store, party, checkout, party base and dependency repositories', async t => {
+  // The site checkout is a fork: `origin` is the fork, with work of its own on `dev`, and the party is `upstream`.
+  const { store, storeGit, cli, mcp, checkouts: { site, game } } = await storeFixture(t,
+    { remotes: { site: { origin: ['site-fork', 'dev'], upstream: ['site', 'main'] } } });
+  await site.git('commit', '-q', '--allow-empty', '-m', 'Fork work');
+  await site.git('push', '-q', 'origin', 'HEAD:dev');
+  const commit = await game.land('storage');
+  await game.git('push', '-q', 'origin', 'main');
+  const snapshot = () => Promise.all([storeGit('rev-parse', 'HEAD'), storeGit('status', '--porcelain'),
+    ...[site, game].flatMap(party => [party.git('status', '--porcelain'), party.git('for-each-ref')])]).then(results => results.map(result => result.stdout));
+  const before = await snapshot();
+  const next = await cli('specs', 'next', 'embed', '--store', 'shared');
+  assert.deepEqual(next.packets.map(packet => packet.slice.id), ['api']);
+  const [packet] = next.packets;
+  assert.deepEqual([packet.change, packet.store, packet.slice.state], ['embed', 'shared', 'ready']);
+  assert.deepEqual(packet.repo, { party: 'site', upstream: upstream('site'), checkout: site.checkout, remote: 'upstream' });
+  // The base is the party's default branch and its fetched tip, not the fork's.
+  assert.deepEqual(packet.base, { ref: 'main', refs: ['refs/remotes/upstream/main'], commit: await site.rev('upstream/main') });
+  assert.notEqual(packet.base.commit, await site.rev('origin/dev'));
+  assert.deepEqual(packet.dependencies, [{ id: 'storage', repo: 'game', state: 'landed', commits: [commit] }]);
+  assert.equal(packet.trailers, 'OpenSpec-Change: shared:embed\nOpenSpec-Slice: api');
+  assert.deepEqual(await mcp('next_slices', { change: 'embed', store: 'shared' }), next);
+  const read = await mcp('read_slice', { change: 'embed', slice: 'api', store: 'shared' });
+  assert.deepEqual(read, { root: store, source: { kind: 'store', storeId: 'shared' }, ...packet });
+  assert.deepEqual(await cli('specs', 'slice', 'embed', 'api', '--store', 'shared'), read);
+  // Every packet of the change names its own party, and each dependency the party it lands in.
+  const client = await mcp('read_slice', { change: 'embed', slice: 'client', store: 'shared' });
+  assert.deepEqual([client.repo.party, client.dependencies], ['site', [{ id: 'api', repo: 'site', state: 'ready', commits: [] }]]);
+  const storage = await mcp('read_slice', { change: 'embed', slice: 'storage', store: 'shared' });
+  assert.deepEqual([storage.repo, storage.base.commit, storage.trailers], [{ party: 'game', upstream: upstream('game'), checkout: game.checkout, remote: 'origin' },
+    commit, 'OpenSpec-Change: shared:embed\nOpenSpec-Slice: storage']);
+  // Neither call writes to the store or to a party checkout.
+  assert.deepEqual(await snapshot(), before);
 });
 
 // spec: change-progress / Local base behind its remote
