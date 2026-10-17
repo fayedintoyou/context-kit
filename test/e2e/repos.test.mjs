@@ -219,3 +219,72 @@ test('repositories work in a core-only workspace', async t => {
     { env: { HOME: env.HOME, CLAUDE_CONFIG_DIR: join(base, 'claude'), PATH: `${bin}:/usr/bin:/bin` } })).stdout);
   assert.deepEqual(installed.results.filter(item => item.kind === 'skill').map(item => item.name), ['context-kit', 'my-repos']);
 });
+
+// spec: repository-registry / Add by upstream
+test('repos add writes a draft Repository concept and lists it in the hub index', async t => {
+  const { workspace, cli } = await fixture(t);
+  const added = await cli('repos', 'add', 'personal/main', 'https://github.com/me/room', '--title', 'the room', '--alias', 'room,fayelore.com', '--by', 'human:faye');
+  assert.equal(added.code, 0, JSON.stringify(added.error));
+  assert.equal(added.json.concept, 'hubs/personal/room.md');
+  const text = await readFile(join(workspace, 'hubs/personal/room.md'), 'utf8');
+  const front = parseYaml(text.match(/^---\n([\s\S]*?)\n---\n/)[1]);
+  assert.equal(front.type, 'Repository');
+  assert.equal(front.resource, 'https://github.com/me/room');
+  assert.deepEqual(front.aliases, ['room', 'fayelore.com']);
+  assert.equal(front.status, 'draft');
+  assert.equal(front.generated.by, 'human:faye');
+  assert.ok(Math.abs(Date.parse(front.generated.at) - Date.now()) < 60000, 'real time');
+  assert.match(await readFile(join(workspace, 'hubs/personal/index.md'), 'utf8'), /^\* \[the room\]\(room\.md\) - /m);
+  assert.equal((await cli('validate')).code, 0);
+  assert.deepEqual((await cli('repos')).json.repositories.map(item => [item.id, item.status]), [['personal/main/room', 'missing']]);
+});
+
+// spec: repository-registry / Add from a checkout
+test('repos add --path registers a team hub repository from its checkout', async t => {
+  const { base, workspace, cli, checkout } = await fixture(t);
+  await mkdir(join(workspace, 'hubs/team'));
+  await writeFile(join(workspace, 'hubs/team/hub.json'), JSON.stringify({ version: 1, id: 'team/platform', description: 'Our platform.', documents: ['README.md'], skills: [], links: [] }));
+  await writeFile(join(workspace, 'hubs/team/README.md'), '---\ntype: Guide\n---\n\n# Platform\n');
+  const path = await checkout(join(base, 'code/billing'), { origin: 'git@github.com:acme/billing.git' });
+  await cli('agents', 'status');
+  const added = await cli('repos', 'add', 'team/platform', '--path', path, '--alias', 'billing');
+  assert.equal(added.code, 0, JSON.stringify(added.error));
+  assert.deepEqual(added.json.repository, { id: 'team/platform/billing', title: 'billing', upstream: 'git@github.com:acme/billing.git', aliases: ['billing'], path, status: 'located' });
+  const concept = await readFile(join(workspace, 'hubs/team/billing.md'), 'utf8');
+  assert.match(concept, /^resource: git@github.com:acme\/billing.git$/m);
+  assert.ok(!concept.includes(path), 'the path stays out of the hub');
+  assert.ok((await readFile(join(workspace, '.state/generated/my-repos/SKILL.md'), 'utf8')).includes(`git@github.com:acme/billing.git at ${path}`));
+});
+
+// spec: repository-registry / Already registered
+test('repos add refuses an upstream or alias that is already registered', async t => {
+  const { workspace, cli, register } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room', aliases: ['site'] });
+  const again = await cli('repos', 'add', 'personal/main', 'git@github.com:Me/Room.git', '--concept', 'room-again');
+  assert.equal(again.error.code, 'REPOSITORY_EXISTS');
+  assert.match(again.error.message, /personal\/main\/room/);
+  const alias = await cli('repos', 'add', 'personal/main', 'https://github.com/me/blog', '--alias', 'site');
+  assert.equal(alias.error.code, 'REPOSITORY_EXISTS');
+  assert.match(alias.error.message, /"site" already names personal\/main\/room/);
+  await assert.rejects(readFile(join(workspace, 'hubs/personal/room-again.md')), { code: 'ENOENT' });
+  await assert.rejects(readFile(join(workspace, 'hubs/personal/blog.md')), { code: 'ENOENT' });
+});
+
+// spec: repository-registry / Agent registers a repository
+test('an agent registers a repository over MCP only when writes are allowed', async t => {
+  const { env, workspace } = await fixture(t);
+  const connect = async (...flags) => {
+    const client = new Client({ name: 'repo-agent', version: '2.0.0' });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', workspace, ...flags], env, stderr: 'pipe' }));
+    t.after(() => client.close());
+    return client;
+  };
+  const readOnly = await connect();
+  assert.ok(!(await readOnly.listTools()).tools.some(tool => tool.name === 'add_repo'));
+  const writer = await connect('--allow-write');
+  const tool = (await writer.listTools()).tools.find(item => item.name === 'add_repo');
+  assert.ok(tool && !('path' in tool.inputSchema.properties));
+  const added = await writer.callTool({ name: 'add_repo', arguments: { id: 'personal/main', upstream: 'https://github.com/me/garden', aliases: ['garden'] } });
+  assert.equal(added.isError, undefined, JSON.stringify(added.content));
+  assert.match(await readFile(join(workspace, 'hubs/personal/garden.md'), 'utf8'), /by: repo-agent\/2\.0\.0/);
+});

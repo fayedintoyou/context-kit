@@ -21,6 +21,11 @@ It is not an addon that can be disabled.
   person.
 - Each machine keeps its own local checkout paths in the workspace's untracked state
   (`.state/checkouts.json`), never in a hub, so another machine records its own.
+- `repos add <hub> [<upstream>] [--path <checkout>] [--alias a,b] [--title ...]`
+  writes the Repository concept into any hub, personal or a team's shared hub,
+  as a draft listed in the hub's index. Run inside a checkout with `--path .`, it
+  reads the upstream from git and records the local path. Over MCP, `add_repo`
+  (writes enabled) lets an agent register a repository the user names.
 - New CLI operations: `repos` (list repos with upstream, aliases and local path or
   `missing`), `repos locate <repo> <path>` (record an existing checkout after
   checking its git remote matches), `repos clone <repo> [<path>]` (clone the

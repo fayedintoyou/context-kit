@@ -18,6 +18,7 @@ CLI: `context-kit [--root <dir>] <command>`; inside a workspace, `npm run hub --
 | `read <hub> <concept-id>` | `read_concept` | One concept (`--frontmatter`, `--inbox`) |
 | `search <text>` | `search_context` | Text across concepts (`--inbox`) |
 | `capture <hub> <title>` | `capture_note` | New unreviewed note from stdin (`--by`) |
+| `repos add <hub> [<upstream>]` | `add_repo` | Registers a repository in a hub (`--path`, `--alias`, `--title`, `--concept`, `--description`); MCP needs `--allow-write` and takes no path |
 | `repos` | `list_repos` | Registered repositories and local checkouts |
 | `repos locate <repo> <path>` | | Records an existing checkout (CLI only) |
 | `repos clone <repo> [<path>]` | | Clones and records a repository (CLI only) |

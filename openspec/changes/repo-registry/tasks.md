@@ -23,6 +23,8 @@
 
 - [x] 3.5 Sync hooks: `agents install` writes managed `post-merge`/`post-rewrite` hooks into the checkout's hooks directory, records them, reports conflicts with foreign hooks; status and uninstall handle them; link `test/e2e/agents.test.mjs` to "A pull rebuilds the skill" and "Existing hooks are kept"
 
+- [x] 3.6 `repos add` (CLI) and `add_repo` (MCP, `--allow-write`, no path): write the draft concept, update the index, optionally record `--path`, refuse duplicates, refresh the skill; link `test/e2e/repos.test.mjs` to "Add by upstream", "Add from a checkout", "Already registered" and "Agent registers a repository"
+
 ## 4. MCP, help and docs
 
 - [x] 4.1 Read-only `list_repos` MCP tool in `lib/operations.mjs`; link `test/e2e/repos.test.mjs` to "List over MCP"

@@ -28,6 +28,28 @@ Every concept with `type: Repository` in the workspace's hubs SHALL be a registe
 - **WHEN** two Repository concepts share an alias
 - **THEN** `validate` fails naming both concepts and the alias
 
+### Requirement: Add a repository to a hub
+`repos add <hub> [<upstream>]` SHALL write a `type: Repository` concept into the named hub, personal or shared, with the upstream as `resource`, the given title, aliases and description, `status: draft` and a `generated` actor and time, and SHALL list it in the hub's index. With `--path` it SHALL take the upstream from that checkout's remote when none is given and record the checkout.
+
+#### Scenario: Add by upstream
+- **WHEN** a caller adds `https://github.com/me/room` to a hub with a title and two aliases
+- **THEN** the hub gains a draft Repository concept with those fields, the hub's index links it, `validate` passes, and `repos` lists it as missing
+
+#### Scenario: Add from a checkout
+- **WHEN** a caller adds a repository to a team hub with `--path` pointing at a checkout whose `origin` is the upstream, giving no upstream
+- **THEN** the concept's `resource` is that remote, the checkout is recorded for this machine only, and an installed routing skill names the repository
+
+#### Scenario: Already registered
+- **WHEN** a caller adds an upstream that a hub already registers, or an alias another repository uses
+- **THEN** the command fails naming the existing repository or alias and writes nothing
+
+### Requirement: Adding over MCP
+The MCP server SHALL offer `add_repo` only when started with `--allow-write`, adding a repository by upstream to a hub as `repos add` does but never recording a local path.
+
+#### Scenario: Agent registers a repository
+- **WHEN** an MCP client of a server started with `--allow-write` calls `add_repo` with a hub, upstream and aliases
+- **THEN** the concept is written with the client as its `generated` actor, and a server without `--allow-write` does not list the tool
+
 ### Requirement: Machine-local checkouts
 Local checkout paths SHALL be stored only in the workspace's untracked state, never in a hub, keyed by the repository's upstream, so the same workspace on another machine starts with every repository `missing`. `repos` SHALL report each repository's recorded path, or `missing` when none is recorded or the recorded directory no longer exists.
 
