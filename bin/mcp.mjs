@@ -5,6 +5,7 @@ import { ListToolsRequestSchema, CallToolRequestSchema, ListPromptsRequestSchema
 import { splitFrontmatter } from '../lib/okf.mjs';
 import { z } from 'zod';
 import { operations, execute } from '../lib/operations.mjs';
+import { enabledOperations } from '../lib/addons.mjs';
 import { selectRoot } from '../lib/workspace.mjs';
 import { parseArgs } from '../lib/arguments.mjs';
 import { errorData, fail } from '../lib/files.mjs';
@@ -16,13 +17,13 @@ function clientActor(info) {
   return `${name || 'unknown-client'}/${version || 'unknown'}`;
 }
 try {
-  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--allow-write']);
-  if (positional.length) fail('INVALID_INPUT', 'Usage: node bin/mcp.mjs [--root <directory>] [--allow-write]');
+  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--allow-write', '--no-skill-prompts']);
+  if (positional.length) fail('INVALID_INPUT', 'Usage: node bin/mcp.mjs [--root <directory>] [--allow-write] [--no-skill-prompts]');
   const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT),
     allowWrite: Boolean(options['--allow-write']), source: 'mcp' };
   // Low-level Server so arguments reach execute(): CLI and MCP share one validation path and coded errors.
-  const server = new Server({ name: 'context-kit', version: '0.2.0' }, { capabilities: { tools: {}, prompts: {} } });
-  const tools = operations(selection.allowWrite).map(([name, definition]) => ({ name, description: definition.description,
+  const server = new Server({ name: 'context-kit', version: '0.2.0' }, { capabilities: { tools: {}, ...(options['--no-skill-prompts'] ? {} : { prompts: {} }) } });
+  const tools = operations(selection.allowWrite, await enabledOperations(selection.root)).map(([name, definition]) => ({ name, description: definition.description,
     inputSchema: z.toJSONSchema(definition.schema, { io: 'input', target: 'draft-7' }),
     annotations: { readOnlyHint: !definition.write, destructiveHint: false, openWorldHint: false, idempotentHint: !definition.write } }));
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
@@ -46,9 +47,10 @@ try {
       return { name, skill };
     });
   }
-  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+  // Skip prompts when the skills are installed into the agent natively.
+  if (!options['--no-skill-prompts']) server.setRequestHandler(ListPromptsRequestSchema, async () => ({
     prompts: (await prompts()).map(({ name, skill }) => ({ name, description: skill.description })) }));
-  server.setRequestHandler(GetPromptRequestSchema, async ({ params }) => {
+  if (!options['--no-skill-prompts']) server.setRequestHandler(GetPromptRequestSchema, async ({ params }) => {
     const entry = (await prompts()).find(item => item.name === params.name);
     if (!entry) throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${params.name}`);
     const { skill } = entry;

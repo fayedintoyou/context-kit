@@ -1,7 +1,7 @@
 ---
 name: reflect
-description: Review the active conversation with three parallel reviewers, surface durable learnings, and route each to a concrete edit on an existing skill or hub concept. Use when the user says reflect.
 disable-model-invocation: true
+description: Review the active conversation with three parallel reviewers, surface durable learnings, and route each to a concrete edit on an existing skill or hub concept. Use when the user says reflect.
 ---
 
 # Reflect

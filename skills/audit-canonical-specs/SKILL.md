@@ -5,7 +5,9 @@ description: Compare a repository's canonical specifications with its implementa
 
 # Audit canonical specifications
 
-Run `node <context-kit>/bin/hub.mjs --root <repository> specs audit`. The adapter
+Run the Context Kit `audit_specs` tool (MCP), or from a workspace instance
+`npm run hub -- specs audit` (for another repository, `context-kit --root
+<repository> specs audit`). The adapter
 owns spec discovery and parsing. OpenSpec is the first supported source; pending
 change deltas are not canonical. A structural pass is not a semantic verdict.
 
