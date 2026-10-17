@@ -61,7 +61,7 @@ test('install puts enabled skills and the MCP server into both agents', async t 
   const installed = await agents('install');
   assert.equal(installed.code, 0, JSON.stringify(installed.error));
   for (const [dir, agent] of [[join(base, 'claude/skills'), 'claude'], [join(base, 'codex/skills'), 'codex']]) {
-    assert.deepEqual((await readdir(dir)).sort(), ['audit-canonical-specs', 'independent-review', 'reflect'], agent);
+    assert.deepEqual((await readdir(dir)).sort(), ['audit-canonical-specs', 'context-kit', 'independent-review', 'reflect'], agent);
   }
   assert.match(await readFile(join(base, 'claude/skills/reflect/SKILL.md'), 'utf8'), /^disable-model-invocation: true$/m);
   const codexReflect = await readFile(join(base, 'codex/skills/reflect/SKILL.md'), 'utf8');
@@ -75,7 +75,7 @@ test('install puts enabled skills and the MCP server into both agents', async t 
     ['claude', ['mcp', 'add', '-s', 'user', 'context-workspace', '--', ...server]],
     ['codex', ['mcp', 'add', 'context-workspace', '--', ...server]]]);
   const status = await agents('status');
-  assert.equal(status.json.items.length, 8);
+  assert.equal(status.json.items.length, 10);
   assert.ok(status.json.items.every(item => item.state === 'installed'), JSON.stringify(status.json.items));
 
   const again = await agents('install');
@@ -216,8 +216,8 @@ test('setup creates a pinned instance and installs it into agents', async t => {
   assert.equal(result.code, 0, JSON.stringify(result.error));
   assert.deepEqual(JSON.parse(await readFile(join(target, 'package.json'), 'utf8')).dependencies, { 'context-kit': `file:${kit}` });
   assert.deepEqual(JSON.parse(await readFile(join(target, 'context-kit.json'), 'utf8')).addons, ['reflect']);
-  assert.deepEqual((await readdir(join(base, 'claude/skills'))), ['reflect']);
-  assert.deepEqual(result.json.agents.results.map(item => `${item.kind}:${item.name}:${item.action}`), ['skill:reflect:installed', 'mcp:my-context:installed']);
+  assert.deepEqual((await readdir(join(base, 'claude/skills'))).sort(), ['context-kit', 'reflect']);
+  assert.deepEqual(result.json.agents.results.map(item => `${item.kind}:${item.name}:${item.action}`), ['skill:context-kit:installed', 'skill:reflect:installed', 'mcp:my-context:installed']);
   const add = (await calls()).find(call => call.args.includes('add') && call.args.includes('my-context'));
   assert.ok(add.args.includes(join(target, 'node_modules/context-kit/bin/mcp.mjs')) || add.args.includes(join(kit, 'bin/mcp.mjs')));
 });

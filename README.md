@@ -29,6 +29,9 @@ node bin/hub.mjs validate
 npm test
 ```
 
+`context-kit help` lists help topics (`help <topic>` shows one); agents get the
+same help through the `help` MCP tool and the core `context-kit` skill.
+
 Output is JSON. `context` returns a hub's curated starting documents in manifest
 order. To explore further, browse progressively: `browse <hub-id> [directory]`
 lists one directory (concepts with OKF type, title, description and trust, plus
@@ -124,7 +127,7 @@ them (`kit:<name>` for skills bundled here), `skills` lists them, and
 files. The MCP server also offers every declared skill as a prompt, so a client
 can invoke it directly; Claude Code shows them as `/mcp__<server>__<skill>`.
 
-Bundled skills: `independent-review` (plan and output review),
+Bundled skills: `context-kit` (help for using Context Kit, always installed), `independent-review` (plan and output review),
 `audit-canonical-specs` (evidence-based spec audits) and `reflect` (three
 parallel reviewers turn a conversation's learnings into proposed edits on skills
 and hub knowledge, applied only after approval). Improve them with `reflect`
