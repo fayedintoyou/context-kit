@@ -31,6 +31,10 @@ The CLI SHALL provide `specs archive --ready`, never offered over MCP, that arch
 - **WHEN** one change is ready and another has an unticked task
 - **THEN** the ready change moves to the archive with its deltas merged into canonical specs, the other stays active, and the result names both
 
+#### Scenario: Archive a change without spec deltas
+- **WHEN** a ready change declares `skip_specs: true` and has no deltas
+- **THEN** it moves to the archive, the canonical specs are unchanged, and the result reports it with `specsUpdated` false and empty totals
+
 #### Scenario: Nothing ready
 - **WHEN** no change is ready
 - **THEN** no file changes and the result has no archived changes
