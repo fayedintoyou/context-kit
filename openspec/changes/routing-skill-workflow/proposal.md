@@ -26,6 +26,6 @@ all three.
 
 ## Impact
 
-- `lib/repos.mjs` routing skill text; `repository-registry` spec; one e2e test.
+- `lib/repos.mjs` routing skill text; a new `repository-registry` requirement; one e2e test.
 - Workspaces pick up the new text on the next skill render (`agents status`,
   `repos sync`, or any repository change).
