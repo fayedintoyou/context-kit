@@ -27,6 +27,9 @@ Shape each slice so that:
   only when all of them land.
 - `paths` lists globs the slice is expected to touch when that is predictable.
   They are a scope hint for reconciliation, not a lock.
+- In a shared store's change, every slice names with `repo` the party it lands
+  in, as declared in the store's `openspec/parties.yaml`. A repository's slices
+  name no `repo`.
 
 ```yaml
 base: main            # optional; defaults to the remote's default branch

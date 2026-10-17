@@ -157,6 +157,28 @@ root is then the plan root, its git history supplies the evidence, and results
 carry `source: { kind: "store", storeId }`. Without a store, results are as
 before and carry no `source`.
 
+A store holds no code, so every slice of a store's change names with `repo` the
+party it lands in, one the store's `openspec/parties.yaml` declares:
+
+```yaml
+slices:
+  - id: game-embed
+    repo: game
+    implements: [game-embedding / Embed handshake]
+  - id: site-embed
+    repo: site
+    implements: [game-embedding / Embed handshake]
+    depends_on: [game-embed]
+```
+
+`specs status <change> --store <id>` then gives each slice
+`repo: { party, upstream }`. A store slice with no `repo` or with a party the
+store doesn't declare (or a store with no parties file) fails with
+`INVALID_CONFIG` naming `slices.yaml` and the slice, and so does a repository
+plan whose slice names any `repo`: a repository's slices land in the repository
+itself. Whether a plan is a store's follows from how it was selected: with
+`--store`, not from where it lives on disk.
+
 ## Archiving after merge
 
 A change is ready to archive when OpenSpec counts every task ticked and, with a

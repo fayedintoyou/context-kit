@@ -68,8 +68,13 @@ async function fixture(t, { slices = plan, gh } = {}) {
   };
   return { root, base, env, cli, git, land };
 }
+// A store's slices each land in a party it declares (fictional upstreams, never fetched).
+const parties = 'parties:\n  site: https://github.com/example/site\n  game: https://github.com/example/game\n';
+const storePlan = plan.replace('  - id: storage\n', '  - id: storage\n    repo: game\n')
+  .replace('  - id: api\n', '  - id: api\n    repo: site\n').replace('  - id: client\n', '  - id: client\n    repo: site\n');
 // The workspace's hub declares store `shared`: a git repository registered in the isolated
-// OpenSpec registry that plans change `embed`. Store `stray` is registered but declared by no hub.
+// OpenSpec registry that plans change `embed` across parties `site` and `game`. Store `stray`
+// is registered but declared by no hub.
 async function storeFixture(t) {
   const context = await fixture(t);
   const { base, env, root } = context;
@@ -81,7 +86,8 @@ async function storeFixture(t) {
   await put(store, 'openspec/specs/locations/spec.md', spec(requirement('Search', 'Use Search', 'The store SHALL describe search for every party.')));
   await put(store, 'openspec/changes/embed/proposal.md', '# Why\n\nEmbed radius search across parties.\n');
   await put(store, 'openspec/changes/embed/specs/locations/spec.md', delta);
-  await put(store, 'openspec/changes/embed/slices.yaml', plan);
+  await put(store, 'openspec/parties.yaml', parties);
+  await put(store, 'openspec/changes/embed/slices.yaml', storePlan);
   await put(store, 'openspec/changes/embed/tasks.md', '- [x] 1.1 Storage\n- [ ] 1.2 Api\n');
   const stray = join(base, 'stray-store');
   await put(stray, 'openspec/config.yaml', 'schema: spec-driven\n');
@@ -384,4 +390,56 @@ test('delivery operations read a declared store change over CLI and MCP', async 
   assert.equal((await cli('specs', 'archive', '--ready', '--store', 'stray')).error.code, 'UNKNOWN_STORE');
   assert.equal((await storeGit('rev-parse', 'HEAD')).stdout.trim(), head);
   assert.equal((await storeGit('status', '--porcelain')).stdout, '');
+});
+
+// spec: change-progress / Plan across party repositories
+test('a store plan lists each slice with its party and upstream', async t => {
+  const { cli, mcp } = await storeFixture(t);
+  const status = await cli('specs', 'status', 'embed', '--store', 'shared');
+  assert.deepEqual(status.slices.map(slice => [slice.id, slice.repo]), [
+    ['storage', { party: 'game', upstream: 'https://github.com/example/game' }],
+    ['api', { party: 'site', upstream: 'https://github.com/example/site' }],
+    ['client', { party: 'site', upstream: 'https://github.com/example/site' }]]);
+  assert.deepEqual(states(status), { storage: 'ready', api: 'blocked', client: 'blocked' });
+  assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), status);
+  // A repository's slices land in the repository itself and name no party.
+  assert.ok((await cli('specs', 'status', 'deliver')).slices.every(slice => !('repo' in slice)));
+});
+
+// spec: change-progress / Unknown party
+test('store slices must name a declared party and repository slices none', async t => {
+  const { root, store, cli, mcp } = await storeFixture(t);
+  const file = /openspec\/changes\/embed\/slices\.yaml: /;
+  const cases = [
+    [storePlan.replace('repo: site', 'repo: mobile'), /slice api names repo mobile, a party openspec\/parties\.yaml does not declare/],
+    [storePlan.replace('    repo: game\n', ''), /slice storage names no repo/],
+  ];
+  for (const [content, message] of cases) {
+    await put(store, 'openspec/changes/embed/slices.yaml', content);
+    for (const call of [cli('specs', 'status', 'embed', '--store', 'shared'), mcp('change_status', { change: 'embed', store: 'shared' }),
+      cli('specs', 'next', 'embed', '--store', 'shared'), mcp('read_slice', { change: 'embed', slice: 'client', store: 'shared' })]) {
+      const result = await call;
+      assert.equal(result.error?.code, 'INVALID_CONFIG', JSON.stringify(result));
+      assert.match(result.error.message, file);
+      assert.match(result.error.message, message);
+    }
+    const [embed] = (await cli('specs', 'archivable', '--store', 'shared')).changes;
+    assert.equal(embed.plan, 'invalid');
+    assert.ok(embed.blockers.some(blocker => message.test(blocker.message ?? '')), JSON.stringify(embed));
+  }
+  // A store without a parties file declares no party for a slice to name.
+  await put(store, 'openspec/changes/embed/slices.yaml', storePlan);
+  await rm(join(store, 'openspec/parties.yaml'));
+  const missing = await cli('specs', 'status', 'embed', '--store', 'shared');
+  assert.equal(missing.error?.code, 'INVALID_CONFIG');
+  assert.match(missing.error.message, file);
+  assert.match(missing.error.message, /slice storage names repo game, a party openspec\/parties\.yaml does not declare/);
+  // A repository plan naming any repo fails the same way, whether or not it has a parties file.
+  await put(root, 'openspec/parties.yaml', parties);
+  await put(root, 'openspec/changes/deliver/slices.yaml', plan.replace('  - id: client\n', '  - id: client\n    repo: site\n'));
+  for (const call of [cli('specs', 'status', 'deliver'), mcp('change_status', { change: 'deliver' })]) {
+    const result = await call;
+    assert.equal(result.error?.code, 'INVALID_CONFIG', JSON.stringify(result));
+    assert.match(result.error.message, /openspec\/changes\/deliver\/slices\.yaml: slice client names repo site/);
+  }
 });
