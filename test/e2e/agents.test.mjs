@@ -221,3 +221,71 @@ test('setup creates a pinned instance and installs it into agents', async t => {
   const add = (await calls()).find(call => call.args.includes('add') && call.args.includes('my-context'));
   assert.ok(add.args.includes(join(target, 'node_modules/context-kit/bin/mcp.mjs')) || add.args.includes(join(kit, 'bin/mcp.mjs')));
 });
+
+const repository = (workspace, name, fields) => writeFile(join(workspace, 'hubs/personal', `${name}.md`),
+  `---\ntype: Repository\n${Object.entries(fields).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n')}\n---\n\n# ${name}\n`);
+async function gitCheckout(path, origin) {
+  await mkdir(path, { recursive: true });
+  await promisify(execFile)('git', ['init', '-q'], { cwd: path });
+  await promisify(execFile)('git', ['remote', 'add', 'origin', origin], { cwd: path });
+  return realpath(path);
+}
+
+// spec: agent-installation / Install the routing skill
+test('install copies the generated my-repos skill into both agents, even with --link', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room', aliases: ['fayelore.com'] });
+  const installed = await agents('install', '--link');
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  for (const agent of ['claude', 'codex']) {
+    const path = join(base, agent, 'skills/my-repos');
+    assert.equal((await lstat(path)).isSymbolicLink(), false, agent);
+    assert.match(await readFile(join(path, 'SKILL.md'), 'utf8'), /^name: my-repos$/m);
+  }
+  const status = await agents('status');
+  assert.deepEqual(status.json.items.filter(item => item.name === 'my-repos').map(item => [item.agent, item.mode, item.state]),
+    [['claude', 'copy', 'installed'], ['codex', 'copy', 'installed']]);
+});
+
+// spec: agent-installation / Last repository removed
+test('reinstalling after the last repository is gone removes my-repos', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await agents('install');
+  assert.ok(await exists(join(base, 'claude/skills/my-repos')));
+  await rm(join(workspace, 'hubs/personal/room.md'));
+  const again = await agents('install');
+  assert.equal(byAction(again.json.results)['claude:skill:my-repos'], 'removed');
+  assert.equal(await exists(join(base, 'claude/skills/my-repos')), false);
+  assert.equal(await exists(join(base, 'codex/skills/my-repos')), false);
+});
+
+// spec: agent-installation / Pulled hub changes
+test('status reports my-repos stale after a new repository arrives, and install updates it', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await agents('install');
+  await repository(workspace, 'garden', { title: 'the garden', resource: 'https://github.com/me/garden' });
+  const stale = await agents('status');
+  assert.deepEqual(stale.json.items.filter(item => item.name === 'my-repos').map(item => item.state), ['stale', 'stale']);
+  await agents('install');
+  assert.match(await readFile(join(base, 'codex/skills/my-repos/SKILL.md'), 'utf8'), /the garden/);
+  assert.ok((await agents('status')).json.items.every(item => item.state === 'installed'));
+});
+
+// spec: agent-installation / Locating refreshes the skill
+test('locating a repository updates installed copies without reinstalling', async t => {
+  const { base, workspace, run, agents, calls } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await agents('install');
+  // An edited copy is left alone and reported.
+  await writeFile(join(base, 'codex/skills/my-repos/SKILL.md'), 'mine\n');
+  const before = (await calls()).length;
+  const path = await gitCheckout(join(base, 'room'), 'https://github.com/me/room');
+  const located = await run(['--root', workspace, 'repos', 'locate', 'room', path]);
+  assert.equal(located.code, 0, JSON.stringify(located.error));
+  assert.deepEqual(byAction(located.json.skills), { 'claude:skill:my-repos': 'updated', 'codex:skill:my-repos': 'conflict' });
+  assert.ok((await readFile(join(base, 'claude/skills/my-repos/SKILL.md'), 'utf8')).includes(`https://github.com/me/room at ${path}`));
+  assert.equal(await readFile(join(base, 'codex/skills/my-repos/SKILL.md'), 'utf8'), 'mine\n');
+  assert.equal((await calls()).length, before, 'no agent CLI calls');
+});

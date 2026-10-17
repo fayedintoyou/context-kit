@@ -19,6 +19,7 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   skills | addons
   read-skill <hub-id> <reference> [--file <path>]
   capture <hub-id> <title> [--by <actor>]   (UTF-8 body on stdin)
+  repos | repos locate <repo> <path> | repos clone <repo> [<path>] | repos scan <directory>
   specs stores | specs list | specs read <spec-id> | specs audit   [--store <id>]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
@@ -57,7 +58,13 @@ try {
       if (options['--inbox'] && !['context', 'search', 'browse', 'read'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context, search, browse and read');
       if (options['--store'] && (command !== 'specs' || args[0] === 'stores')) fail('INVALID_INPUT', '--store applies only to specs list/read/audit');
       const store = options['--store'] ? { store: options['--store'] } : {};
-      if (command === 'specs') {
+      if (command === 'repos') {
+        if (args.length === 0) result = await execute(selection, 'list_repos');
+        else if (args[0] === 'locate' && args.length === 3) result = await execute(selection, 'locate_repo', { repository: args[1], path: args[2] });
+        else if (args[0] === 'clone' && [2, 3].includes(args.length)) result = await execute(selection, 'clone_repo', { repository: args[1], ...(args[2] ? { path: args[2] } : {}) });
+        else if (args[0] === 'scan' && args.length === 2) result = await execute(selection, 'scan_repos', { directory: args[1] });
+        else fail('INVALID_INPUT', help);
+      } else if (command === 'specs') {
         if (args[0] === 'stores' && args.length === 1) result = await execute(selection, 'list_spec_stores');
         else if (args[0] === 'list' && args.length === 1) result = await execute(selection, 'list_specs', store);
         else if (args[0] === 'audit' && args.length === 1) result = await execute(selection, 'audit_specs', store);

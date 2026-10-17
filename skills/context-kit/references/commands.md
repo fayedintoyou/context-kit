@@ -18,6 +18,10 @@ CLI: `context-kit [--root <dir>] <command>`; inside a workspace, `npm run hub --
 | `read <hub> <concept-id>` | `read_concept` | One concept (`--frontmatter`, `--inbox`) |
 | `search <text>` | `search_context` | Text across concepts (`--inbox`) |
 | `capture <hub> <title>` | `capture_note` | New unreviewed note from stdin (`--by`) |
+| `repos` | `list_repos` | Registered repositories and local checkouts |
+| `repos locate <repo> <path>` | | Records an existing checkout (CLI only) |
+| `repos clone <repo> [<path>]` | | Clones and records a repository (CLI only) |
+| `repos scan <directory>` | | Records matching checkouts one level deep (CLI only) |
 | `skills` | `list_skills` | Declared skills |
 | `read-skill <hub> <reference>` | `read_skill` | A skill or its files (`--file`) |
 | `specs stores` | `list_spec_stores` | Readable shared stores (specs addon) |

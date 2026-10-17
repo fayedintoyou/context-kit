@@ -106,3 +106,13 @@ test('bundled skills use frontmatter both agents accept', async () => {
   for (const addon of await readdir(join(kit, 'addons'))) addonSkills.push(...JSON.parse(await readFile(join(kit, 'addons', addon, 'addon.json'), 'utf8')).skills);
   assert.deepEqual(addonSkills.sort(), skills.sort());
 });
+
+// spec: addons / Core lists the routing skill
+test('core lists the generated my-repos skill once repositories are registered', async t => {
+  const { workspace, cli } = await fixture(t);
+  assert.deepEqual((await cli('addons')).json.addons.find(addon => addon.name === 'core').skills, ['context-kit']);
+  await writeFile(join(workspace, 'hubs/personal/room.md'), '---\ntype: Repository\ntitle: the room\nresource: https://github.com/me/room\n---\n\n# the room\n');
+  const core = (await cli('addons')).json.addons.find(addon => addon.name === 'core');
+  assert.deepEqual(core.skills, ['context-kit', 'my-repos']);
+  assert.deepEqual(core.generated, ['my-repos']);
+});

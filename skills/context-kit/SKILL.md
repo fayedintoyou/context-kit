@@ -21,6 +21,7 @@ To help, read the topic that fits. The same topics are available as
 | `knowledge` | Hubs, OKF concepts, frontmatter, trust and freshness, validation |
 | `navigating` | Finding things: context, browse, read, search, links |
 | `capturing` | Saving findings as notes and reviewing them |
+| `repositories` | Registering repositories, local checkouts, the `my-repos` skill |
 | `addons-and-install` | Choosing addons, installing into Claude Code or Codex |
 | `specs` | OpenSpec specs, shared stores and audits (specs addon) |
 | `skills` | Bundled and workspace skills, reflect and review |

@@ -18,6 +18,10 @@
 | `WRONG_SPEC_ROOT`, `ADAPTER_FAILED`, `ADAPTER_FORMAT` | OpenSpec resolved another root or failed; check the repository and stores |
 | `SNAPSHOT_CHANGED` | Files changed during an audit; rerun on a stable tree |
 | `DUPLICATE_REQUIREMENT` | A spec repeats a requirement name |
+| `INVALID_REPOSITORY` | A Repository concept lacks a git `resource`, has bad `aliases`, or shares an alias (see `repositories`) |
+| `UNKNOWN_REPOSITORY`, `AMBIGUOUS_REPOSITORY` | No repository, or more than one, has that name; use `repos` and the id |
+| `NOT_A_CHECKOUT`, `REMOTE_MISMATCH` | `repos locate` needs the top of a git checkout whose remote is the upstream |
+| `DESTINATION_EXISTS`, `CLONE_FAILED` | `repos clone` needs a new path and a reachable upstream |
 
 ## Common problems
 
