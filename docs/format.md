@@ -82,6 +82,23 @@ Optional:
 - `specStores`: IDs of shared OpenSpec stores (planning repositories registered
   with `openspec store register`) whose specs apply to this hub.
 
+A store may name the repositories its specs bind in `openspec/parties.yaml`: each
+party is a lowercase hyphenated name mapped to a repository upstream (a git URL),
+and each contract is a spec of the store with two or more of those parties
+(fictional example):
+
+```yaml
+parties:
+  site: https://github.com/example/site
+  game: https://github.com/example/game
+contracts:
+  game-embedding: [site, game]
+```
+
+A contract names a canonical spec or one an active change of the store adds.
+Only stores declare parties; a repository's own `openspec/` has none. See the
+`specs` help topic.
+
 Paths must resolve inside their allowed root, including through symlinks. IDs use
 lowercase letters, digits, hyphens and slash-separated segments. Unknown manifest
 fields are rejected so accidental assumptions do not look supported.

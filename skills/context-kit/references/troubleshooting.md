@@ -5,7 +5,7 @@
 | `INVALID_INPUT` | Bad arguments; check `context-kit help commands` |
 | `INVALID_OKF` | A hub file is not OKF; add frontmatter with a `type` (see `knowledge`) |
 | `INVALID_MANIFEST` | `hub.json` has a missing, unknown or invalid field |
-| `INVALID_CONFIG` | `context-kit.json`, an `addon.json`, install records, `openspec/taxonomy.yaml` or a change's `slices.yaml` are invalid, or a plan's base branch is missing |
+| `INVALID_CONFIG` | `context-kit.json`, an `addon.json`, install records, `openspec/taxonomy.yaml`, a store's `openspec/parties.yaml` or a change's `slices.yaml` are invalid, or a plan's base branch is missing |
 | `INVALID_INBOX` | An unexpected file sits in a hub's `inbox/` |
 | `INVALID_PATH`, `PATH_ESCAPE` | A path uses `..`, a dot directory, or a symlink leaving its root |
 | `NOT_FOUND`, `UNKNOWN_HUB`, `UNKNOWN_CONCEPT`, `UNKNOWN_PATH`, `UNKNOWN_SKILL`, `UNKNOWN_SPEC`, `UNKNOWN_STORE`, `UNKNOWN_OPERATION`, `UNKNOWN_TOPIC` | Nothing by that name; list first |
