@@ -1,5 +1,9 @@
 # Spec Delta
 
+## Purpose
+
+Archive a change as soon as all of its work has merged, from deterministic readiness rather than memory, and keep canonical specs changing only through archived changes.
+
 ## ADDED Requirements
 
 ### Requirement: Archive readiness
