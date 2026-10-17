@@ -11,6 +11,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 const exec = promisify(execFile);
 const kit = fileURLToPath(new URL('../../', import.meta.url));
+const openspecBin = join(kit, 'node_modules/@fission-ai/openspec/bin/openspec.js');
 const requirement = (name, scenario = `Use ${name}`, text = `The service SHALL support ${name.toLowerCase()} for location callers.`) =>
   `### Requirement: ${name}\n${text}\n\n#### Scenario: ${scenario}\n- **WHEN** a caller uses ${name.toLowerCase()}\n- **THEN** it works\n`;
 const spec = content => `# Locations\n\n## Purpose\nFind locations by text, radius and filters for callers of the location service.\n\n## Requirements\n\n${content}`;
@@ -67,6 +68,36 @@ async function fixture(t, { slices = plan, gh } = {}) {
   };
   return { root, base, env, cli, git, land };
 }
+// The workspace's hub declares store `shared`: a git repository registered in the isolated
+// OpenSpec registry that plans change `embed`. Store `stray` is registered but declared by no hub.
+async function storeFixture(t) {
+  const context = await fixture(t);
+  const { base, env, root } = context;
+  await put(root, 'hubs/team/README.md', '---\ntype: Guide\n---\n\nTeam context\n');
+  await put(root, 'hubs/team/hub.json', JSON.stringify({ version: 1, id: 'team/shared', description: 'Team',
+    documents: ['README.md'], skills: [], links: [], specStores: ['shared'] }));
+  const store = join(base, 'shared-store');
+  await put(store, 'openspec/config.yaml', 'schema: spec-driven\n');
+  await put(store, 'openspec/specs/locations/spec.md', spec(requirement('Search', 'Use Search', 'The store SHALL describe search for every party.')));
+  await put(store, 'openspec/changes/embed/proposal.md', '# Why\n\nEmbed radius search across parties.\n');
+  await put(store, 'openspec/changes/embed/specs/locations/spec.md', delta);
+  await put(store, 'openspec/changes/embed/slices.yaml', plan);
+  await put(store, 'openspec/changes/embed/tasks.md', '- [x] 1.1 Storage\n- [ ] 1.2 Api\n');
+  const stray = join(base, 'stray-store');
+  await put(stray, 'openspec/config.yaml', 'schema: spec-driven\n');
+  for (const [path, id] of [[store, 'shared'], [stray, 'stray']]) {
+    await exec(process.execPath, [openspecBin, 'store', 'register', path, '--id', id, '--yes', '--json'], { env });
+  }
+  const git = (...args) => exec('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { cwd: store, env });
+  await git('init', '-q', '-b', 'main');
+  await git('add', '.');
+  await git('commit', '-qm', 'Plan embed');
+  const client = new Client({ name: 'progress-store-test', version: '1.0' });
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', root], env, stderr: 'pipe' }));
+  t.after(() => client.close());
+  const mcp = async (name, args) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
+  return { ...context, store, storeGit: git, client, mcp };
+}
 const states = status => Object.fromEntries(status.slices.map(slice => [slice.id, slice.state]));
 const requirementStates = status => Object.fromEntries(status.requirements.map(item => [item.id, item.state]));
 
@@ -101,7 +132,7 @@ test('invalid plans fail with INVALID_CONFIG naming the file and problem', async
     assert.match(result.error.message, message);
   }
   assert.equal((await cli('specs', 'status', 'missing')).error.code, 'NOT_FOUND');
-  assert.equal((await cli('specs', 'status', 'deliver', '--store', 'shared')).error.code, 'INVALID_INPUT');
+  assert.equal((await cli('specs', 'stores', '--store', 'shared')).error.code, 'INVALID_INPUT');
 });
 
 // spec: change-progress / Partly delivered change
@@ -301,4 +332,56 @@ test('reconcile lists change scenarios no test links', async t => {
   const report = await cli('specs', 'reconcile', 'deliver');
   assert.equal(report.status.totals.readyToReconcile, true);
   assert.deepEqual(report.untested, { status: 'collected', scenarios: [{ spec: 'locations', requirement: 'Ordering', scenario: 'Use Ordering' }] });
+});
+
+// spec: change-progress / Store change over CLI and MCP
+test('delivery operations read a declared store change over CLI and MCP', async t => {
+  const { root, store, storeGit, cli, client, mcp } = await storeFixture(t);
+  const head = (await storeGit('rev-parse', 'HEAD')).stdout.trim();
+  const source = { kind: 'store', storeId: 'shared' };
+  const status = await cli('specs', 'status', 'embed', '--store', 'shared');
+  assert.equal(status.root, store);
+  assert.deepEqual(status.source, source);
+  assert.equal(status.change, 'embed');
+  assert.deepEqual(states(status), { storage: 'ready', api: 'blocked', client: 'blocked' });
+  assert.deepEqual(status.base, { ref: 'main', refs: ['main'], commit: head });
+  assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), status);
+  for (const call of [cli('specs', 'status', 'embed', '--store', 'stray'), mcp('change_status', { change: 'embed', store: 'stray' })]) {
+    assert.equal((await call).error.code, 'UNKNOWN_STORE');
+  }
+  // Without a store the workspace repository is read, exactly as before.
+  assert.equal((await cli('specs', 'status', 'embed')).error.code, 'NOT_FOUND');
+  const own = await cli('specs', 'status', 'deliver');
+  assert.equal(own.root, root);
+  assert.equal(own.source, undefined);
+
+  // The other delivery operations select the store the same way and write nothing.
+  const next = await cli('specs', 'next', 'embed', '--store', 'shared');
+  assert.deepEqual([next.root, next.source, next.packets.map(packet => packet.slice.id)], [store, source, ['storage']]);
+  assert.deepEqual(await mcp('next_slices', { change: 'embed', store: 'shared' }), next);
+  const packet = await cli('specs', 'slice', 'embed', 'api', '--store', 'shared');
+  assert.deepEqual([packet.root, packet.source, packet.base.commit], [store, source, head]);
+  assert.equal(packet.requirements.find(item => item.id === 'locations / Search').canonical.text, 'The store SHALL describe search for every party.');
+  assert.equal(packet.trailers, 'OpenSpec-Change: embed\nOpenSpec-Slice: api');
+  assert.deepEqual(await mcp('read_slice', { change: 'embed', slice: 'api', store: 'shared' }), packet);
+  const report = await cli('specs', 'reconcile', 'embed', '--store', 'shared');
+  assert.deepEqual([report.root, report.source, report.uncovered], [store, source, []]);
+  assert.deepEqual(await mcp('reconcile_change', { change: 'embed', store: 'shared' }), report);
+  const archivable = await cli('specs', 'archivable', '--store', 'shared');
+  assert.deepEqual([archivable.root, archivable.source], [store, source]);
+  assert.deepEqual(archivable.changes.map(({ name, ready, blockers }) => [name, ready, blockers.map(blocker => blocker.code)]),
+    [['embed', false, ['tasks_incomplete', 'slices_unlanded']]]);
+  assert.deepEqual(await mcp('archivable_changes', { store: 'shared' }), archivable);
+  for (const [name, args] of [['next_slices', { change: 'embed' }], ['read_slice', { change: 'embed', slice: 'api' }],
+    ['reconcile_change', { change: 'embed' }], ['archivable_changes', {}]]) {
+    assert.equal((await mcp(name, { ...args, store: 'stray' })).error.code, 'UNKNOWN_STORE', name);
+  }
+
+  // Archiving a store stays CLI-only and, with nothing ready, changes nothing.
+  assert.ok(!(await client.listTools()).tools.some(tool => tool.name === 'archive_ready'));
+  const archived = await cli('specs', 'archive', '--ready', '--store', 'shared');
+  assert.deepEqual([archived.root, archived.source, archived.archived, archived.skipped.map(item => item.name)], [store, source, [], ['embed']]);
+  assert.equal((await cli('specs', 'archive', '--ready', '--store', 'stray')).error.code, 'UNKNOWN_STORE');
+  assert.equal((await storeGit('rev-parse', 'HEAD')).stdout.trim(), head);
+  assert.equal((await storeGit('status', '--porcelain')).stdout, '');
 });

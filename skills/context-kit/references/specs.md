@@ -11,12 +11,12 @@ deltas are not canonical.
 | Garden spec structure | `specs garden [--store <id>]` | `garden_specs` |
 | Readable shared stores | `specs stores` | `list_spec_stores` |
 | A store's parties and contracts | `specs parties --store <id>` | `list_parties` |
-| Change progress | `specs status <change>` | `change_status` |
-| Next slices to build | `specs next <change>` | `next_slices` |
-| One slice's packet | `specs slice <change> <slice>` | `read_slice` |
-| Reconcile a change | `specs reconcile <change>` | `reconcile_change` |
-| Changes ready to archive | `specs archivable` | `archivable_changes` |
-| Archive ready changes (no commit) | `specs archive --ready` | CLI only |
+| Change progress | `specs status <change> [--store <id>]` | `change_status` |
+| Next slices to build | `specs next <change> [--store <id>]` | `next_slices` |
+| One slice's packet | `specs slice <change> <slice> [--store <id>]` | `read_slice` |
+| Reconcile a change | `specs reconcile <change> [--store <id>]` | `reconcile_change` |
+| Changes ready to archive | `specs archivable [--store <id>]` | `archivable_changes` |
+| Archive ready changes (no commit) | `specs archive --ready [--store <id>]` | CLI only |
 
 Specs either live beside a repository's code or in a **shared store** (an
 OpenSpec planning repository registered with `openspec store register`). A store
@@ -147,8 +147,15 @@ packet, adding commits, branches, PRs and linked tests to review once it has
 started. `specs reconcile` lists out-of-scope files per slice, files shared by
 slices, stray trailers, uncovered requirements and unlinked scenarios. The
 `reconcile-change` skill judges them and reviews one slice's PR through
-`independent-review`. These operations read the workspace repository only, not
-stores.
+`independent-review`.
+
+These operations read the workspace repository's changes. With `--store <id>`
+(`store` over MCP) they read a change planned in a shared store instead, under
+the same rule as spec reads: the store must be declared by a hub or referenced
+by the repository, otherwise the call fails with `UNKNOWN_STORE`. The store's
+root is then the plan root, its git history supplies the evidence, and results
+carry `source: { kind: "store", storeId }`. Without a store, results are as
+before and carry no `source`.
 
 ## Archiving after merge
 
@@ -158,7 +165,8 @@ with `ready` or its blockers: `no_tasks`, `tasks_incomplete` (an unticked task
 also holds a change open on purpose), `slices_unlanded` (naming the slices) or
 `invalid_plan`. `specs archive --ready` archives exactly the ready changes
 through the pinned OpenSpec CLI, validates canonical specs strictly and reports
-`archived` and `skipped`. It never commits and is not offered over MCP.
+`archived` and `skipped`. It never commits and is not offered over MCP. Both
+take `--store <id>` to read and archive a store's changes in the store's root.
 
 The reusable `.github/workflows/openspec.yml` runs this on every push to the
 default branch, tests the result and pushes the archive commit, and on pull
