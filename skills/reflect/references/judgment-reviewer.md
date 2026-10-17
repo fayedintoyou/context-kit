@@ -3,6 +3,7 @@
 You are reviewing one agent conversation for durable lessons about judgment: where
 the agent's choices diverged from what the user wanted, and where a non-obvious
 choice the user accepted should become the default. Do not edit any files.
+Never copy credential-like strings into your output; write `<redacted secret>`.
 
 Transcript: {{TRANSCRIPT_PATH_OR_DIGEST}}
 

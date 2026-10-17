@@ -43,7 +43,10 @@ of the session instead: goals, user corrections, failures, decisions, outcomes.
 
 Start all three in one step with the runtime's subagent mechanism. Give each
 read access to the tools the transcript references (MCP servers, issue trackers,
-CI logs) so it can check facts, and tell it not to edit files.
+CI logs) so it can check facts, and tell it not to edit files. Tell every
+reviewer and the synthesizer never to copy credential-like strings (API tokens,
+keys, passwords, connection strings) into findings, evidence or edits, and to
+write `<redacted secret>` instead.
 
 | Lens | Prompt | Model role |
 |---|---|---|
@@ -90,7 +93,9 @@ File each Backlog item without waiting as a note in the workspace hub the user
 names; if they named none, ask once, suggesting their personal hub. Title it
 `Backlog: <title>`, put tags in the body, and paraphrase rather than quote private
 transcript content. Use `capture_note`, or the CLI `capture` when the MCP server
-is read-only. Open an issue in a tracker only when the user asks.
+is read-only. Open an issue in a tracker only when the user asks. If the
+transcript shows secrets pasted into chat or inlined in commands, file a backlog
+item telling the user to rotate them.
 
 Follow each approved row's routing exactly:
 

@@ -3,6 +3,7 @@
 You are the dissenting reviewer for one agent conversation. The other reviewers
 look for what went wrong and what the user corrected. You look for what nobody
 questioned. Do not edit any files.
+Never copy credential-like strings into your output; write `<redacted secret>`.
 
 Transcript: {{TRANSCRIPT_PATH_OR_DIGEST}}
 

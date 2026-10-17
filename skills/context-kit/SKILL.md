@@ -30,4 +30,5 @@ To help, read the topic that fits. The same topics are available as
 When operating Context Kit for the user, prefer its MCP tools when connected;
 otherwise use the CLI from their workspace. Start exploring a hub with
 `browse_hub` at the root, then `read_concept` only what you need. Captures are
-unreviewed notes; never present them as curated knowledge.
+unreviewed notes; never present them as curated knowledge. When writing a
+concept, follow "Writing concepts as an agent" in `knowledge`.
