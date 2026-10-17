@@ -4,6 +4,10 @@ A change's deltas say what should eventually be true. A pull request is one
 independently reviewable step towards it. Progress is derived from git, never
 recorded by hand.
 
+Use [independent-review](../skills/independent-review/SKILL.md) for proportionate
+plan/output review gates before implementation and readiness, then validate the
+reviewed current head and merge only within the user's authorization.
+
 ```
 proposal (target truth) ─accepted→ slices.yaml ─→ PRs, in parallel where independent
    → reconcile ("did we build it?") → archive → canonical specs → garden ("is it well shaped?")

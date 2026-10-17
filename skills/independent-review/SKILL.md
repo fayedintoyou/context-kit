@@ -13,10 +13,13 @@ scope and the active environment's delegation rules.
 ## Prepare the review
 
 State the intended outcome, constraints, and observable completion criteria.
-Give a fresh reviewer the actual plan or artifact, relevant source material, and
-enough context to judge it. Include user corrections. Avoid coaching the reviewer
-toward agreement or a preferred conclusion. For output review, supply the diff
-or artifact and validation evidence, not only the implementer's summary.
+Give a fresh reviewer the actual plan or artifact, relevant source material,
+and enough context to judge it. Include user corrections. Avoid coaching the
+reviewer toward agreement or a preferred conclusion. For output review, supply
+the diff or artifact and validation evidence, not only the implementer's
+summary. Identify the plan/spec/tasks reviewed; for output, name base/head
+SHAs, relevant specs and tests, results, skips and limits. Supply uncommitted
+artifacts explicitly.
 
 Use another model when useful and available. One reviewer is often sufficient;
 add perspectives for distinct uncertainties, not to manufacture consensus. Select
@@ -34,15 +37,30 @@ findings tied to evidence, their consequences, and a proportionate remedy.
 Review the findings yourself. Mark each material finding as accepted, deferred,
 or dismissed with a reason. Model agreement is supporting evidence, not proof.
 Implement accepted changes within the authorized scope; propose changes that
-would expand it. Run the checks affected by a fix.
+would expand it. Run the checks affected by a fix. Align supporting artifacts
+with an authorized decision without asking again; ask about new scope or
+acceptance choices. Respect any explicit confirmation requirements of another
+workflow you invoke.
 
-Use a fresh review round when material changes or unresolved disagreements
-justify it. Include the original brief, corrections, prior findings, dispositions,
-and current artifact. Stop when completion criteria are met and material findings
-are resolved or explicitly deferred. Do not iterate indefinitely over style.
+Require a fresh independent round after material fixes; use judgment for
+editorial corrections and unresolved disagreements. Include the original brief,
+corrections, prior findings, dispositions, and current artifact. Stop when
+completion criteria are met and material findings are resolved or explicitly
+deferred. Do not iterate indefinitely over style. Unresolved material blockers
+prevent readiness; deferral is not a way to bypass an unmet completion
+criterion.
+
+A late review can assess current readiness, but cannot establish that an
+earlier preimplementation gate occurred. Keep owning pending review/CI using
+the wait or continuation the runtime offers; if blocked, state what remains.
+Pending gates are not a finished handoff. Passing review or CI is not merge
+authorization; reuse existing scoped authorization and ask only for missing
+authorization or changed scope.
 
 ## Report
 
-Name the reviewers, the important findings, what changed, what was verified, and
-anything unresolved. Keep task review records with the task. Promote only a
-reusable lesson into a hub or skill, preserving the user's actual preference.
+Name the reviewers, the important findings, what changed, what was verified,
+and anything unresolved. Keep a minimal task-local record of stage, artifact
+identity, reviewer, finding dispositions, fixes/checks and remaining gates or
+limits. Promote only a reusable lesson into a hub or skill, preserving the
+user's actual preference.
