@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, writeFile, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, realpath, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,14 +48,15 @@ async function fixture(t) {
   await writeSpec(store, 'shared-auth');
   await writeFile(join(store, 'openspec/config.yaml'), 'schema: spec-driven\n');
   await exec(process.execPath, [openspecBin, 'store', 'register', store, '--id', 'platform', '--yes', '--json'], { env });
-  const hubCli = async (...args) => {
+  const run = extra => async (...args) => {
     try {
-      const { stdout } = await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, ...args], { env });
+      const { stdout } = await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, ...args], { env: { ...env, ...extra } });
       return JSON.parse(stdout);
     } catch (error) {
       return JSON.parse(error.stderr || error.stdout);
     }
   };
+  const hubCli = Object.assign(run({}), { withEnv: run });
   return { base, env, workspace, store, hubCli };
 }
 
@@ -73,7 +74,8 @@ test('repository and shared store specs stay separate with provenance', async t 
 
   const read = await hubCli('specs', 'read', 'shared-auth', '--store', 'platform');
   assert.match(read.spec.content, /Shared shared-auth behavior/);
-  assert.deepEqual((await hubCli('specs', 'stores')).stores, [{ storeId: 'platform', hub: 'team/platform' }]);
+  assert.deepEqual((await hubCli('specs', 'stores')).stores, [{ storeId: 'platform', via: 'hub', hub: 'team/platform' }]);
+  assert.equal((await hubCli('specs', 'read', 'missing-spec', '--store', 'platform')).error.code, 'UNKNOWN_SPEC');
 });
 
 // spec: canonical-spec-audit / Audit a store directly
@@ -107,6 +109,18 @@ test('a repository that delegates to a store is not mistaken for its own specs',
   assert.equal((await hubCli('specs', 'list')).error.code, 'WRONG_SPEC_ROOT');
 });
 
+// spec: canonical-spec-audit / Reject inherited root
+test('a workspace without its own OpenSpec root does not inherit a parent repository', async t => {
+  const { base, workspace, hubCli } = await fixture(t);
+  await rm(join(workspace, 'openspec'), { recursive: true });
+  await writeSpec(base, 'parent-only');
+  await writeFile(join(base, 'openspec/config.yaml'), 'schema: spec-driven\n');
+  const listing = await hubCli('specs', 'list');
+  assert.equal(listing.error.code, 'WRONG_SPEC_ROOT');
+  assert.equal(listing.specs, undefined);
+  assert.equal((await hubCli('specs', 'audit')).error.code, 'WRONG_SPEC_ROOT');
+});
+
 // The workspace repository references `platform` (registered) and `missing` (not registered);
 // `platform` itself references `nested`, which must not be followed.
 async function referencing(t) {
@@ -129,6 +143,7 @@ async function referencing(t) {
 // spec: canonical-spec-audit / Repository references a registered store
 // spec: canonical-spec-audit / Referenced store is missing
 // spec: canonical-spec-audit / Same identifier in repository and store
+// spec: canonical-spec-audit / Read a referenced store
 test('repository listings report referenced stores separately and one level deep', async t => {
   const { hubCli } = await referencing(t);
   const listing = await hubCli('specs', 'list');
@@ -145,6 +160,9 @@ test('repository listings report referenced stores separately and one level deep
 
   const read = await hubCli('specs', 'read', 'shared-auth', '--store', 'platform');
   assert.deepEqual(read.source, { kind: 'store', storeId: 'platform' });
+  const stores = (await hubCli('specs', 'stores')).stores;
+  assert.deepEqual(stores.map(({ storeId, via, status }) => ({ storeId, via, status })),
+    [{ storeId: 'platform', via: 'reference', status: 'available' }, { storeId: 'missing', via: 'reference', status: 'warning' }]);
   assert.equal((await hubCli('specs', 'list', '--store', 'nested')).error.code, 'UNKNOWN_STORE');
 });
 
@@ -178,6 +196,10 @@ test('repository audits list referenced requirements apart from their own', asyn
   assert.equal(platform.checklist[0].semantic, 'not_assessed');
   const ownKeys = new Set(audit.checklist.map(item => item.key));
   assert.ok(!ownKeys.has(platform.checklist[0].key));
+  assert.equal(platform.status, 'structurally_valid');
+  assert.equal(platform.structural.strict, true);
+  assert.equal(audit.snapshot.gitRoot, workspace);
+  assert.equal(audit.snapshot.rootIsGitRoot, true);
   assert.deepEqual(audit.referenceWarnings.map(item => item.storeId), ['missing']);
 });
 
@@ -192,4 +214,41 @@ test('a repository with only pending changes is reported, not passed', async t =
   assert.equal(audit.status, 'no_canonical_specs');
   assert.deepEqual(audit.checklist, []);
   assert.equal(audit.structural.valid, false);
+});
+
+// spec: canonical-spec-audit / Referenced store changes during audit
+test('an audit fails when a referenced store changes between its collections', async t => {
+  const { base, store, hubCli } = await referencing(t);
+  // The audit reads git state once per root per collection; this stand-in git edits the
+  // store when the audit inspects it the second time, i.e. during the second collection.
+  const shim = join(base, 'bin');
+  await mkdir(shim);
+  const realGit = (await exec('sh', ['-c', 'command -v git'])).stdout.trim();
+  await writeFile(join(shim, 'git'), `#!/bin/sh
+if [ "$(pwd -P)" = "${store}" ] && [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then
+  n=$(( $(cat "${base}/git-count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "${base}/git-count"
+  [ "$n" = 2 ] && printf '\\nEdited mid-audit.\\n' >> "${store}/openspec/specs/shared-auth/spec.md"
+fi
+exec "${realGit}" "$@"
+`);
+  await chmod(join(shim, 'git'), 0o755);
+  const audit = await hubCli.withEnv({ PATH: `${shim}:${process.env.PATH}` })('specs', 'audit');
+  assert.equal(audit.error?.code, 'SNAPSHOT_CHANGED');
+});
+
+
+// spec: canonical-spec-audit / Audit current code
+test('an audit nested in a larger repository reports that repository and only its own changes', async t => {
+  const { base, env, workspace, hubCli } = await fixture(t);
+  const git = (...args) => exec('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { cwd: base, env });
+  await git('init', '-q');
+  await git('add', 'workspace');
+  await git('commit', '-q', '-m', 'Workspace only');
+  await writeFile(join(base, 'unrelated.txt'), 'outside the audited root');
+  const audit = await hubCli('specs', 'audit');
+  assert.equal(audit.snapshot.gitRoot, base);
+  assert.equal(audit.snapshot.rootIsGitRoot, false);
+  assert.equal(audit.snapshot.dirty, false);
+  await writeFile(join(workspace, 'new.txt'), 'inside');
+  assert.equal((await hubCli('specs', 'audit')).snapshot.dirty, true);
 });

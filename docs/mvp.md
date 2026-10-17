@@ -19,5 +19,7 @@ a skill, capture a finding, and find it again from either a CLI or an agent.
 ## Deliberately later
 
 Remote HTTP hosting, phone setup, interactive pages, external service credentials,
-multi-repository discovery, and arbitrary user-installed operation execution.
+discovering hubs across repository checkouts, and arbitrary user-installed
+operation execution. Specs shared across repositories are already readable
+through OpenSpec stores that a hub declares or a repository references.
 This iteration proves local behavior before deploying it.

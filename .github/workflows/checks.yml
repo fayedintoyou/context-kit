@@ -44,11 +44,13 @@ jobs:
           cache: npm
       - run: npm ci
       - id: audit
-        run: node bin/hub.mjs --root . specs audit > canonical-spec-audit.json
+        run: node bin/hub.mjs --root . specs audit > canonical-spec-audit.json 2> canonical-spec-audit-errors.json
         continue-on-error: true
       - uses: actions/upload-artifact@v4
         with:
           name: canonical-spec-audit-${{ github.sha }}
-          path: canonical-spec-audit.json
+          path: |
+            canonical-spec-audit.json
+            canonical-spec-audit-errors.json
       - if: steps.audit.outcome == 'failure'
         run: exit 1

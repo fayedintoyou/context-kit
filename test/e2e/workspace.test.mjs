@@ -152,8 +152,10 @@ test('validation rejects escaped, missing, duplicate and unlinked hub content', 
   await symlink(join(base, 'outside.md'), join(hub, 'linked.md'));
   const linked = await expectInvalid({ documents: ['linked.md'] }, /escapes its root/);
   assert.doesNotMatch(linked.stderr, /Outside secret/);
-  await expectInvalid({ documents: ['missing.md'] }, /ENOENT|missing/);
-  await expectInvalid({ links: ['personal/missing'] }, /Unknown linked hub/);
+  const missing = await expectInvalid({ documents: ['missing.md'] }, /missing\.md/);
+  assert.equal(missing.error.code, 'NOT_FOUND');
+  assert.doesNotMatch(missing.error.message, new RegExp(base));
+  assert.equal((await expectInvalid({ links: ['personal/missing'] }, /Unknown linked hub/)).error.code, 'INVALID_MANIFEST');
   await writeFile(manifestPath, JSON.stringify(original));
   await mkdir(join(workspace, 'hubs/copy'));
   await writeFile(join(workspace, 'hubs/copy/hub.json'), JSON.stringify(original));
