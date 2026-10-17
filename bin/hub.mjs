@@ -5,7 +5,7 @@ import { parseArgs } from '../lib/arguments.mjs';
 import { fail, errorData } from '../lib/files.mjs';
 
 const help = `Usage: node bin/hub.mjs [--root <directory>] <command>
-  init <new-directory>
+  init <new-directory> [--kit <npm-spec>]
   list | validate
   context <hub-id> [--inbox]
   search <text> [--inbox]
@@ -14,15 +14,16 @@ const help = `Usage: node bin/hub.mjs [--root <directory>] <command>
   specs stores | specs list | specs read <spec-id> | specs audit   [--store <id>]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
-  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--help']);
+  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--help']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
     const [command, ...args] = positional;
     let result;
     if (command === 'init' && args.length === 1) {
-      if (options['--root'] || options['--inbox']) fail('INVALID_INPUT', 'init takes its destination as an argument');
-      result = await initWorkspace(args[0]);
+      if (options['--root'] || options['--inbox'] || options['--store']) fail('INVALID_INPUT', 'init takes its destination as an argument');
+      result = await initWorkspace(args[0], { kit: options['--kit'] });
     } else {
+      if (options['--kit']) fail('INVALID_INPUT', '--kit applies only to init');
       const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', allowWrite: true };
       const count = { list: 0, validate: 0, context: 1, search: 1, 'read-skill': 2, capture: 2 };
       if (options['--inbox'] && !['context', 'search'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context/search');

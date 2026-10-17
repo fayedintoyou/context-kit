@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "description": "Core tooling for Git-backed context workspaces used by people and agents.",
+  "repository": "github:fayedintoyou/context-kit",
+  "bin": {
+    "context-kit": "bin/hub.mjs",
+    "context-kit-mcp": "bin/mcp.mjs"
+  },
   "engines": {
     "node": ">=22"
   },

@@ -32,16 +32,30 @@ sources, or include linked hubs automatically. Commands work from any directory.
 
 ## Your own workspace
 
-Keep personal context outside this public checkout. `node bin/hub.mjs init <new-directory>`
-creates a starter workspace. Select one with `--root <directory>` or
-`CONTEXT_KIT_ROOT`; without either, commands read this checkout and capture is
-refused. `capture <hub-id> <title>` writes stdin as a new unreviewed note in that
-hub's `inbox/`, without committing. `search` and `context` include inbox notes
-only with `--inbox`.
+This repository is the core tooling. Your context lives in your own workspace, an
+instance of the core kept in its own (usually private) repository:
+
+```sh
+node bin/hub.mjs init ~/context          # starter hub plus a package.json pinning this core
+cd ~/context && npm install
+npm run hub -- list                      # the core's CLI, rooted at this workspace
+npm run mcp                              # the core's MCP server, rooted at this workspace
+```
+
+`init` pins this core's repository at its current commit when the checkout is
+clean (or pass `--kit <npm-spec>`). Upgrade an instance deliberately by changing
+that dependency. Bundled skills are referenced as `kit:<name>`, so the instance
+uses the core's copies rather than forks.
+
+`capture <hub-id> <title>` writes stdin as a new unreviewed note in that hub's
+`inbox/`, without committing. `search` and `context` include inbox notes only with
+`--inbox`. Outside an instance, select a workspace with `--root <directory>` or
+`CONTEXT_KIT_ROOT`; with neither, commands read this checkout and capture is
+refused.
 
 ## Agents over MCP
 
-`node bin/mcp.mjs --root <workspace>` serves the same operations to a local MCP
+`npm run mcp` in an instance, or `node bin/mcp.mjs --root <workspace>`, serves the same operations to a local MCP
 client over stdio. The root is fixed at startup. Capture is offered only with
 `--allow-write`.
 
