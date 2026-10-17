@@ -265,3 +265,24 @@ test('a repository without hubs can still read the stores it references', async 
   assert.equal((await hubCli('specs', 'list', '--store', 'nested')).error.code, 'UNKNOWN_STORE');
 });
 
+
+// spec: spec-gardening / Garden a repository
+test('store gardening uses its own canonical tree, locks, taxonomy and no code trace', async t => {
+  const { store, workspace, hubCli } = await fixture(t);
+  await writeFile(join(store, 'openspec/taxonomy.yaml'), 'domains: { shared-auth: { purpose: Shared authentication } }\n');
+  await mkdir(join(store, 'openspec/changes/edit/specs/shared-auth'), { recursive: true });
+  await writeFile(join(store, 'openspec/changes/edit/specs/shared-auth/spec.md'), '## MODIFIED Requirements\n### Requirement: shared-auth works\n');
+  await mkdir(join(store, 'test/e2e'), { recursive: true });
+  await writeFile(join(store, 'test/e2e/auth.test.mjs'), "// spec: shared-auth / Use shared-auth\ntest('auth', () => {});\n");
+  const report = await hubCli('specs', 'garden', '--store', 'platform');
+  assert.equal(report.root, store);
+  assert.deepEqual(report.source, { kind: 'store', storeId: 'platform' });
+  assert.deepEqual(report.specs.map(s => s.id), ['shared-auth']);
+  assert.equal(report.specs[0].domain, 'declared');
+  assert.deepEqual(report.requirements[0].lockedBy, ['edit']);
+  assert.equal(report.trace.status, 'not_collected');
+  assert.equal(report.requirements[0].untested, null);
+  assert.deepEqual(report.requirements.map(r => r.key), (await hubCli('specs', 'audit', '--store', 'platform')).checklist.map(r => r.key));
+  assert.equal((await hubCli('specs', 'garden', '--store', 'unknown')).error.code, 'UNKNOWN_STORE');
+  assert.equal((await hubCli('specs', 'garden', '--store', '../bad')).error.code, 'INVALID_INPUT');
+});

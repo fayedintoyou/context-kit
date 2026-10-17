@@ -75,8 +75,16 @@ makes sense.
    `RENAMED FROM/TO` pair carries history forward to the new name. The date is
    the archive directory's prefix. A requirement with no history entries was
    written directly into `openspec/specs/`, and the report says so (`history: []`)
-   instead of guessing. Alternative: `git log -L` per requirement. Rejected as
-   slow, and a move inside a file defeats it.
+   instead of guessing. Rename predecessors are resolved by name and archive
+   date, so same-day archive names and delta section order cannot erase earlier
+   entries; history remains sorted by date. An `ADDED` or rename into a reused
+   name begins a new lineage; predecessor traversal stops at the selected
+   archive date. When multiple lineage starts share that date, the archives
+   cannot disambiguate them: omit that day's disputed entries from `history`
+   and report `historyAmbiguities` with the key, date, candidate changes and
+   `same_day_name_reuse` reason. Empty history with an ambiguity is unknown,
+   not evidence of a direct canonical edit. Alternative: `git log -L` per
+   requirement. Rejected as slow, and a move inside a file defeats it.
 
 4. **Locks from active changes.** Any active change (not `archive/`) whose delta
    names a capability marks that spec. One that names a requirement under
@@ -172,13 +180,21 @@ makes sense.
   spec-links check makes the breakage loud. A future alias mechanism could avoid
   it.
 - **Retiring an entire capability.** Removing every requirement can leave an
-  empty spec. To check during implementation: what OpenSpec 1.14 does on
-  archive. The skill's tasks then delete the folder explicitly if needed.
+  empty spec. Verified against pinned OpenSpec 1.14.3: archive refuses the
+  removal without `retire_capabilities: true` alongside `schema` in the change's
+  `.openspec.yaml`. With that marker and no unaccounted content it deletes the
+  canonical spec and prunes the empty folder. The skill proposes tasks for the
+  marker and preserving any unaccounted content, never direct canonical deletion.
 
 ## Open Questions
 
 - Should `audit_specs` include the garden report's `lockedBy` so audits also
   warn about in-flight edits? Leaning no, to keep the audit focused.
-- Default limits (12 requirements / 300 lines) are guesses from this repo, where
-  the largest spec has 9 requirements and 85 lines. Revisit after running the
-  report on a larger tree.
+- Default limits calibrated on 2026-10-17 against this repository and
+  `~/context/node_modules/context-kit`: both have 10 canonical capabilities,
+  48 requirements and 59 scenarios, with maxima of 9 requirements and 85 lines
+  (`canonical-spec-audit`). Both report zero lexical pairs at 0.35. Retain
+  12 requirements / 300 lines / 0.35 as built-in defaults; neither available
+  tree warrants raising them. The pinned copy's addon layout is rejected by
+  the current workspace loader, so its report was run with the same
+  `gardenSpecs(openSpec(root))` path directly, without changing the pin.

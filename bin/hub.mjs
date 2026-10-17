@@ -20,7 +20,7 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   read-skill <hub-id> <reference> [--file <path>]
   capture <hub-id> <title> [--by <actor>]   (UTF-8 body on stdin)
   repos | repos locate <repo> <path> | repos clone <repo> [<path>] | repos scan <directory> | repos sync
-  specs stores | specs list | specs read <spec-id> | specs audit   [--store <id>]
+  specs stores | specs list | specs read <spec-id> | specs audit | specs garden   [--store <id>]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
   const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--allow-write', '--global-mcp', '--name', '--help']);
@@ -56,7 +56,7 @@ try {
       const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', actor: options['--by'] || KIT_ACTOR, allowWrite: true };
       const count = { help: [0, 1], addons: [0], skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [2], search: [1], 'read-skill': [2], capture: [2] };
       if (options['--inbox'] && !['context', 'search', 'browse', 'read'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context, search, browse and read');
-      if (options['--store'] && (command !== 'specs' || args[0] === 'stores')) fail('INVALID_INPUT', '--store applies only to specs list/read/audit');
+      if (options['--store'] && (command !== 'specs' || args[0] === 'stores')) fail('INVALID_INPUT', '--store applies only to specs list/read/audit/garden');
       const store = options['--store'] ? { store: options['--store'] } : {};
       if (command === 'repos') {
         if (args.length === 0) result = await execute(selection, 'list_repos');
@@ -68,6 +68,7 @@ try {
       } else if (command === 'specs') {
         if (args[0] === 'stores' && args.length === 1) result = await execute(selection, 'list_spec_stores');
         else if (args[0] === 'list' && args.length === 1) result = await execute(selection, 'list_specs', store);
+        else if (args[0] === 'garden' && args.length === 1) result = await execute(selection, 'garden_specs', store);
         else if (args[0] === 'audit' && args.length === 1) result = await execute(selection, 'audit_specs', store);
         else if (args[0] === 'read' && args.length === 2) result = await execute(selection, 'read_spec', { id: args[1], ...store });
         else fail('INVALID_INPUT', help);

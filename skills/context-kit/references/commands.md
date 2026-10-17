@@ -29,6 +29,7 @@ CLI: `context-kit [--root <dir>] <command>`; inside a workspace, `npm run hub --
 | `specs list` | `list_specs` | Canonical specs (`--store`) |
 | `specs read <id>` | `read_spec` | One spec (`--store`) |
 | `specs audit` | `audit_specs` | Structural audit (`--store`) |
+| `specs garden` | `garden_specs` | Spec gardening signals (`--store`) |
 
 MCP server: `context-kit-mcp --root <workspace> [--allow-write] [--no-skill-prompts]`
 (`npm run mcp` in a workspace). Its root is fixed at startup; tools cannot change it.

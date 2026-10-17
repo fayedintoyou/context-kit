@@ -29,6 +29,7 @@ async function fixture(t, addons) {
 }
 
 // spec: addons / List addons
+// spec: spec-gardening / Specs addon lists the gardener
 test('addons list core, kit addons and workspace skill-only addons', async t => {
   const { workspace, init, cli } = await fixture(t);
   assert.deepEqual(init.json.addons, ['reflect', 'review', 'specs']);
@@ -41,7 +42,7 @@ test('addons list core, kit addons and workspace skill-only addons', async t => 
     ['core', 'kit', true, ['context-kit']],
     ['reflect', 'kit', true, ['reflect']],
     ['review', 'kit', true, ['independent-review']],
-    ['specs', 'kit', true, ['audit-canonical-specs']],
+    ['specs', 'kit', true, ['audit-canonical-specs', 'garden-canonical-specs']],
     ['drafting', 'workspace', false, ['house-style']]]);
 });
 
