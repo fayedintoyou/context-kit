@@ -351,7 +351,9 @@ test('an invalid parties file fails store reads with INVALID_CONFIG naming the p
   await fails(partiesFile({ 'shared-auth': ['site', 'web'] }), /undeclared party "web"/, [['parties'], ['list']]);
   await fails(partiesFile({ 'shared-auth': ['site', '""'] }), /undeclared party ""/);
   await fails(partiesFile({}, { site: 'file:///tmp/%ZZ', game }), /party site upstream is not a git URL/);
-  await fails('parties:\n  site: { url: x }\n  game: ' + game + '\n', /party site upstream is not a git URL/);
+  await fails('parties:\n  site: { url: x }\n  game: ' + game + '\n', /party site upstream is not a git URL: a map/);
+  await fails('parties:\n  site: &loop { self: *loop }\n  game: ' + game + '\n', /party site upstream is not a git URL: a map/);
+  await fails('parties:\n  site: &loop [*loop]\n  game: ' + game + '\n', /party site upstream is not a git URL: a list/);
   await fails('parties: [site\n', /not valid YAML/);
   await fails(partiesFile({}, { Site: site, game }), /invalid party name Site/);
   await fails(partiesFile({}, { site: 'example/site', game }), /party site upstream is not a git URL/);
