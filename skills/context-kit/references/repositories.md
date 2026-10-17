@@ -6,6 +6,21 @@ has a new issue") instead of searching for it.
 
 ## Registering a repository
 
+Add it to any hub: your personal one, or a team hub that several people keep in
+Git together, so everyone's agents know the team's repositories.
+
+```sh
+npm run hub -- repos add personal/projects https://github.com/me/room --title "the room" --alias room,fayelore.com
+cd ~/code/billing && npm --prefix ~/context run hub -- repos add team/platform --path .   # upstream from git
+```
+
+`repos add` writes a draft Repository concept (a person promotes it), lists it in
+the hub's index, and rebuilds the `my-repos` skill. With `--path` it reads the
+upstream from the checkout's `origin` and records where it is on this machine. It
+refuses an upstream, alias or concept that is already in use. Agents can do the same
+over MCP with `add_repo` when the server allows writes; they never record paths.
+Then fill in the concept with what someone needs to work on the repository.
+
 A repository is any concept with `type: Repository`. Its `resource` is the upstream
 and `aliases` lists what you call it:
 

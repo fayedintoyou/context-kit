@@ -101,6 +101,14 @@ workspace (`init` writes it to `.gitignore`). Both agents accept the frontmatter
    machine-specific paths. A workspace that isn't a git checkout yet reports the
    hooks as skipped.
 
+10. **`repos add` writes a draft concept, never local paths.** The concept goes to
+    `<hub>/<concept>.md` (default concept id: the upstream's repository name) with
+    `status: draft` and `generated` set to the real actor and time, following the
+    rule that agents write curated concepts only as drafts. It is appended to the
+    index in the concept's directory, or the hub's root index. Existing upstreams,
+    concept files and alias collisions are refused before anything is written.
+    `--path` is CLI-only for the same reason `locate` is.
+
 ## Risks / Trade-offs
 
 - [Many repositories make a long description and weaker triggering] → Drop aliases
