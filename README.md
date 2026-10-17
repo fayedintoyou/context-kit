@@ -87,8 +87,17 @@ Durable documents live in Git. Credentials and disposable execution state do
 not. Live services remain authoritative for their own state; avoid a second copy
 that quietly becomes stale.
 
-Skills are repository artifacts, not globally installed skills. Agents can read
-them by path; runtime-specific discovery and adapters can be added later.
+Skills are repository artifacts, not globally installed skills. Hubs declare
+them (`kit:<name>` for skills bundled here), `skills` lists them, and
+`read-skill <hub> <reference> [--file <path>]` reads a skill or its reference
+files. The MCP server also offers every declared skill as a prompt, so a client
+can invoke it directly; Claude Code shows them as `/mcp__<server>__<skill>`.
+
+Bundled skills: `independent-review` (plan and output review),
+`audit-canonical-specs` (evidence-based spec audits) and `reflect` (three
+parallel reviewers turn a conversation's learnings into proposed edits on skills
+and hub knowledge, applied only after approval). Improve them with `reflect`
+itself.
 
 This is a local starting point. Remote MCP over HTTP, Tailscale hosting, external service
 adapters, and interactive pages are future increments.

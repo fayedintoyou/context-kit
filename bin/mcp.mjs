@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { ListToolsRequestSchema, CallToolRequestSchema, ListPromptsRequestSchema, GetPromptRequestSchema, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { splitFrontmatter } from '../lib/okf.mjs';
 import { z } from 'zod';
 import { operations, execute } from '../lib/operations.mjs';
 import { selectRoot } from '../lib/workspace.mjs';
@@ -20,7 +21,7 @@ try {
   const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT),
     allowWrite: Boolean(options['--allow-write']), source: 'mcp' };
   // Low-level Server so arguments reach execute(): CLI and MCP share one validation path and coded errors.
-  const server = new Server({ name: 'context-kit', version: '0.2.0' }, { capabilities: { tools: {} } });
+  const server = new Server({ name: 'context-kit', version: '0.2.0' }, { capabilities: { tools: {}, prompts: {} } });
   const tools = operations(selection.allowWrite).map(([name, definition]) => ({ name, description: definition.description,
     inputSchema: z.toJSONSchema(definition.schema, { io: 'input', target: 'draft-7' }),
     annotations: { readOnlyHint: !definition.write, destructiveHint: false, openWorldHint: false, idempotentHint: !definition.write } }));
@@ -32,6 +33,30 @@ try {
     } catch (error) {
       return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: errorData(error) }) }] };
     }
+  });
+  // Each declared skill is also a prompt, so clients can invoke it directly (for example
+  // as a slash command) without installing skills into the client.
+  async function prompts() {
+    const { skills } = await execute(selection, 'list_skills');
+    const used = new Set();
+    return skills.map(skill => {
+      let name = skill.name;
+      for (let n = 2; used.has(name); n++) name = `${skill.name}-${n}`;
+      used.add(name);
+      return { name, skill };
+    });
+  }
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: (await prompts()).map(({ name, skill }) => ({ name, description: skill.description })) }));
+  server.setRequestHandler(GetPromptRequestSchema, async ({ params }) => {
+    const entry = (await prompts()).find(item => item.name === params.name);
+    if (!entry) throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${params.name}`);
+    const { skill } = entry;
+    const { content } = await execute(selection, 'read_skill', { id: skill.hubs[0], reference: skill.reference });
+    const body = (splitFrontmatter(content)?.body ?? content).trim();
+    const how = `Read this skill's other files with the Context Kit read_skill tool: ` +
+      `{"id": "${skill.hubs[0]}", "reference": "${skill.reference}", "file": "<path relative to the skill directory>"}.`;
+    return { description: skill.description, messages: [{ role: 'user', content: { type: 'text', text: `${body}\n\n---\n${how}` } }] };
   });
   await server.connect(new StdioServerTransport());
 } catch (error) {
