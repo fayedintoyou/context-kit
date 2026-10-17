@@ -1,5 +1,9 @@
 # Spec Delta
 
+## Purpose
+
+Keep canonical specs well organized over time: report deterministic signals about their shape (size, history, locks, overlap, trace, taxonomy) and turn evidence-based maintenance into ordinary reviewed changes, never direct rewrites.
+
 ## ADDED Requirements
 
 ### Requirement: Garden report

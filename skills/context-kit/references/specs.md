@@ -14,6 +14,8 @@ deltas are not canonical.
 | Next slices to build | `specs next <change>` | `next_slices` |
 | One slice's packet | `specs slice <change> <slice>` | `read_slice` |
 | Reconcile a change | `specs reconcile <change>` | `reconcile_change` |
+| Changes ready to archive | `specs archivable` | `archivable_changes` |
+| Archive ready changes (no commit) | `specs archive --ready` | CLI only |
 
 Specs either live beside a repository's code or in a **shared store** (an
 OpenSpec planning repository registered with `openspec store register`). A store
@@ -98,3 +100,18 @@ slices, stray trailers, uncovered requirements and unlinked scenarios. The
 `reconcile-change` skill judges them and reviews one slice's PR through
 `independent-review`. These operations read the workspace repository only, not
 stores.
+
+## Archiving after merge
+
+A change is ready to archive when OpenSpec counts every task ticked and, with a
+slice plan, every slice has landed. `specs archivable` lists each active change
+with `ready` or its blockers: `no_tasks`, `tasks_incomplete` (an unticked task
+also holds a change open on purpose), `slices_unlanded` (naming the slices) or
+`invalid_plan`. `specs archive --ready` archives exactly the ready changes
+through the pinned OpenSpec CLI, validates canonical specs strictly and reports
+`archived` and `skipped`. It never commits and is not offered over MCP.
+
+The reusable `.github/workflows/openspec.yml` runs this on every push to the
+default branch, tests the result and pushes the archive commit, and on pull
+requests fails when `openspec/specs/` is edited directly unless the PR has the
+`canonical-edit` label. See `docs/delivery.md` for the caller workflow.

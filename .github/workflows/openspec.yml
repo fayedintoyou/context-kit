@@ -1,0 +1,90 @@
+name: openspec
+
+# Reusable process for repositories that use OpenSpec (docs/delivery.md):
+# - archive: on a push to the default branch, archive every change whose tasks are all
+#   ticked and whose planned slices have all landed, test the result, commit and push.
+# - canonical-guard: on pull requests, canonical specs change only through archived
+#   changes; the canonical-edit label allows a deliberate direct edit.
+# Callers grant `contents: write` and include `labeled`/`unlabeled` in pull_request types.
+on:
+  workflow_call:
+    inputs:
+      kit:
+        description: Command that runs the Context Kit CLI. Pin it to a commit.
+        type: string
+        default: npx --yes --package=github:fayedintoyou/context-kit context-kit
+      setup:
+        description: Extra setup before the tests, such as installing browsers.
+        type: string
+        default: ''
+      test:
+        description: The repository's test command, run on the archived tree before pushing.
+        type: string
+        default: npm test
+      node-version:
+        type: string
+        default: '24'
+
+env:
+  OPENSPEC_TELEMETRY: '0'
+  DO_NOT_TRACK: '1'
+
+jobs:
+  archive:
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    concurrency: openspec-archive
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+      - name: Install
+        run: if [ -f package-lock.json ]; then npm ci; fi
+      - name: Archive ready changes
+        id: archive
+        run: |
+          ${{ inputs.kit }} --root . specs archive --ready > "$RUNNER_TEMP/archive.json"
+          cat "$RUNNER_TEMP/archive.json"
+          names=$(node -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(r.archived.map(a => a.name).join(", "))' "$RUNNER_TEMP/archive.json")
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+      - name: Set up tests
+        if: steps.archive.outputs.names != '' && inputs.setup != ''
+        run: ${{ inputs.setup }}
+      - name: Test the archived tree
+        if: steps.archive.outputs.names != ''
+        run: ${{ inputs.test }}
+      - name: Commit and push
+        if: steps.archive.outputs.names != ''
+        env:
+          NAMES: ${{ steps.archive.outputs.names }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add openspec
+          git commit -q -m "Archive $NAMES after merge" -m "Every task was ticked and every planned slice had landed (specs archive --ready)."
+          git push || { git pull --rebase && git push; }
+
+  canonical-guard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Canonical specs change only through archived changes
+        env:
+          LABELED: ${{ contains(github.event.pull_request.labels.*.name, 'canonical-edit') }}
+        run: |
+          # The pull_request checkout is a merge commit whose first parent is the base.
+          files=$(git diff --name-only HEAD^1 HEAD -- openspec/specs)
+          [ -z "$files" ] && exit 0
+          if [ "$LABELED" = true ]; then echo "::notice::canonical-edit label allows direct edits: $files"; exit 0; fi
+          for file in $files; do
+            echo "::error file=$file::Canonical specs change only by archiving an OpenSpec change after merge. Put this edit in a change, or add the canonical-edit label."
+          done
+          exit 1

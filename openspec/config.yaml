@@ -5,6 +5,13 @@ context: |
   `// spec: <capability> / <scenario>`; npm test fails on unlinked scenarios.
   Unit tests are exceptions with a `// because:` reason. See docs/testing.md.
 
+  Lifecycle (docs/delivery.md): tick tasks in tasks.md as they are done. Do not run
+  `openspec archive` in a pull request; the openspec workflow archives a change after
+  merge once every task is ticked and every slice in its slices.yaml has landed. To keep
+  a finished-looking change open, leave a task unticked. Never edit openspec/specs/
+  directly: canonical specs change only by archiving a change. A delta that creates a
+  new capability starts with a `## Purpose` section, or archiving it fails validation.
+
 rules:
   specs:
     - Write each scenario so its WHEN/THEN can be driven through the CLI or MCP and asserted end to end.

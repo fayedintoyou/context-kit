@@ -121,6 +121,11 @@ work packets for ready slices and list facts for reconciliation;
 [reconcile-change](skills/reconcile-change/SKILL.md) checks what was built. See
 [docs/delivery.md](docs/delivery.md).
 
+Finished changes are archived after merge, not in PRs: the reusable
+[openspec workflow](.github/workflows/openspec.yml) runs `specs archive --ready`
+on every push to the default branch, tests the result and pushes the archive, and
+fails pull requests that edit `openspec/specs/` directly.
+
 ## Contribute
 
 Update the relevant hub when work changes its understanding. Keep source links

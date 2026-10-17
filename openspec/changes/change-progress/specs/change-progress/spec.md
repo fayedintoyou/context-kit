@@ -1,5 +1,9 @@
 # Spec Delta
 
+## Purpose
+
+Deliver an accepted change as independently mergeable slices: plan them in the change, derive which have landed from commit trailers and pull requests, hand out self-contained work packets, and check what was built against the change before archive.
+
 ## ADDED Requirements
 
 ### Requirement: Slice plan
