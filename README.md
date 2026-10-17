@@ -1,4 +1,4 @@
-# Hubs
+# Context Kit
 
 Git-backed context and working methods for agents and people. A hub describes an
 area of activity, points to relevant resources, and explains how to work there.
