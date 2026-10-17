@@ -582,6 +582,7 @@ test('a party with no recorded checkout leaves its slices unknown with remedies'
 
 // spec: change-progress / Fork checkout
 // spec: change-progress / No checkout for a party
+// spec: change-progress / Party remote not fetched
 test('a party checkout with no remote for its upstream leaves its slices unknown', async t => {
   const { cli, mcp, checkouts: { game } } = await storeFixture(t);
   const checkout = game.checkout;
@@ -604,9 +605,13 @@ test('a party checkout with no remote for its upstream leaves its slices unknown
   // A remote for another repository, such as a fork, is no substitute.
   await game.git('remote', 'add', 'origin', upstream('game-fork'));
   assert.equal(states(await status(cli)).storage, 'unknown');
-  // With the party remote back but not yet fetched, the remote has no tip, so the local branch is the base.
+  // With the party remote back but not yet fetched, there is no tip to judge by: unknown, never landed.
   await game.git('remote', 'set-url', 'origin', upstream('game'));
-  assert.equal(states(await status(cli)).storage, 'landed');
+  const unfetched = await status(cli);
+  assert.deepEqual([states(unfetched).storage, states(unfetched).api], ['unknown', 'blocked']);
+  const stalled = unfetched.slices.find(slice => slice.id === 'storage');
+  assert.deepEqual([stalled.reason, stalled.remedies], ['remote_not_fetched', [`git -C ${checkout} fetch origin`]]);
+  assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), unfetched);
   // Fetched, its tip is the base again, and the unpushed commit is in progress.
   await game.git('fetch', '-q', 'origin');
   assert.equal(states(await status(cli)).storage, 'in_progress');

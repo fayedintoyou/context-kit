@@ -103,11 +103,15 @@ The system SHALL provide a read-only `specs reconcile <change>`, `reconcile_chan
 ## ADDED Requirements
 
 ### Requirement: Party remote and base
-A party's evidence SHALL come from the checkout remote whose URL matches the party upstream, not from `origin` by assumption. Its base branch is the plan's base, else that remote's default branch. Its base commit is that remote's branch tip, or the local branch when the remote has none. Landing, packets and test links SHALL all use that commit, and pull requests SHALL be read from the party upstream by name.
+A party's evidence SHALL come from the checkout remote whose URL matches the party upstream, not from `origin` by assumption. Its base branch is the plan's base, else that remote's default branch. Its base commit is that remote's fetched branch tip, never a local branch; without one, the party's slices are `unknown` with reason `remote_not_fetched`. Landing, packets and test links SHALL all use that commit, and pull requests SHALL be read from the party upstream by name.
 
 #### Scenario: Fork checkout
 - **WHEN** a `game` checkout's `origin` is a fork with default branch `dev` and a trailer commit on it, its `upstream` remote is the party with default branch `main`, and the GitHub CLI's default repository is the fork
 - **THEN** the slice is judged against `upstream/main`, the fork's commit and pull requests do not land it, and the GitHub CLI is asked about the party upstream
+
+#### Scenario: Party remote not fetched
+- **WHEN** a `game` slice's trailer commit is only on the checkout's local `main`, and the party remote has just been added and not fetched
+- **THEN** the slice is `unknown` with reason `remote_not_fetched` and a `git fetch` remedy, its dependents are `blocked`, and after fetching it is `in_progress`
 
 #### Scenario: Local base behind its remote
 - **WHEN** a slice's trailer commit and a linked test are on the party remote's `main`, and the checkout's local `main` is older

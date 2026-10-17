@@ -211,8 +211,10 @@ change finished. Inside the checkout:
   party: its slices are `unknown`, never judged from local branches;
 - the **base branch** is the plan's `base`, else that remote's default branch
   (`refs/remotes/<remote>/HEAD`), else `main` or `master`;
-- the **base commit** is that remote's tip of the branch, else the local
-  branch when the remote has none (not yet fetched). Only it counts as landed, so a stale local `main` can't hide what
+- the **base commit** is that remote's fetched tip of the branch, never a local
+  branch. A remote with no fetched tip (just added, never fetched) leaves the
+  party's slices `unknown` with reason `remote_not_fetched` and a `git fetch`
+  remedy. Only that tip counts as landed, so a stale local `main` can't hide what
   landed upstream, and a commit not yet pushed is `in_progress`. Packets use it
   as their base.
 
