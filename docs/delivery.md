@@ -15,8 +15,8 @@ proposal (target truth) ─accepted→ slices.yaml ─→ PRs, in parallel where
    paths. Check it with `specs status <change>`.
 2. **Build.** `specs next <change>` returns a packet for every slice that is
    ready. Give a worker one packet: implement this slice, nothing else. Every
-   commit for a slice ends with its trailers, and the PR description repeats
-   them:
+   commit for a slice carries these lines (anywhere in the message), and the
+   PR description repeats them:
 
    ```
    OpenSpec-Change: <change>

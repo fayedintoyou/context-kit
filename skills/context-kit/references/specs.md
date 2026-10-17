@@ -70,8 +70,8 @@ requirements it implements (`<capability> / <requirement name>`), the slices it
 depends on and optional path globs. The plan holds no status. Use the
 `slice-change` skill to write one; invalid plans fail with `INVALID_CONFIG`.
 
-Commits that implement a slice end with trailers, and PR descriptions repeat
-them:
+Commits that implement a slice carry these lines anywhere in the message, and
+PR descriptions repeat them:
 
 ```
 OpenSpec-Change: <change>

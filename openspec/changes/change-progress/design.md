@@ -77,7 +77,10 @@ proposal (target truth) ─accepted→ slice plan ─→ PRs (slices, parallel w
    be implemented by several slices, and it is landed only when all of them
    have landed.
 
-3. **Landing evidence: commit trailers.**
+3. **Landing evidence: commit trailers.** The `OpenSpec-Change` and
+   `OpenSpec-Slice` lines count anywhere in a commit message, not only in git's
+   final trailer block: squash merges stack several messages, and a later
+   paragraph such as `Co-Authored-By` would otherwise hide them.
    `git log <base> --format=%H%x00%cI%x00%(trailers:key=OpenSpec-Change,valueonly)%x00%(trailers:key=OpenSpec-Slice,valueonly)`.
    A slice is `landed` when a commit reachable from `base` (or its `origin/`
    remote-tracking branch, so landing doesn't wait for a pull) carries both

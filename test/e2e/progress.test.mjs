@@ -123,6 +123,15 @@ test('landed, in-progress and blocked slices come from trailers on base and bran
   assert.equal(states(await cli('specs', 'status', 'deliver')).api, 'landed');
 });
 
+// spec: change-progress / Partly delivered change
+test('trailer lines count anywhere in a squash-style message', async t => {
+  const { root, cli, git } = await fixture(t);
+  await put(root, 'src/search/storage.mjs', 'export const storage = true;\n');
+  await git('add', '.');
+  await git('commit', '-qm', 'Storage (#3)\n\n* Build storage\n\nOpenSpec-Change: deliver\nOpenSpec-Slice: storage\n\n* Tidy up\n\nCo-Authored-By: Someone <someone@example.com>\n');
+  assert.equal(states(await cli('specs', 'status', 'deliver')).storage, 'landed');
+});
+
 // spec: change-progress / Requirement covered by two slices
 test('a requirement is partial until every covering slice lands', async t => {
   const { cli, land } = await fixture(t);
