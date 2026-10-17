@@ -11,11 +11,13 @@ many repositories. Sharing a format does not imply sharing data or credentials.
 - For the preferred plan/review/implement loop, use [Independent review](skills/independent-review/SKILL.md).
 - For a business-domain example, read [Fictional onboarding](examples/onboarding/README.md).
 - For the manifest contract, read [Format](docs/format.md).
+- For how behavior is tested, read [Testing](docs/testing.md).
 - For the next increments, read [Next steps](docs/next.md).
 
 ## Try it
 
-Requires Node.js 22 or newer. No dependencies or installation required.
+Requires Node.js 22 or newer. Install the pinned dependencies (the MCP SDK, Zod and
+OpenSpec) with `npm ci`.
 
 ```sh
 node bin/hub.mjs list
@@ -27,6 +29,31 @@ npm test
 Output is JSON. `context` returns the explicitly listed documents in manifest
 order. It does not perform semantic retrieval, execute instructions, fetch remote
 sources, or include linked hubs automatically. Commands work from any directory.
+
+## Your own workspace
+
+Keep personal context outside this public checkout. `node bin/hub.mjs init <new-directory>`
+creates a starter workspace. Select one with `--root <directory>` or
+`CONTEXT_KIT_ROOT`; without either, commands read this checkout and capture is
+refused. `capture <hub-id> <title>` writes stdin as a new unreviewed note in that
+hub's `inbox/`, without committing. `search` and `context` include inbox notes
+only with `--inbox`.
+
+## Agents over MCP
+
+`node bin/mcp.mjs --root <workspace>` serves the same operations to a local MCP
+client over stdio. The root is fixed at startup. Capture is offered only with
+`--allow-write`.
+
+## Specs
+
+`specs list|read <id>|audit` read a repository's canonical OpenSpec specs through
+the pinned OpenSpec CLI. Pending change deltas are not canonical. Specs may also
+live in a shared OpenSpec store used across repositories: `specs stores` lists the
+stores hubs declare, and `--store <id>` reads one. A repository's own listing and
+audit also show stores it references, kept separate. Audits are structural;
+[audit-canonical-specs](skills/audit-canonical-specs/SKILL.md) describes the
+evidence-based semantic review.
 
 ## Contribute
 
@@ -42,5 +69,5 @@ that quietly becomes stale.
 Skills are repository artifacts, not globally installed skills. Agents can read
 them by path; runtime-specific discovery and adapters can be added later.
 
-This is a local starting point. Remote MCP, Tailscale hosting, external service
+This is a local starting point. Remote MCP over HTTP, Tailscale hosting, external service
 adapters, and interactive pages are future increments.

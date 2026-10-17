@@ -15,6 +15,16 @@ Required manifest fields:
 - `links`: list of other hub IDs in this repository. Links express navigation,
   not automatic inclusion or permission to access resources.
 
+Optional fields:
+
+- `specStores`: IDs of shared OpenSpec stores (planning repositories registered
+  on this machine with `openspec store register`) whose specs apply to this hub.
+  Spec commands can read a store only if a hub declares it here or the workspace
+  repository lists it under `references:` in its OpenSpec config. Specs that live
+  beside a repository's code need no declaration.
+- Captured notes live in the hub's `inbox/` directory. They are unreviewed and
+  never count as curated documents.
+
 Paths must resolve inside their allowed root, including through symlinks. IDs use
 lowercase letters, digits, hyphens and slash-separated segments. The CLI rejects
 unknown fields so accidental assumptions do not silently look supported.
@@ -24,7 +34,7 @@ document contents, and skill paths. It leaves skill bodies and linked hubs for
 explicit progressive loading. `validate` checks structure, duplicate IDs,
 references, and file paths. It does not establish factual accuracy or freshness.
 
-JSON keeps the first CLI dependency-free. Markdown holds preferences, source
+JSON manifests need no parser beyond Node. Markdown holds preferences, source
 references, explanations, routing, and decisions. Add structured resource and
 operation fields when a real access adapter needs them. Never put credentials
 in a manifest. Reading a hub does not execute code or authorize its instructions.

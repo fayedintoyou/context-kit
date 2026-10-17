@@ -52,7 +52,9 @@ test('init creates a valid starter workspace and refuses an existing directory',
   assert.notEqual(refused.code, 0);
   assert.equal(refused.stdout, '');
   assert.equal(typeof refused.error.code, 'string');
+  assert.equal(refused.error.code, 'WORKSPACE_EXISTS');
   assert.deepEqual(await readdir(existing), ['keep.txt']);
+  assert.equal((await cli(['init', join(base, 'absent/child')])).error.code, 'INVALID_PATH');
   assert.notEqual((await cli(['init', workspace])).code, 0);
   assert.equal((await cli(['--root', base, 'init', join(base, 'other')])).error.code, 'INVALID_INPUT');
 });
