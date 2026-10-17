@@ -135,10 +135,12 @@ default branch, else `main` or `master`; a local branch and its `origin/` copy
 both count) or its PR merged; `in_progress` when trailer commits exist only on
 other branches or a PR is open; `ready` when its dependencies have landed;
 `unknown` when its evidence can't be read (a store slice whose party has no
-recorded checkout); otherwise `blocked`. Requirements are `landed`, `partial`,
-`in_progress`, `unknown` (no covering slice landed or in progress, and one is
-unknown), `unstarted` or `unplanned`. Pull requests come from `gh` when it is installed
-and authenticated; otherwise they are `not_collected` and git decides.
+recorded checkout, or whose checkout has no remote for the party upstream);
+otherwise `blocked`. Requirements are `landed`, `partial`, `in_progress`,
+`unstarted` or `unplanned`; an `unknown` covering slice counts as not landed,
+so a requirement with nothing landed or in progress is `unstarted`. Pull
+requests come from `gh` when it is installed and authenticated; otherwise they
+are `not_collected` and git decides.
 Repositories that squash-merge with custom messages should keep the trailers in
 the PR description and have `gh` available.
 
@@ -205,17 +207,21 @@ change finished. Inside the checkout:
 
 - the **party remote** is the remote whose URL matches the party upstream
   (SSH and HTTPS forms match), never `origin` by assumption, so a fork's
-  `origin` is ignored;
+  `origin` is ignored. A checkout with no such remote says nothing about the
+  party: its slices are `unknown`, never judged from local branches;
 - the **base branch** is the plan's `base`, else that remote's default branch
   (`refs/remotes/<remote>/HEAD`), else `main` or `master`;
 - the **base commit** is that remote's tip of the branch, else the local
-  branch. Only it counts as landed, so a stale local `main` can't hide what
+  branch when the remote has none (not yet fetched). Only it counts as landed, so a stale local `main` can't hide what
   landed upstream, and a commit not yet pushed is `in_progress`. Packets use it
   as their base.
 
 Pull requests are read with `gh pr list -R <owner>/<name>` from the party
-upstream (overriding any `gh` default or `GH_REPO`). A merged one lands its
-slice only when it merged into the party's base branch; either way it is named
+upstream (overriding any `gh` default or `GH_REPO`). A PR belongs to a slice
+only when its description carries `OpenSpec-Change: <store-id>:<change>` and
+the slice's `OpenSpec-Slice`; its head branch name alone never associates it,
+since a fork and its upstream can share branch names for unrelated work. A
+merged one lands its slice only when it merged into the party's base branch; either way it is named
 with its `baseRefName` and `landed`. A merged PR into another branch leaves the
 slice `in_progress`.
 
@@ -224,7 +230,11 @@ each party the plan names with its `upstream`, `checkout`, `remote`, `base` and
 `pullRequests`. A party with no recorded checkout has `checkout: null` and
 `reason: "checkout_missing"`, and its slices are `unknown` with that reason and
 `remedies` (`repos locate <repository> <path>`, `repos clone <repository> [<path>]`,
-naming the registered repository when there is one). They never look `ready`
+naming the registered repository when there is one). A party whose checkout
+has no remote matching its upstream has `reason: "remote_missing"`, and its
+slices are `unknown` with that reason and `remedies`
+(`git -C <checkout> remote add <remote> <upstream>`, `git -C <checkout> fetch <remote>`).
+Either way they never look `ready`
 or `landed`: their dependents are `blocked`, the requirements they cover are
 not `landed`, and `specs next` offers no packet for them.
 
