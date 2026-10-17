@@ -1,0 +1,43 @@
+schema: spec-driven
+
+context: |
+  Every scenario must be demonstrated by an end-to-end test in test/e2e linked with
+  `// spec: <capability> / <scenario>`; npm test fails on unlinked scenarios.
+  Unit tests are exceptions with a `// because:` reason. See docs/testing.md.
+
+rules:
+  specs:
+    - Write each scenario so its WHEN/THEN can be driven through the CLI or MCP and asserted end to end.
+  tasks:
+    - Each task that adds or changes a scenario names the end-to-end test that will link to it.
+
+# Project context (optional)
+# Add only constraints that should guide OpenSpec artifacts and workflows.
+# Include constraints an agent cannot infer by reading the code.
+# Keep general project documentation and discoverable codebase facts out.
+# Example:
+#   context: |
+#     Designs and tasks must cover Windows, macOS, and Linux
+#     Write all artifacts in Spanish
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always state what is out of scope
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing

@@ -2,31 +2,79 @@
 
 Git-backed context and working methods for agents and people. A hub describes an
 area of activity, points to relevant resources, and explains how to work there.
+Each hub is an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf)
+(OKF) v0.2 bundle, so other OKF tools can read it, and every document carries OKF
+provenance, trust and freshness signals.
 The same small format can describe personal projects or business domains spanning
 many repositories. Sharing a format does not imply sharing data or credentials.
 
 ## Start here
 
-- For personal working preferences, read [Working with agents](hubs/working-with-agents/README.md).
+- Personal context belongs in your own workspace (see [Your own workspace](#your-own-workspace)); this repository ships only the tool and a fictional example.
 - For the preferred plan/review/implement loop, use [Independent review](skills/independent-review/SKILL.md).
 - For a business-domain example, read [Fictional onboarding](examples/onboarding/README.md).
 - For the manifest contract, read [Format](docs/format.md).
+- For how behavior is tested, read [Testing](docs/testing.md).
 - For the next increments, read [Next steps](docs/next.md).
 
 ## Try it
 
-Requires Node.js 22 or newer. No dependencies or installation required.
+Requires Node.js 22 or newer. Install the pinned dependencies (the MCP SDK, Zod and
+OpenSpec) with `npm ci`.
 
 ```sh
 node bin/hub.mjs list
-node bin/hub.mjs context personal/working-with-agents
+node bin/hub.mjs context example/onboarding
 node bin/hub.mjs validate
 npm test
 ```
 
-Output is JSON. `context` returns the explicitly listed documents in manifest
-order. It does not perform semantic retrieval, execute instructions, fetch remote
+Output is JSON. `context` returns a hub's curated starting documents in manifest
+order. To explore further, browse progressively: `browse <hub-id> [directory]`
+lists one directory (concepts with OKF type, title, description and trust, plus
+subdirectories and the index), and `read <hub-id> <concept-id>` opens one concept
+with its outgoing links classified, so you follow only what you need. `search`
+covers every concept. It does not perform semantic retrieval, execute instructions, fetch remote
 sources, or include linked hubs automatically. Commands work from any directory.
+
+## Your own workspace
+
+This repository is the core tooling. Your context lives in your own workspace, an
+instance of the core kept in its own (usually private) repository:
+
+```sh
+node bin/hub.mjs init ~/context          # starter hub plus a package.json pinning this core
+cd ~/context && npm install
+npm run hub -- list                      # the core's CLI, rooted at this workspace
+npm run mcp                              # the core's MCP server, rooted at this workspace
+```
+
+`init` pins this core's repository at its current commit when the checkout is
+clean (or pass `--kit <npm-spec>`). Upgrade an instance deliberately by changing
+that dependency. Bundled skills are referenced as `kit:<name>`, so the instance
+uses the core's copies rather than forks.
+
+`capture <hub-id> <title>` writes stdin as a new unreviewed note in that hub's
+`inbox/`, without committing. `search` and `context` include inbox notes only with
+`--inbox`. Outside an instance, select a workspace with `--root <directory>` or
+`CONTEXT_KIT_ROOT`; with neither, commands read this checkout and capture is
+refused.
+
+## Agents over MCP
+
+`npm run mcp` in an instance, or `node bin/mcp.mjs --root <workspace>`, serves the same operations to a local MCP
+client over stdio. The root is fixed at startup. Capture is offered only with
+`--allow-write`.
+
+## Specs
+
+`specs list|read <id>|audit` read a repository's canonical OpenSpec specs through
+the pinned OpenSpec CLI. Pending change deltas are not canonical. Specs may also
+live in a shared OpenSpec store used across repositories: `specs stores` lists the
+stores hubs declare, and `--store <id>` reads one. A repository's own listing and
+audit also show stores it references, kept separate. Audits are structural;
+[audit-canonical-specs](skills/audit-canonical-specs/SKILL.md) describes the
+evidence-based semantic review.
 
 ## Contribute
 
@@ -39,8 +87,17 @@ Durable documents live in Git. Credentials and disposable execution state do
 not. Live services remain authoritative for their own state; avoid a second copy
 that quietly becomes stale.
 
-Skills are repository artifacts, not globally installed skills. Agents can read
-them by path; runtime-specific discovery and adapters can be added later.
+Skills are repository artifacts, not globally installed skills. Hubs declare
+them (`kit:<name>` for skills bundled here), `skills` lists them, and
+`read-skill <hub> <reference> [--file <path>]` reads a skill or its reference
+files. The MCP server also offers every declared skill as a prompt, so a client
+can invoke it directly; Claude Code shows them as `/mcp__<server>__<skill>`.
 
-This is a local starting point. Remote MCP, Tailscale hosting, external service
+Bundled skills: `independent-review` (plan and output review),
+`audit-canonical-specs` (evidence-based spec audits) and `reflect` (three
+parallel reviewers turn a conversation's learnings into proposed edits on skills
+and hub knowledge, applied only after approval). Improve them with `reflect`
+itself.
+
+This is a local starting point. Remote MCP over HTTP, Tailscale hosting, external service
 adapters, and interactive pages are future increments.

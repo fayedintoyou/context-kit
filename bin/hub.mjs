@@ -1,25 +1,80 @@
 #!/usr/bin/env node
-import { fileURLToPath } from 'node:url';
-import { loadHubs, context } from '../lib/hubs.mjs';
+import { initWorkspace, selectRoot, KIT_ACTOR } from '../lib/workspace.mjs';
+import { execute } from '../lib/operations.mjs';
+import { parseArgs } from '../lib/arguments.mjs';
+import { fail, errorData } from '../lib/files.mjs';
 
-const root = fileURLToPath(new URL('../', import.meta.url));
-const [command, ...args] = process.argv.slice(2);
+const help = `Usage: node bin/hub.mjs [--root <directory>] <command>
+  init <new-directory> [--kit <npm-spec>]
+  list | validate
+  context <hub-id> [--inbox]
+  browse <hub-id> [directory] [--offset <n>] [--inbox]
+  read <hub-id> <concept-id> [--frontmatter] [--inbox]
+  search <text> [--inbox]
+  skills
+  read-skill <hub-id> <reference> [--file <path>]
+  capture <hub-id> <title> [--by <actor>]   (UTF-8 body on stdin)
+  specs stores | specs list | specs read <spec-id> | specs audit   [--store <id>]
+Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
-  if (!['list', 'context', 'validate'].includes(command) ||
-      args.length !== (command === 'context' ? 1 : 0)) {
-    throw new Error('Usage: node bin/hub.mjs list | context <id> | validate');
+  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--help']);
+  if (options['--help']) { process.stdout.write(help + '\n'); }
+  else {
+    const [command, ...args] = positional;
+    let result;
+    if (command === 'init' && args.length === 1) {
+      if (options['--root'] || options['--inbox'] || options['--store']) fail('INVALID_INPUT', 'init takes its destination as an argument');
+      result = await initWorkspace(args[0], { kit: options['--kit'] });
+    } else {
+      if (options['--kit']) fail('INVALID_INPUT', '--kit applies only to init');
+      if (options['--by'] && command !== 'capture') fail('INVALID_INPUT', '--by applies only to capture');
+      if (options['--offset'] !== undefined && command !== 'browse') fail('INVALID_INPUT', '--offset applies only to browse');
+      if (options['--frontmatter'] && command !== 'read') fail('INVALID_INPUT', '--frontmatter applies only to read');
+      if (options['--file'] && command !== 'read-skill') fail('INVALID_INPUT', '--file applies only to read-skill');
+      const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', actor: options['--by'] || KIT_ACTOR, allowWrite: true };
+      const count = { skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [2], search: [1], 'read-skill': [2], capture: [2] };
+      if (options['--inbox'] && !['context', 'search', 'browse', 'read'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context, search, browse and read');
+      if (options['--store'] && (command !== 'specs' || args[0] === 'stores')) fail('INVALID_INPUT', '--store applies only to specs list/read/audit');
+      const store = options['--store'] ? { store: options['--store'] } : {};
+      if (command === 'specs') {
+        if (args[0] === 'stores' && args.length === 1) result = await execute(selection, 'list_spec_stores');
+        else if (args[0] === 'list' && args.length === 1) result = await execute(selection, 'list_specs', store);
+        else if (args[0] === 'audit' && args.length === 1) result = await execute(selection, 'audit_specs', store);
+        else if (args[0] === 'read' && args.length === 2) result = await execute(selection, 'read_spec', { id: args[1], ...store });
+        else fail('INVALID_INPUT', help);
+      } else {
+        if (!Object.hasOwn(count, command) || !count[command].includes(args.length)) fail('INVALID_INPUT', help);
+        const includeInbox = Boolean(options['--inbox']);
+        if (command === 'list') result = await execute(selection, 'list_hubs');
+        if (command === 'validate') result = await execute(selection, 'validate_hubs');
+        if (command === 'context') result = await execute(selection, 'get_context', { id: args[0], includeInbox });
+        if (command === 'browse') {
+          const offset = options['--offset'] === undefined ? 0 : Number(options['--offset']);
+          result = await execute(selection, 'browse_hub', { id: args[0], path: args[1] ?? '', offset, includeInbox });
+        }
+        if (command === 'read') result = await execute(selection, 'read_concept', { id: args[0], concept: args[1], frontmatter: Boolean(options['--frontmatter']), includeInbox });
+        if (command === 'search') result = await execute(selection, 'search_context', { query: args[0], includeInbox });
+        if (command === 'skills') result = await execute(selection, 'list_skills');
+        if (command === 'read-skill') result = await execute(selection, 'read_skill', { id: args[0], reference: args[1], ...(options['--file'] ? { file: options['--file'] } : {}) });
+        if (command === 'capture') {
+          if (process.stdin.isTTY) fail('INVALID_INPUT', 'Pipe a UTF-8 note body into capture');
+          const chunks = []; let bytes = 0;
+          for await (const chunk of process.stdin) {
+            bytes += chunk.length;
+            if (bytes > 65536) fail('TOO_LARGE', 'Capture body exceeds 64 KiB');
+            chunks.push(chunk);
+          }
+          let body;
+          try { body = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); }
+          catch { fail('INVALID_UTF8', 'Capture body must be UTF-8'); }
+          result = await execute(selection, 'capture_note', { id: args[0], title: args[1], body });
+        }
+      }
+    }
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    if (result.valid === false || ['structurally_invalid', 'no_canonical_specs'].includes(result.status)) process.exitCode = 1;
   }
-  const hubs = await loadHubs(root);
-  let result;
-  if (command === 'list') {
-    result = hubs.map(({ manifest: { id, description } }) => ({ id, description }));
-  } else if (command === 'context') {
-    result = await context(hubs, args[0]);
-  } else {
-    result = { valid: true, hubs: hubs.length };
-  }
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 } catch (error) {
-  process.stderr.write(`${JSON.stringify({ error: error.message })}\n`);
+  process.stderr.write(JSON.stringify({ error: errorData(error) }) + '\n');
   process.exitCode = 1;
 }

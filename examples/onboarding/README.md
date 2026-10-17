@@ -1,3 +1,11 @@
+---
+type: Domain Overview
+title: Onboarding (fictional example)
+description: A fictional business domain spanning identity and welcome-message repositories.
+tags: [example, onboarding]
+status: stable
+---
+
 # Onboarding (fictional example)
 
 This hub demonstrates the same format applied to a business domain. The systems

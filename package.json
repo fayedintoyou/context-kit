@@ -3,10 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "description": "Core tooling for Git-backed context workspaces used by people and agents.",
+  "repository": "github:fayedintoyou/context-kit",
+  "bin": {
+    "context-kit": "bin/hub.mjs",
+    "context-kit-mcp": "bin/mcp.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "hub": "node bin/hub.mjs",
     "validate": "node bin/hub.mjs validate",
-    "test": "node --test"
+    "test": "node --test",
+    "spec-links": "node scripts/spec-links.mjs"
+  },
+  "dependencies": {
+    "@fission-ai/openspec": "1.14.3",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.6.7",
+    "yaml": "2.9.1"
   }
 }
