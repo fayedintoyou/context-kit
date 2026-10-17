@@ -1,0 +1,18 @@
+# Slices merge into the change's integration branch (PR #23), which merges to main
+# once every scenario is linked; npm test's spec-link gate fails until then.
+base: cross-repo-contracts
+slices:
+  - id: parties-file
+    title: Load and validate a store's parties.yaml; specs parties / list_parties
+    implements:
+      - cross-repo-contracts / Party declaration
+      - cross-repo-contracts / Party file validation
+      - cross-repo-contracts / Contract declaration
+    paths: ["lib/specs/parties.mjs", "lib/specs/deltas.mjs", "lib/operations.mjs", "bin/hub.mjs", "lib/help.mjs", "test/e2e/specs.test.mjs", "skills/context-kit/references/**", "docs/format.md", "openspec/changes/cross-repo-contracts/tasks.md"]
+  - id: contract-labels
+    title: Contract labels on store specs; the party a repository plays
+    implements:
+      - cross-repo-contracts / Contract declaration
+      - cross-repo-contracts / Contracts a repository is party to
+    depends_on: [parties-file]
+    paths: ["lib/specs/parties.mjs", "lib/operations.mjs", "lib/repos.mjs", "test/e2e/specs.test.mjs", "skills/context-kit/references/**", "docs/format.md", "openspec/changes/cross-repo-contracts/tasks.md"]
