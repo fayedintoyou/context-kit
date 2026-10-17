@@ -22,6 +22,7 @@ CLI: `context-kit [--root <dir>] <command>`; inside a workspace, `npm run hub --
 | `repos locate <repo> <path>` | | Records an existing checkout (CLI only) |
 | `repos clone <repo> [<path>]` | | Clones and records a repository (CLI only) |
 | `repos scan <directory>` | | Records matching checkouts one level deep (CLI only) |
+| `repos sync` | | Rebuilds the `my-repos` skill from Repository concepts (CLI only) |
 | `skills` | `list_skills` | Declared skills |
 | `read-skill <hub> <reference>` | `read_skill` | A skill or its files (`--file`) |
 | `specs stores` | `list_spec_stores` | Readable shared stores (specs addon) |

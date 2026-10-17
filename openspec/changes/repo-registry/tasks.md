@@ -19,6 +19,8 @@
 - [x] 3.2 Installer: include generated skills, always copied even with `--link`, removed when no longer generated; link `test/e2e/agents.test.mjs` to "Install the routing skill" and "Last repository removed"
 - [x] 3.3 `agents status` compares a fresh render to the record and reports `stale`; `locate|clone|scan` refresh unchanged installed copies and report edited ones; link `test/e2e/agents.test.mjs` to "Pulled hub changes" and "Locating refreshes the skill"
 
+- [x] 3.4 `repos sync`: rebuild the skill from Repository concepts and checkouts and refresh installed copies only; link `test/e2e/agents.test.mjs` to "Sync after editing repositories" and "Sync before any install"
+
 ## 4. MCP, help and docs
 
 - [x] 4.1 Read-only `list_repos` MCP tool in `lib/operations.mjs`; link `test/e2e/repos.test.mjs` to "List over MCP"

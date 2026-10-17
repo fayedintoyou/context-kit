@@ -34,7 +34,8 @@ It is not an addon that can be disabled.
 - The generated skill stays current: `repos locate|clone|scan` re-render it for the
   agents it is installed in, and `agents status` reports it `stale` when the hubs'
   repositories or the local paths changed since it was rendered (e.g. after a
-  `git pull` of the workspace); `agents install` reconciles it.
+  `git pull` of the workspace); `agents install` reconciles it, and `repos sync`
+  rebuilds it from the repository entries (titles, aliases, upstreams) on demand.
 
 ## Capabilities
 

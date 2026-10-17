@@ -46,6 +46,9 @@ When any repositories are registered, core generates a `my-repos` skill and
 `agents install` installs it. Its description names every repository and alias, so
 agents pick it up when you mention one. Its body gives each upstream and local path
 and tells agents not to search the filesystem. `repos locate`, `clone` and `scan`
-update installed copies at once. After hub changes (a new Repository concept, a
-pull), `agents status` reports the skill `stale` until you run `agents install`.
-The skill is generated; don't edit it.
+update installed copies at once.
+
+The skill is generated from the Repository concepts; don't edit it. After changing
+them (a new repository, new aliases, a pull), run `repos sync`. It rebuilds the
+skill's description, metadata and list and updates every installed copy, without
+re-registering MCP servers. Until then `agents status` reports the skill `stale`.

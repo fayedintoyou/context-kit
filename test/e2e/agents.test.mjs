@@ -289,3 +289,31 @@ test('locating a repository updates installed copies without reinstalling', asyn
   assert.equal(await readFile(join(base, 'codex/skills/my-repos/SKILL.md'), 'utf8'), 'mine\n');
   assert.equal((await calls()).length, before, 'no agent CLI calls');
 });
+
+// spec: agent-installation / Sync after editing repositories
+test('repos sync rebuilds my-repos from the Repository concepts without touching MCP', async t => {
+  const { base, workspace, run, agents, calls } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room', aliases: ['room'] });
+  await agents('install');
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room', aliases: ['room', 'fayelore.com'] });
+  const before = (await calls()).length;
+  const synced = await run(['--root', workspace, 'repos', 'sync']);
+  assert.equal(synced.code, 0, JSON.stringify(synced.error));
+  assert.deepEqual(byAction(synced.json.results), { 'claude:skill:my-repos': 'updated', 'codex:skill:my-repos': 'updated' });
+  for (const agent of ['claude', 'codex']) {
+    assert.match((await readFile(join(base, agent, 'skills/my-repos/SKILL.md'), 'utf8')).split('\n---')[0], /^description: .*fayelore\.com/m, agent);
+  }
+  assert.equal((await calls()).length, before, 'no agent CLI calls');
+  assert.ok((await agents('status')).json.items.every(item => item.state === 'installed'));
+});
+
+// spec: agent-installation / Sync before any install
+test('repos sync before any install renders the skill and says to install', async t => {
+  const { workspace, run } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const synced = await run(['--root', workspace, 'repos', 'sync']);
+  assert.equal(synced.code, 0, JSON.stringify(synced.error));
+  assert.deepEqual(synced.json.results, []);
+  assert.match(synced.json.next, /agents install/);
+  assert.match(await readFile(synced.json.skill, 'utf8'), /^name: my-repos$/m);
+});
