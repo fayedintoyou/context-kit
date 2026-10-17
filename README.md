@@ -7,7 +7,7 @@ many repositories. Sharing a format does not imply sharing data or credentials.
 
 ## Start here
 
-- For personal working preferences, read [Working with agents](hubs/working-with-agents/README.md).
+- Personal context belongs in your own workspace (see [Your own workspace](#your-own-workspace)); this repository ships only the tool and a fictional example.
 - For the preferred plan/review/implement loop, use [Independent review](skills/independent-review/SKILL.md).
 - For a business-domain example, read [Fictional onboarding](examples/onboarding/README.md).
 - For the manifest contract, read [Format](docs/format.md).
@@ -21,7 +21,7 @@ OpenSpec) with `npm ci`.
 
 ```sh
 node bin/hub.mjs list
-node bin/hub.mjs context personal/working-with-agents
+node bin/hub.mjs context example/onboarding
 node bin/hub.mjs validate
 npm test
 ```

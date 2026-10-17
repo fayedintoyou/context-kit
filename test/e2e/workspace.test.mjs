@@ -93,9 +93,9 @@ test('context excludes inbox unless requested; stdin capture is searchable and l
 
 test('capture requires an explicit workspace outside the toolkit and valid input', async t => {
   const { workspace, cli, hub } = await fixture(t);
-  const implicit = await cli(['capture', 'working-with-agents', 'Nope'], 'body');
+  const implicit = await cli(['capture', 'example/onboarding', 'Nope'], 'body');
   assert.equal(implicit.error.code, 'WRITE_DISABLED');
-  const kitRoot = await cli(['--root', kit, 'capture', 'working-with-agents', 'Nope'], 'body');
+  const kitRoot = await cli(['--root', kit, 'capture', 'example/onboarding', 'Nope'], 'body');
   assert.equal(kitRoot.error.code, 'WRITE_DISABLED');
   // A workspace nested anywhere inside the checkout is still the toolkit checkout.
   await mkdir(join(kit, '.state'), { recursive: true });
