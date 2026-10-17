@@ -1,0 +1,17 @@
+name: openspec process
+
+# Archives finished changes after merge and guards canonical specs (openspec.yml).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: write
+
+jobs:
+  openspec:
+    uses: ./.github/workflows/openspec.yml
+    with:
+      kit: node bin/hub.mjs

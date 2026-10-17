@@ -42,7 +42,9 @@ linked tests. Ask: does this PR correctly implement this slice without
 violating the rest of the change? The reviewer needs no worker conversation.
 
 Report divergences, gaps and uncertainty with evidence, and say what is ready.
-When status shows `readyToReconcile` and nothing unresolved remains, suggest
-archiving through the OpenSpec workflow; after archive, suggest a
-`garden-canonical-specs` pass on the new canonical truth. Do not archive
-yourself unless the user asks.
+Do not archive in a PR. Where the repository calls the `openspec` workflow,
+archiving happens after merge once every task is ticked and every slice has
+landed (`specs archivable` shows the blockers); make sure the final PR ticks the
+remaining tasks, or leaves one unticked to hold the change open. Without the
+workflow, suggest archiving after merge through the OpenSpec workflow. After
+archive, suggest a `garden-canonical-specs` pass on the new canonical truth.
