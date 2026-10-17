@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 import { operations, execute } from '../lib/operations.mjs';
 import { selectRoot } from '../lib/workspace.mjs';
 import { parseArgs } from '../lib/arguments.mjs';
@@ -11,19 +13,20 @@ try {
   if (positional.length) fail('INVALID_INPUT', 'Usage: node bin/mcp.mjs [--root <directory>] [--allow-write]');
   const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT),
     allowWrite: Boolean(options['--allow-write']), source: 'mcp' };
-  const server = new McpServer({ name: 'context-kit', version: '0.2.0' });
-  for (const [name, definition] of operations(selection.allowWrite)) {
-    server.registerTool(name, { description: definition.description, inputSchema: definition.schema,
-      annotations: { readOnlyHint: !definition.write, destructiveHint: false, openWorldHint: false, idempotentHint: !definition.write } },
-    async args => {
-      try {
-        const result = await execute(selection, name, args);
-        return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result };
-      } catch (error) {
-        return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: errorData(error) }) }] };
-      }
-    });
-  }
+  // Low-level Server so arguments reach execute(): CLI and MCP share one validation path and coded errors.
+  const server = new Server({ name: 'context-kit', version: '0.2.0' }, { capabilities: { tools: {} } });
+  const tools = operations(selection.allowWrite).map(([name, definition]) => ({ name, description: definition.description,
+    inputSchema: z.toJSONSchema(definition.schema, { io: 'input', target: 'draft-7' }),
+    annotations: { readOnlyHint: !definition.write, destructiveHint: false, openWorldHint: false, idempotentHint: !definition.write } }));
+  server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
+  server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
+    try {
+      const result = await execute(selection, params.name, params.arguments ?? {});
+      return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result };
+    } catch (error) {
+      return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: errorData(error) }) }] };
+    }
+  });
   await server.connect(new StdioServerTransport());
 } catch (error) {
   process.stderr.write(JSON.stringify({ error: errorData(error) }) + '\n');

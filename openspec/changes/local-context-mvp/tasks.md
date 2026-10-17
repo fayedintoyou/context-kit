@@ -9,7 +9,7 @@
 - [x] Read hub-declared shared OpenSpec stores with source provenance.
 - [ ] Document repeatable semantic audits and configure automated structural checks.
 ## 3. Verify
-- [ ] Run behavior, subprocess and MCP integration tests.
+- [x] Run behavior, subprocess and MCP integration tests.
 - [ ] Independently review implementation and resolve material findings.
 - [ ] Validate and archive the change, then audit canonical specs.
 - [ ] Push the tested MVP.
