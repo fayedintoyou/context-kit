@@ -1,0 +1,36 @@
+base: main
+slices:
+  - id: plan
+    title: Parse and validate slices.yaml; status without git evidence
+    implements:
+      - change-progress / Slice plan
+      - change-progress / Slice plan validation
+    paths: ["lib/specs/slices.mjs", "lib/specs/deltas.mjs", "test/e2e/progress.test.mjs"]
+  - id: landing
+    title: Trailer scan, branches, optional gh; derived status over CLI and MCP
+    implements:
+      - change-progress / Slice landing
+      - change-progress / Requirement progress
+      - change-progress / Pull request enrichment
+    depends_on: [plan]
+    paths: ["lib/specs/landing.mjs", "lib/specs/slices.mjs", "lib/specs/progress.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/**", "skills/context-kit/references/**"]
+  - id: packets
+    title: next_slices and read_slice
+    implements:
+      - change-progress / Next slices
+      - change-progress / Slice packet
+    depends_on: [landing]
+    paths: ["lib/specs/progress.mjs", "lib/specs/deltas.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/**"]
+  - id: reconcile
+    title: reconcile_change report
+    implements:
+      - change-progress / Reconcile report
+    depends_on: [landing]
+    paths: ["lib/specs/progress.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/**"]
+  - id: skills-docs
+    title: slice-change and reconcile-change skills, help, docs
+    implements:
+      - change-progress / Delivery skills
+      - change-progress / Reconcile without absorbing scope
+    depends_on: [packets, reconcile]
+    paths: ["skills/**", "addons/specs/addon.json", "docs/**", "README.md", "test/**"]

@@ -61,7 +61,7 @@ test('install puts enabled skills and the MCP server into both agents', async t 
   const installed = await agents('install');
   assert.equal(installed.code, 0, JSON.stringify(installed.error));
   for (const [dir, agent] of [[join(base, 'claude/skills'), 'claude'], [join(base, 'codex/skills'), 'codex']]) {
-    assert.deepEqual((await readdir(dir)).sort(), ['audit-canonical-specs', 'context-kit', 'garden-canonical-specs', 'independent-review', 'reflect'], agent);
+    assert.deepEqual((await readdir(dir)).sort(), ['audit-canonical-specs', 'context-kit', 'garden-canonical-specs', 'independent-review', 'reconcile-change', 'reflect', 'slice-change'], agent);
   }
   assert.match(await readFile(join(base, 'claude/skills/reflect/SKILL.md'), 'utf8'), /^disable-model-invocation: true$/m);
   const codexReflect = await readFile(join(base, 'codex/skills/reflect/SKILL.md'), 'utf8');
@@ -75,7 +75,7 @@ test('install puts enabled skills and the MCP server into both agents', async t 
     ['claude', ['mcp', 'add', '-s', 'user', 'context-workspace', '--', ...server]],
     ['codex', ['mcp', 'add', 'context-workspace', '--', ...server]]]);
   const status = await agents('status');
-  assert.equal(status.json.items.length, 12);
+  assert.equal(status.json.items.length, 16);
   assert.ok(status.json.items.every(item => item.state === 'installed'), JSON.stringify(status.json.items));
 
   const again = await agents('install');

@@ -19,7 +19,8 @@ Each step is its own OpenSpec change with linked end-to-end tests.
 
 Also done: addons with an agent installer for Claude Code and Codex, the `reflect`
 skill, canonical spec auditing and gardening (read-only signals plus reviewed
-maintenance changes), and help through the core `context-kit` skill.
+maintenance changes), delivering changes in slices with derived progress and
+reconciliation ([delivery](delivery.md)), and help through the core `context-kit` skill.
 
 ## Decisions
 

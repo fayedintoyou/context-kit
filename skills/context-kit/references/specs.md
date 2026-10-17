@@ -10,6 +10,10 @@ deltas are not canonical.
 | Structural audit | `specs audit [--store <id>]` | `audit_specs` |
 | Garden spec structure | `specs garden [--store <id>]` | `garden_specs` |
 | Readable shared stores | `specs stores` | `list_spec_stores` |
+| Change progress | `specs status <change>` | `change_status` |
+| Next slices to build | `specs next <change>` | `next_slices` |
+| One slice's packet | `specs slice <change> <slice>` | `read_slice` |
+| Reconcile a change | `specs reconcile <change>` | `reconcile_change` |
 
 Specs either live beside a repository's code or in a **shared store** (an
 OpenSpec planning repository registered with `openspec store register`). A store
@@ -57,3 +61,40 @@ git history. It defers locked requirements and proposes one `garden-<date>`
 change, or none when healthy. It asks about candidate retirements and never
 rewrites canonical specs. Review and archive maintenance through the ordinary
 OpenSpec lifecycle.
+
+## Delivering a change in slices
+
+An accepted change can be split into independently mergeable slices in
+`openspec/changes/<change>/slices.yaml`: each slice names the change
+requirements it implements (`<capability> / <requirement name>`), the slices it
+depends on and optional path globs. The plan holds no status. Use the
+`slice-change` skill to write one; invalid plans fail with `INVALID_CONFIG`.
+
+Commits that implement a slice carry these lines anywhere in the message, and
+PR descriptions repeat them:
+
+```
+OpenSpec-Change: <change>
+OpenSpec-Slice: <slice>
+```
+
+`specs status` derives each slice's state on every call: `landed` when a trailer
+commit is reachable from the base branch (the plan's `base`, else the remote's
+default branch, else `main` or `master`; a local branch and its `origin/` copy
+both count) or its PR merged; `in_progress` when trailer commits exist only on
+other branches or a PR is open; `ready` when its dependencies have landed;
+otherwise `blocked`. Requirements are `landed`, `partial`, `in_progress`,
+`unstarted` or `unplanned`. Pull requests come from `gh` when it is installed
+and authenticated; otherwise they are `not_collected` and git decides.
+Repositories that squash-merge with custom messages should keep the trailers in
+the PR description and have `gh` available.
+
+`specs next` returns a packet for every ready slice: requirements with delta
+text and the canonical text they replace, landed dependencies, paths and the
+exact trailers. It does not claim slices. `specs slice` returns any slice's
+packet, adding commits, branches, PRs and linked tests to review once it has
+started. `specs reconcile` lists out-of-scope files per slice, files shared by
+slices, stray trailers, uncovered requirements and unlinked scenarios. The
+`reconcile-change` skill judges them and reviews one slice's PR through
+`independent-review`. These operations read the workspace repository only, not
+stores.

@@ -57,7 +57,7 @@ through each agent's own CLI.
 | Addon | Gives you |
 |---|---|
 | `core` (always) | OKF hubs, progressive `browse`/`read`, `search`, `capture`, skills |
-| `specs` | OpenSpec specs from repositories and shared stores, structural audits, gardening signals and review skills |
+| `specs` | OpenSpec specs from repositories and shared stores, structural audits, gardening signals, change progress and review skills |
 | `reflect` | Turn a conversation's learnings into reviewed edits on skills and hubs |
 | `review` | Independent plan and output review |
 
@@ -113,6 +113,14 @@ lexical overlap, trace and optional taxonomy checks;
 [garden-canonical-specs](skills/garden-canonical-specs/SKILL.md) investigates those
 signals and proposes one maintenance change for review.
 
+Large changes can be delivered in slices: `slices.yaml` in the change plans
+independently mergeable PRs, and commits carry `OpenSpec-Change`/`OpenSpec-Slice`
+trailers. `specs status|next|slice|reconcile <change>` derive progress, hand out
+work packets for ready slices and list facts for reconciliation;
+[slice-change](skills/slice-change/SKILL.md) writes the plan and
+[reconcile-change](skills/reconcile-change/SKILL.md) checks what was built. See
+[docs/delivery.md](docs/delivery.md).
+
 ## Contribute
 
 Update the relevant hub when work changes its understanding. Keep source links
@@ -132,7 +140,8 @@ can invoke it directly; Claude Code shows them as `/mcp__<server>__<skill>`.
 
 Bundled skills: `context-kit` (help for using Context Kit, always installed), `independent-review` (plan and output review),
 `audit-canonical-specs` (evidence-based spec audits), `garden-canonical-specs`
-(spec maintenance proposals) and `reflect` (three
+(spec maintenance proposals), `slice-change` and `reconcile-change` (delivering a
+change in slices) and `reflect` (three
 parallel reviewers turn a conversation's learnings into proposed edits on skills
 and hub knowledge, applied only after approval). Improve them with `reflect`
 itself.
