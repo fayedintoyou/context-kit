@@ -14,8 +14,15 @@ derived status plus facts: files each slice's trailer commits changed outside
 its `paths`, files changed by several slices, trailer commits naming unknown or
 missing slices, requirements no slice implements, and the change's scenarios no
 test links. `scope: unchecked` means the slice declared no paths, not that it
-stayed in scope. `untested` with `not_collected` means the repository has no
-`// spec:` link convention; look for tests yourself.
+stayed in scope. `status.plan: absent` means no `slices.yaml`, not no planning.
+`uncovered` means no slice assignment, not no implementation or tests. For an
+unsliced change, check its proposal/design/tasks, deltas, diff and real tests.
+
+Test signals only cover links the parser recognizes: currently `// spec:` links
+in `test/**/*.test.mjs` and `test/manual-checks.md`, filtered to attached e2e,
+manual or justified unit evidence. `not_collected` means none were collected;
+even a collected `untested` list may miss tests in other layouts. Check the real
+runner, scenario links and results before reporting a testing gap.
 
 For each signal, gather evidence from diffs (`git show <sha>`), tests and code,
 and record paths, symbols and commits:
@@ -28,8 +35,9 @@ and record paths, symbols and commits:
   ones.
 - **Stray trailers**: a renamed slice, a typo, or work without a plan entry;
   recommend fixing the plan or the PR description.
-- **Uncovered requirements**: recommend adding them to a slice with the
-  `slice-change` skill.
+- **Uncovered requirements**: for a change with a slice plan, recommend adding
+  them to a slice with `slice-change`. Do not invent slices for an unsliced change
+  merely to clear this signal.
 - **Landed requirements**: check implementation and linked tests against the
   delta text and scenarios, as `audit-canonical-specs` does for canonical
   specs. Classify each as supported, contradicted or uncertain.
