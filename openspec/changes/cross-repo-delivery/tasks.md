@@ -25,7 +25,7 @@ tests do. No network.
 
 ## 4. Slice `party-packets`
 
-- [ ] 4.1 Party packets: store, party, upstream, checkout, party base, dependency repositories and qualified trailers. Link `test/e2e/progress.test.mjs` to "Packet for a party slice", over both CLI `specs next --store` and MCP `read_slice`
+- [x] 4.1 Party packets: store, party, upstream, checkout, party base, dependency repositories and qualified trailers. Link `test/e2e/progress.test.mjs` to "Packet for a party slice", over both CLI `specs next --store` and MCP `read_slice`
 
 ## 5. Slice `store-archive`
 
