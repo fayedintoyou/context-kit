@@ -49,7 +49,7 @@ proposal (target truth) ─accepted→ slice plan ─→ PRs (slices, parallel w
 1. **Plan in `slices.yaml`, status nowhere.**
 
    ```yaml
-   base: main                       # optional; default: the remote's default branch, else current branch
+   base: main                       # optional; default: the remote's default branch, else main or master, else current branch
    slices:
      - id: storage-model
        title: Store locations with geohash cells
@@ -79,7 +79,11 @@ proposal (target truth) ─accepted→ slice plan ─→ PRs (slices, parallel w
 
 3. **Landing evidence: commit trailers.**
    `git log <base> --format=%H%x00%cI%x00%(trailers:key=OpenSpec-Change,valueonly)%x00%(trailers:key=OpenSpec-Slice,valueonly)`.
-   A slice is `landed` when a commit reachable from `base` carries both trailers.
+   A slice is `landed` when a commit reachable from `base` (or its `origin/`
+   remote-tracking branch, so landing doesn't wait for a pull) carries both
+   trailers. Without a planned base, the remote's default branch is used, then
+   `main` or `master`. The current branch is the last resort, because a
+   checked-out feature branch must not count as the base.
    It is `in_progress` when such commits exist only on other local or
    remote-tracking branches; `git for-each-ref` names those branches. Trailers
    survive merge commits and rebases. For squash merges, GitHub's default

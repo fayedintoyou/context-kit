@@ -71,7 +71,9 @@ test('skills declared by several hubs are listed once', async t => {
     ['kit:reflect', 'reflect', ['personal/main', 'team/main']],
     ['kit:independent-review', 'independent-review', ['personal/main']],
     ['kit:audit-canonical-specs', 'audit-canonical-specs', ['personal/main']],
-    ['kit:garden-canonical-specs', 'garden-canonical-specs', ['personal/main']]]);
+    ['kit:garden-canonical-specs', 'garden-canonical-specs', ['personal/main']],
+    ['kit:slice-change', 'slice-change', ['personal/main']],
+    ['kit:reconcile-change', 'reconcile-change', ['personal/main']]]);
   assert.match(json.skills[1].description, /Use when the user says reflect\.$/);
 });
 
@@ -82,7 +84,7 @@ test('the MCP server offers declared skills as prompts', async t => {
   await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', workspace], env, stderr: 'pipe' }));
   t.after(() => client.close());
   const { prompts } = await client.listPrompts();
-  assert.deepEqual(prompts.map(prompt => prompt.name), ['context-kit', 'reflect', 'independent-review', 'audit-canonical-specs', 'garden-canonical-specs']);
+  assert.deepEqual(prompts.map(prompt => prompt.name), ['context-kit', 'reflect', 'independent-review', 'audit-canonical-specs', 'garden-canonical-specs', 'slice-change', 'reconcile-change']);
   assert.match(prompts[1].description, /three parallel reviewers/);
   const prompt = await client.getPrompt({ name: 'reflect' });
   const text = prompt.messages[0].content.text;

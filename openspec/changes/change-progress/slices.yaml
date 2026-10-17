@@ -13,24 +13,24 @@ slices:
       - change-progress / Requirement progress
       - change-progress / Pull request enrichment
     depends_on: [plan]
-    paths: ["lib/specs/landing.mjs", "lib/specs/slices.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/**"]
+    paths: ["lib/specs/landing.mjs", "lib/specs/slices.mjs", "lib/specs/progress.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/**", "skills/context-kit/references/**"]
   - id: packets
     title: next_slices and read_slice
     implements:
       - change-progress / Next slices
       - change-progress / Slice packet
     depends_on: [landing]
-    paths: ["lib/specs/slices.mjs", "lib/specs/deltas.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/**"]
+    paths: ["lib/specs/progress.mjs", "lib/specs/deltas.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/**"]
   - id: reconcile
     title: reconcile_change report
     implements:
       - change-progress / Reconcile report
     depends_on: [landing]
-    paths: ["lib/specs/reconcile.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/**"]
+    paths: ["lib/specs/progress.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/**"]
   - id: skills-docs
     title: slice-change and reconcile-change skills, help, docs
     implements:
       - change-progress / Delivery skills
       - change-progress / Reconcile without absorbing scope
     depends_on: [packets, reconcile]
-    paths: ["skills/**", "addons/specs/addon.json", "docs/**", "test/**"]
+    paths: ["skills/**", "addons/specs/addon.json", "docs/**", "README.md", "test/**"]

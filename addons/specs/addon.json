@@ -1,9 +1,11 @@
 {
   "name": "specs",
-  "description": "OpenSpec specs from repositories and shared stores, structural audits, gardening signals, and evidence-based review skills.",
+  "description": "OpenSpec specs from repositories and shared stores, structural audits, gardening signals, change progress, and evidence-based review skills.",
   "skills": [
     "audit-canonical-specs",
-    "garden-canonical-specs"
+    "garden-canonical-specs",
+    "slice-change",
+    "reconcile-change"
   ],
   "operations": "specs"
 }
