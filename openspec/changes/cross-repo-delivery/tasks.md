@@ -15,7 +15,7 @@ tests do. No network.
 
 ## 2. Slice `party-plans`
 
-- [ ] 2.1 Slice plan rules: `repo` required in store plans, forbidden in repository plans, and validated against the store's parties. Link `test/e2e/progress.test.mjs` to "Plan across party repositories" and "Unknown party"
+- [x] 2.1 Slice plan rules: `repo` required in store plans, forbidden in repository plans, and validated against the store's parties. Link `test/e2e/progress.test.mjs` to "Plan across party repositories" and "Unknown party"
 
 ## 3. Slice `party-landing`
 
