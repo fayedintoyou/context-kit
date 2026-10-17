@@ -32,3 +32,7 @@ The system SHALL reject references and capture destinations escaping their allow
 #### Scenario: Reject escaped inbox
 - **WHEN** the inbox directory is a symlink
 - **THEN** capture fails before writing any note
+
+#### Scenario: Reject escaped document
+- **WHEN** a hub lists a document outside its directory, by traversal or through a symlink
+- **THEN** validation and retrieval fail without returning the outside content

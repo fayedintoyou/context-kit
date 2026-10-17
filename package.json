@@ -9,7 +9,8 @@
   "scripts": {
     "hub": "node bin/hub.mjs",
     "validate": "node bin/hub.mjs validate",
-    "test": "node --test"
+    "test": "node --test",
+    "spec-links": "node scripts/spec-links.mjs"
   },
   "dependencies": {
     "@fission-ai/openspec": "1.14.3",

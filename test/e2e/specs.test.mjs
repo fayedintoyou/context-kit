@@ -6,10 +6,9 @@ import { mkdtemp, mkdir, writeFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { auditSpecs } from '../lib/specs/audit.mjs';
 
 const exec = promisify(execFile);
-const kit = fileURLToPath(new URL('../', import.meta.url));
+const kit = fileURLToPath(new URL('../../', import.meta.url));
 const openspecBin = join(kit, 'node_modules/@fission-ai/openspec/bin/openspec.js');
 
 const spec = name => `# ${name}
@@ -60,6 +59,7 @@ async function fixture(t) {
   return { base, env, workspace, store, hubCli };
 }
 
+// spec: canonical-spec-audit / Read a declared store
 test('repository and shared store specs stay separate with provenance', async t => {
   const { workspace, store, hubCli } = await fixture(t);
   const local = await hubCli('specs', 'list');
@@ -76,6 +76,7 @@ test('repository and shared store specs stay separate with provenance', async t 
   assert.deepEqual((await hubCli('specs', 'stores')).stores, [{ storeId: 'platform', hub: 'team/platform' }]);
 });
 
+// spec: canonical-spec-audit / Audit a store directly
 test('store audits report the store root and snapshot', async t => {
   const { store, hubCli } = await fixture(t);
   const audit = await hubCli('specs', 'audit', '--store', 'platform');
@@ -88,6 +89,7 @@ test('store audits report the store root and snapshot', async t => {
   assert.equal(audit.referenced, undefined);
 });
 
+// spec: canonical-spec-audit / Reject an undeclared store
 test('only declared, registered stores are readable', async t => {
   const { env, base, hubCli } = await fixture(t);
   assert.equal((await hubCli('specs', 'list', '--store', 'other')).error.code, 'UNKNOWN_STORE');
@@ -96,6 +98,7 @@ test('only declared, registered stores are readable', async t => {
   assert.equal((await hubCli('specs', 'list', '--store', 'platform')).error.code, 'ADAPTER_FAILED');
 });
 
+// spec: canonical-spec-audit / Reject inherited root
 test('a repository that delegates to a store is not mistaken for its own specs', async t => {
   const { workspace, hubCli } = await fixture(t);
   await rm(join(workspace, 'openspec'), { recursive: true });
@@ -123,6 +126,9 @@ async function referencing(t) {
   return context;
 }
 
+// spec: canonical-spec-audit / Repository references a registered store
+// spec: canonical-spec-audit / Referenced store is missing
+// spec: canonical-spec-audit / Same identifier in repository and store
 test('repository listings report referenced stores separately and one level deep', async t => {
   const { hubCli } = await referencing(t);
   const listing = await hubCli('specs', 'list');
@@ -142,10 +148,24 @@ test('repository listings report referenced stores separately and one level deep
   assert.equal((await hubCli('specs', 'list', '--store', 'nested')).error.code, 'UNKNOWN_STORE');
 });
 
+// spec: canonical-spec-audit / Audit a repository with references
+// spec: canonical-spec-audit / Audit current code
 test('repository audits list referenced requirements apart from their own', async t => {
-  const { hubCli } = await referencing(t);
+  const { hubCli, workspace, env } = await referencing(t);
+  const git = (...args) => exec('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { cwd: workspace, env });
+  await git('init', '-q');
+  await git('add', '-A');
+  await git('commit', '-q', '-m', 'Snapshot');
+  const head = (await git('rev-parse', 'HEAD')).stdout.trim();
   const audit = await hubCli('specs', 'audit');
   assert.equal(audit.status, 'structurally_valid');
+  assert.equal(audit.semantic, 'not_assessed');
+  assert.deepEqual(audit.adapter, { name: 'openspec', version: '1.14.3' });
+  assert.equal(audit.snapshot.head, head);
+  assert.equal(audit.snapshot.dirty, false);
+  assert.match(audit.snapshot.canonicalHash, /^[0-9a-f]{64}$/);
+  assert.equal(audit.snapshot.implementationEvidence, 'not_collected');
+  assert.ok(audit.checklist.every(item => item.semantic === 'not_assessed' && !item.evidence.length));
   assert.deepEqual(audit.checklist.map(item => item.spec), ['local-only', 'shared-auth']);
   assert.ok(audit.checklist.every(item => !('applicability' in item)));
   assert.equal(audit.referenced.length, 1);
@@ -161,16 +181,15 @@ test('repository audits list referenced requirements apart from their own', asyn
   assert.deepEqual(audit.referenceWarnings.map(item => item.storeId), ['missing']);
 });
 
-test('an audit fails when a referenced store changes mid-collection', async () => {
-  const fake = (kind, versions) => {
-    let reads = 0;
-    const content = () => versions[Math.min(reads++, versions.length - 1)];
-    return { name: 'fake', version: '0', root: tmpdir(), source: kind === 'store' ? { kind, storeId: 'platform' } : { kind },
-      list: async () => [{ id: 'spec', requirementCount: 1 }],
-      read: async id => ({ id, content: content(), requirements: [{ name: 'R', text: 'T', scenarios: [] }] }),
-      validate: async () => ({ strict: true, valid: true, items: [] }) };
-  };
-  const repo = fake('repo', ['stable']);
-  const store = fake('store', ['before', 'after']);
-  await assert.rejects(auditSpecs(repo, [{ storeId: 'platform', source: store }]), { code: 'SNAPSHOT_CHANGED' });
+// spec: canonical-spec-audit / Pending-only repository
+test('a repository with only pending changes is reported, not passed', async t => {
+  const { workspace, hubCli } = await fixture(t);
+  await rm(join(workspace, 'openspec/specs'), { recursive: true });
+  await mkdir(join(workspace, 'openspec/changes/draft/specs/pending'), { recursive: true });
+  await writeFile(join(workspace, 'openspec/changes/draft/specs/pending/spec.md'), spec('pending').replace('## Requirements', '## ADDED Requirements'));
+  await writeFile(join(workspace, 'openspec/config.yaml'), 'schema: spec-driven\n');
+  const audit = await hubCli('specs', 'audit');
+  assert.equal(audit.status, 'no_canonical_specs');
+  assert.deepEqual(audit.checklist, []);
+  assert.equal(audit.structural.valid, false);
 });

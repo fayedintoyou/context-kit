@@ -10,7 +10,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const exec = promisify(execFile);
-const kit = await realpath(fileURLToPath(new URL('../', import.meta.url)));
+const kit = await realpath(fileURLToPath(new URL('../../', import.meta.url)));
 
 async function fixture(t) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'context-kit-mcp-')));
@@ -33,6 +33,7 @@ async function fixture(t) {
 }
 const parse = result => JSON.parse(result.content[0].text);
 
+// spec: agent-interface / Read-only server
 test('default server is read-only and no tool accepts a root', async t => {
   const { connect, hub } = await fixture(t);
   const client = await connect();
@@ -71,6 +72,7 @@ test('--allow-write exposes capture_note and captures are found via search', asy
   assert.equal((await client.callTool({ name: 'search_context', arguments: { query: 'quokka' } })).structuredContent.results.length, 0);
 });
 
+// spec: agent-interface / Equivalent context
 test('CLI and MCP return equivalent context for the same workspace', async t => {
   const { connect, cli } = await fixture(t);
   const client = await connect();

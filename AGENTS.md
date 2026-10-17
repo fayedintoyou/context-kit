@@ -17,4 +17,5 @@ runtime-specific agent dispatch separate from portable instructions. Do not
 install these skills globally or publish this repository as part of a local edit.
 
 After changing manifests or document paths, run `node bin/hub.mjs validate`.
-After changing CLI behavior, also run `npm test`.
+After changing CLI behavior, also run `npm test`. Tests are end-to-end first and
+linked to spec scenarios; read docs/testing.md before adding a test.

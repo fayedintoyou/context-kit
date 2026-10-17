@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const kit = await realpath(fileURLToPath(new URL('../', import.meta.url)));
+const kit = await realpath(fileURLToPath(new URL('../../', import.meta.url)));
 
 // Isolated XDG dirs keep the user's OpenSpec registry untouched; CONTEXT_KIT_ROOT is cleared so only --root selects.
 async function fixture(t) {
@@ -33,6 +33,7 @@ async function fixture(t) {
 const snapshot = async directory => Object.fromEntries(await Promise.all((await readdir(directory, { recursive: true, withFileTypes: true }))
   .filter(entry => entry.isFile()).map(async entry => [join(entry.parentPath, entry.name), await readFile(join(entry.parentPath, entry.name), 'utf8')])));
 
+// spec: context-workspaces / Create a workspace
 test('init creates a valid starter workspace and refuses an existing directory', async t => {
   const { base, workspace, cli } = await fixture(t);
   const validate = await cli(['--root', workspace, 'validate']);
@@ -56,6 +57,8 @@ test('init creates a valid starter workspace and refuses an existing directory',
   assert.equal((await cli(['--root', base, 'init', join(base, 'other')])).error.code, 'INVALID_INPUT');
 });
 
+// spec: context-workspaces / Read curated context
+// spec: context-workspaces / Capture and find
 test('context excludes inbox unless requested; stdin capture is searchable and leaves documents unchanged', async t => {
   const { workspace, cli, hub } = await fixture(t);
   const before = await snapshot(hub);
@@ -99,6 +102,7 @@ test('capture requires an explicit workspace outside the toolkit and valid input
   await assert.rejects(readdir(join(hub, 'inbox')), { code: 'ENOENT' });
 });
 
+// spec: context-workspaces / Reject escaped inbox
 test('capture into a symlinked inbox fails before writing', async t => {
   const { base, workspace, cli, hub } = await fixture(t);
   const outside = join(base, 'outside');
@@ -111,6 +115,7 @@ test('capture into a symlinked inbox fails before writing', async t => {
   assert.equal((await cli(['--root', workspace, 'context', 'personal/main', '--inbox'])).error.code, 'PATH_ESCAPE');
 });
 
+// spec: agent-interface / Invalid CLI request
 test('unsupported commands and options exit nonzero with a coded stderr error', async t => {
   const { workspace, cli } = await fixture(t);
   for (const args of [['frobnicate'], ['list', 'extra'], ['--bogus', 'list'], ['list', '--inbox'], ['--root']]) {
@@ -126,3 +131,33 @@ test('unsupported commands and options exit nonzero with a coded stderr error', 
   assert.equal(help.code, 0);
   assert.match(help.stdout, /^Usage:/);
 });
+
+// spec: context-workspaces / Reject escaped document
+test('validation rejects escaped, missing, duplicate and unlinked hub content', async t => {
+  const { base, workspace, cli, hub } = await fixture(t);
+  const manifestPath = join(hub, 'hub.json');
+  const original = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const expectInvalid = async (change, pattern) => {
+    await writeFile(manifestPath, JSON.stringify({ ...original, ...change }));
+    const result = await cli(['--root', workspace, 'validate']);
+    assert.notEqual(result.code, 0);
+    assert.equal(result.stdout, '');
+    assert.match(result.error.message, pattern);
+    return result;
+  };
+  await writeFile(join(base, 'outside.md'), 'Outside secret');
+  await expectInvalid({ documents: ['../../../outside.md'] }, /escapes its root/);
+  await symlink(join(base, 'outside.md'), join(hub, 'linked.md'));
+  const linked = await expectInvalid({ documents: ['linked.md'] }, /escapes its root/);
+  assert.doesNotMatch(linked.stderr, /Outside secret/);
+  await expectInvalid({ documents: ['missing.md'] }, /ENOENT|missing/);
+  await expectInvalid({ links: ['personal/missing'] }, /Unknown linked hub/);
+  await writeFile(manifestPath, JSON.stringify(original));
+  await mkdir(join(workspace, 'hubs/copy'));
+  await writeFile(join(workspace, 'hubs/copy/hub.json'), JSON.stringify(original));
+  await writeFile(join(workspace, 'hubs/copy/README.md'), 'Copy');
+  const duplicate = await cli(['--root', workspace, 'context', 'personal/main']);
+  assert.notEqual(duplicate.code, 0);
+  assert.match(duplicate.error.message, /Duplicate hub ID/);
+});
+
