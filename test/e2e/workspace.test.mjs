@@ -15,8 +15,8 @@ async function fixture(t) {
   const env = { ...process.env, XDG_DATA_HOME: join(base, 'data'), XDG_CONFIG_HOME: join(base, 'config'),
     OPENSPEC_TELEMETRY: '0', DO_NOT_TRACK: '1', OPENSPEC_NO_UPDATE_CHECK: '1' };
   delete env.CONTEXT_KIT_ROOT;
-  const cli = (args, input) => new Promise((done, reject) => {
-    const child = spawn(process.execPath, [join(kit, 'bin/hub.mjs'), ...args], { env, cwd: base });
+  const cli = (args, input, extra = {}) => new Promise((done, reject) => {
+    const child = spawn(process.execPath, [join(kit, 'bin/hub.mjs'), ...args], { env: { ...env, ...extra }, cwd: base });
     let stdout = '', stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; });
     child.stderr.on('data', chunk => { stderr += chunk; });
@@ -97,6 +97,14 @@ test('capture requires an explicit workspace outside the toolkit and valid input
   assert.equal(implicit.error.code, 'WRITE_DISABLED');
   const kitRoot = await cli(['--root', kit, 'capture', 'working-with-agents', 'Nope'], 'body');
   assert.equal(kitRoot.error.code, 'WRITE_DISABLED');
+  // A workspace nested anywhere inside the checkout is still the toolkit checkout.
+  await mkdir(join(kit, '.state'), { recursive: true });
+  const nestedBase = await mkdtemp(join(kit, '.state', 'nested-'));
+  t.after(() => rm(nestedBase, { recursive: true, force: true }));
+  const nested = join(nestedBase, 'workspace');
+  assert.equal((await cli(['init', nested])).code, 0);
+  assert.equal((await cli(['--root', nested, 'capture', 'personal/main', 'Nope'], 'body')).error.code, 'WRITE_DISABLED');
+  await assert.rejects(readdir(join(nested, 'hubs/personal/inbox')), { code: 'ENOENT' });
   assert.equal((await cli(['--root', workspace, 'capture', 'personal/main', 'Empty'], '  \n')).error.code, 'INVALID_INPUT');
   assert.equal((await cli(['--root', workspace, 'capture', 'personal/main', 'Bad'], Buffer.from([0xff, 0xfe]))).error.code, 'INVALID_UTF8');
   assert.equal((await cli(['--root', workspace, 'capture', 'personal/main', 'Big'], 'x'.repeat(65537))).error.code, 'TOO_LARGE');
@@ -152,6 +160,9 @@ test('validation rejects escaped, missing, duplicate and unlinked hub content', 
   await symlink(join(base, 'outside.md'), join(hub, 'linked.md'));
   const linked = await expectInvalid({ documents: ['linked.md'] }, /escapes its root/);
   assert.doesNotMatch(linked.stderr, /Outside secret/);
+  const retrieved = await cli(['--root', workspace, 'context', 'personal/main']);
+  assert.equal(retrieved.error.code, 'PATH_ESCAPE');
+  assert.equal(retrieved.stdout, '');
   const missing = await expectInvalid({ documents: ['missing.md'] }, /missing\.md/);
   assert.equal(missing.error.code, 'NOT_FOUND');
   assert.doesNotMatch(missing.error.message, new RegExp(base));
@@ -163,5 +174,19 @@ test('validation rejects escaped, missing, duplicate and unlinked hub content', 
   const duplicate = await cli(['--root', workspace, 'context', 'personal/main']);
   assert.notEqual(duplicate.code, 0);
   assert.match(duplicate.error.message, /Duplicate hub ID/);
+});
+
+// spec: context-workspaces / Create a workspace
+test('CONTEXT_KIT_ROOT selects the workspace, and --root takes precedence', async t => {
+  const { base, workspace, cli } = await fixture(t);
+  const fromEnv = await cli(['list'], '', { CONTEXT_KIT_ROOT: workspace });
+  assert.equal(fromEnv.json.root, workspace);
+  assert.deepEqual(fromEnv.json.hubs.map(hub => hub.id), ['personal/main']);
+  const other = join(base, 'other');
+  assert.equal((await cli(['init', other])).code, 0);
+  assert.equal((await cli(['--root', other, 'list'], '', { CONTEXT_KIT_ROOT: workspace })).json.root, other);
+  const captured = await cli(['capture', 'personal/main', 'Via env'], 'body', { CONTEXT_KIT_ROOT: workspace });
+  assert.equal(captured.code, 0, captured.stderr);
+  assert.equal(captured.json.root, workspace);
 });
 

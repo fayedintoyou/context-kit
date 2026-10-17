@@ -252,3 +252,16 @@ test('an audit nested in a larger repository reports that repository and only it
   await writeFile(join(workspace, 'new.txt'), 'inside');
   assert.equal((await hubCli('specs', 'audit')).snapshot.dirty, true);
 });
+
+// spec: canonical-spec-audit / Read a referenced store
+test('a repository without hubs can still read the stores it references', async t => {
+  const { workspace, hubCli } = await referencing(t);
+  await rm(join(workspace, 'hubs'), { recursive: true });
+  const read = await hubCli('specs', 'read', 'shared-auth', '--store', 'platform');
+  assert.deepEqual(read.source, { kind: 'store', storeId: 'platform' });
+  assert.deepEqual((await hubCli('specs', 'list', '--store', 'platform')).specs.map(item => item.id), ['shared-auth']);
+  assert.deepEqual((await hubCli('specs', 'stores')).stores.map(({ storeId, via }) => ({ storeId, via })),
+    [{ storeId: 'platform', via: 'reference' }, { storeId: 'missing', via: 'reference' }]);
+  assert.equal((await hubCli('specs', 'list', '--store', 'nested')).error.code, 'UNKNOWN_STORE');
+});
+
