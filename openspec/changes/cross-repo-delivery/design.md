@@ -95,8 +95,10 @@
   merged into the party's base.
 - [The step is forgotten and a finished contract stays active] → `specs archivable
   --store` lists it as `ready`. The `reconcile-change` skill ends by naming the step.
-- [A stale checkout under-reports landing] → Landing counts `origin/<base>` as well as
-  the local base, as today. The docs say to fetch party checkouts before finishing.
+- [A stale checkout under-reports landing] → Party landing counts only the party
+  remote's fetched tip, so an unfetched checkout reports `in_progress` or
+  `remote_not_fetched` rather than landed. The docs say to fetch party checkouts before
+  finishing.
 
 ## Migration Plan
 

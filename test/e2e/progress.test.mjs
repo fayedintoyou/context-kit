@@ -530,9 +530,9 @@ test('a store slice lands from its qualified trailer on its party checkout defau
   assert.equal(requirementStates(result)['locations / Radius'], 'landed');
   assert.deepEqual(result.repos, [
     { party: 'site', upstream: upstream('site'), checkout: site.checkout, remote: 'origin',
-      base: { ref: 'main', refs: ['origin/main'], commit: await site.rev('origin/main') }, pullRequests: { status: 'not_collected', reason: 'gh is not installed' } },
+      base: { ref: 'main', refs: ['refs/remotes/origin/main'], commit: await site.rev('origin/main') }, pullRequests: { status: 'not_collected', reason: 'gh is not installed' } },
     { party: 'game', upstream: upstream('game'), checkout: game.checkout, remote: 'origin',
-      base: { ref: 'main', refs: ['origin/main'], commit }, pullRequests: { status: 'not_collected', reason: 'gh is not installed' } }]);
+      base: { ref: 'main', refs: ['refs/remotes/origin/main'], commit }, pullRequests: { status: 'not_collected', reason: 'gh is not installed' } }]);
   assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), result);
   // The landed dependency appears in the ready slice's packet.
   const next = await cli('specs', 'next', 'embed', '--store', 'shared');
@@ -612,6 +612,10 @@ test('a party checkout with no remote for its upstream leaves its slices unknown
   const stalled = unfetched.slices.find(slice => slice.id === 'storage');
   assert.deepEqual([stalled.reason, stalled.remedies], ['remote_not_fetched', [`git -C ${checkout} fetch origin`]]);
   assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), unfetched);
+  // A local branch named like the tracking ref is not the remote's tip.
+  await game.git('branch', 'origin/main');
+  assert.deepEqual([states(await status(cli)).storage, states(await status(cli)).api], ['unknown', 'blocked']);
+  await game.git('branch', '-D', 'origin/main');
   // Fetched, its tip is the base again, and the unpushed commit is in progress.
   await game.git('fetch', '-q', 'origin');
   assert.equal(states(await status(cli)).storage, 'in_progress');
@@ -634,7 +638,7 @@ test('a fork checkout is judged against the party remote and asks gh about the p
   assert.deepEqual([storage.commits.map(item => [item.sha, item.landed]), storage.branches, storage.pullRequests], [[[commit, false]], ['dev', 'origin/dev'], []]);
   const party = result.repos.find(repo => repo.party === 'game');
   assert.deepEqual([party.remote, party.base, party.pullRequests], ['upstream',
-    { ref: 'main', refs: ['upstream/main'], commit: await game.rev('upstream/main') }, { status: 'collected' }]);
+    { ref: 'main', refs: ['refs/remotes/upstream/main'], commit: await game.rev('upstream/main') }, { status: 'collected' }]);
   assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), result);
   // gh is always named the party upstream, never left to its default (the fork).
   const calls = (await readFile(join(base, 'gh.log'), 'utf8')).trim().split('\n');
@@ -655,7 +659,7 @@ test('a party base is its remote tip even when the local branch is older', async
   const result = await status(cli);
   assert.equal(states(result).storage, 'landed');
   const packet = await cli('specs', 'slice', 'embed', 'storage', '--store', 'shared');
-  assert.deepEqual(packet.base, { ref: 'main', refs: ['origin/main'], commit });
+  assert.deepEqual(packet.base, { ref: 'main', refs: ['refs/remotes/origin/main'], commit });
   assert.deepEqual(packet.review.commits.map(item => item.sha), [commit]);
   assert.deepEqual(await mcp('read_slice', { change: 'embed', slice: 'storage', store: 'shared' }), packet);
   // Reconcile reads the landed commit in the party checkout, though the local main lacks it.
