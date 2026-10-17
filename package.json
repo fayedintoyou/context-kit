@@ -1,0 +1,12 @@
+{
+  "name": "personal-hubs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "hub": "node bin/hub.mjs",
+    "validate": "node bin/hub.mjs validate",
+    "test": "node --test"
+  }
+}

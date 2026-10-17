@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "id": "personal/working-with-agents",
+  "description": "Personal preferences and methods for getting useful work from agents.",
+  "documents": ["README.md", "preferences.md"],
+  "skills": ["skills/independent-review/SKILL.md"],
+  "links": []
+}

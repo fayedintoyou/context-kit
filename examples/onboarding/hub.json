@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "id": "example/onboarding",
+  "description": "Fictional business domain spanning identity and welcome-message repositories.",
+  "documents": ["README.md"],
+  "skills": ["skills/independent-review/SKILL.md"],
+  "links": []
+}
