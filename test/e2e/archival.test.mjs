@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, realpath, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, appendFile, readFile, readdir, rm, realpath, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,7 +54,7 @@ async function fixture(t) {
     try { return { code: 0, json: JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', root, ...args], { env })).stdout) }; }
     catch (error) { return { code: error.code, json: JSON.parse(error.stderr || error.stdout) }; }
   };
-  return { root, env, git, change, commit, cli };
+  return { base, root, env, git, change, commit, cli };
 }
 const byName = changes => Object.fromEntries(changes.map(change => [change.name, change]));
 
@@ -75,7 +75,7 @@ test('readiness comes from ticked tasks; an unticked task or no tasks holds a ch
 
 // spec: change-archival / Slices not landed
 test('a planned change waits for every slice to land on the base', async t => {
-  const { git, change, commit, cli } = await fixture(t);
+  const { root, git, change, commit, cli } = await fixture(t);
   await change('radius', '- [x] Store\n- [x] Query\n', { 'slices.yaml': 'slices:\n  - id: store\n    implements: [locations / Radius]\n  - id: query\n    implements: [locations / Radius]\n    depends_on: [store]\n' });
   await commit();
   await git('commit', '-q', '--allow-empty', '-m', 'Store\n\nOpenSpec-Change: radius\nOpenSpec-Slice: store');
@@ -83,6 +83,12 @@ test('a planned change waits for every slice to land on the base', async t => {
   assert.deepEqual([waiting.ready, waiting.plan, waiting.blockers], [false, 'present', [{ code: 'slices_unlanded', slices: ['query'] }]]);
   await git('commit', '-q', '--allow-empty', '-m', 'Query\n\nOpenSpec-Change: radius\nOpenSpec-Slice: query');
   assert.equal(byName((await cli('specs', 'archivable')).json.changes).radius.ready, true);
+  // A plan that can't be read holds the change with invalid_plan, carrying the plan's own error.
+  await put(root, 'openspec/changes/radius/slices.yaml', 'slices:\n  - id: store\n    implements: [locations / Radius]\n    depends_on: [store]\n');
+  const invalid = byName((await cli('specs', 'archivable')).json.changes).radius;
+  assert.deepEqual([invalid.ready, invalid.plan, invalid.blockers.map(blocker => blocker.code)], [false, 'invalid', ['invalid_plan']]);
+  assert.equal(invalid.blockers[0].error.code, 'INVALID_CONFIG');
+  assert.match(invalid.blockers[0].error.message, /openspec\/changes\/radius\/slices\.yaml: dependency cycle store -> store/);
 });
 
 // spec: change-archival / Readiness over MCP
@@ -169,4 +175,127 @@ test('specs archive without --ready refuses and archives nothing', async t => {
   assert.match(json.error.message, /--ready/);
   assert.deepEqual(await hashes(root), before);
   assert.equal((await cli('specs', 'archivable', '--ready')).json.error.code, 'INVALID_INPUT');
+});
+
+// The workspace's hub declares store `shared`, registered in the isolated OpenSpec registry. Its
+// change `embed` adds contract `game-embedding` between parties `site` and `game`, one slice each,
+// with every task ticked. The `located` parties have checkouts recorded with `repos locate`, each
+// with an `origin` whose fictional upstream URL maps to a local bare repository; only the fixture's
+// own git reaches it, through an isolated insteadOf config.
+async function storeFixture(t, { located = ['site', 'game'] } = {}) {
+  const context = await fixture(t);
+  const { base, root, env, commit, cli } = context;
+  const upstream = name => `https://github.com/example/${name}`;
+  await put(root, 'hubs/team/README.md', '---\ntype: Guide\n---\n\nTeam context\n');
+  await put(root, 'hubs/team/hub.json', JSON.stringify({ version: 1, id: 'team/shared', description: 'Team',
+    documents: ['README.md'], skills: [], links: [], specStores: ['shared'] }));
+  for (const name of ['site', 'game']) {
+    await put(root, `hubs/team/${name}.md`, `---\ntype: Repository\ntitle: ${name}\nresource: ${upstream(name)}\n---\n\n# ${name}\n`);
+  }
+  await commit('Declare the shared store');
+  const store = join(base, 'shared-store');
+  const contract = `# Game embedding\n\n## Purpose\nHow the site hosts the game and the game accepts its host.\n\n## ADDED Requirements\n\n${requirement('Host')}\n${requirement('Guest')}`;
+  await put(store, 'openspec/config.yaml', 'schema: spec-driven\n');
+  await put(store, 'openspec/specs/locations/spec.md', `# Locations\n\n## Purpose\nFind locations by text, radius and filters for every party.\n\n## Requirements\n\n${requirement('Search')}`);
+  await put(store, 'openspec/parties.yaml', `parties:\n  site: ${upstream('site')}\n  game: ${upstream('game')}\ncontracts:\n  game-embedding: [site, game]\n`);
+  await exec(process.execPath, [openspec, 'store', 'register', store, '--id', 'shared', '--yes', '--json'], { env });
+  await exec(process.execPath, [openspec, 'new', 'change', 'embed'], { cwd: store, env });
+  await put(store, 'openspec/changes/embed/proposal.md', '# Why\n\nAgree how the site embeds the game.\n\n## What Changes\n\nAdd game-embedding.\n\n## Impact\n\nShared specs.\n');
+  await put(store, 'openspec/changes/embed/tasks.md', '- [x] 1.1 Host\n- [x] 1.2 Guest\n- [x] 1.3 Finish\n');
+  await put(store, 'openspec/changes/embed/specs/game-embedding/spec.md', contract);
+  await put(store, 'openspec/changes/embed/slices.yaml', 'slices:\n  - id: host\n    repo: site\n    implements: [game-embedding / Host]\n  - id: guest\n    repo: game\n    implements: [game-embedding / Guest]\n');
+  const storeGit = (...args) => exec('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { cwd: store, env });
+  await storeGit('init', '-q', '-b', 'main');
+  await storeGit('add', '.');
+  await storeGit('commit', '-qm', 'Plan embed');
+  const config = join(base, 'parties.gitconfig');
+  const checkouts = {};
+  for (const name of located) {
+    const checkout = join(base, 'parties', name);
+    const bare = join(base, 'upstreams', `${name}.git`);
+    const run = (cwd, ...args) => exec('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args],
+      { cwd, env: { ...env, GIT_CONFIG_GLOBAL: config } });
+    await mkdir(checkout, { recursive: true });
+    await mkdir(bare, { recursive: true });
+    await run(bare, 'init', '-q', '--bare', '-b', 'main');
+    await appendFile(config, `[url "file://${bare}"]\n\tinsteadOf = ${upstream(name)}\n`);
+    await run(checkout, 'init', '-q', '-b', 'main');
+    await run(checkout, 'commit', '-q', '--allow-empty', '-m', `Start ${name}`);
+    await run(checkout, 'remote', 'add', 'origin', upstream(name));
+    await run(checkout, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+    await run(checkout, 'remote', 'set-head', 'origin', '--auto');
+    assert.equal((await cli('repos', 'locate', `team/shared/${name}`, checkout)).json.repository?.status, 'located');
+    // A slice lands with the store-qualified trailers, pushed so the party remote's fetched main has it.
+    const land = async slice => {
+      await put(checkout, `src/${slice}.mjs`, `export const ${slice} = true;\n`);
+      await run(checkout, 'add', '.');
+      await run(checkout, 'commit', '-qm', `Build ${slice}\n\nOpenSpec-Change: shared:embed\nOpenSpec-Slice: ${slice}\n`);
+      await run(checkout, 'push', '-q', 'origin', 'main');
+      return (await run(checkout, 'rev-parse', 'HEAD')).stdout.trim();
+    };
+    checkouts[name] = { checkout: await realpath(checkout), git: (...args) => run(checkout, ...args), land };
+  }
+  const client = new Client({ name: 'archival-store-test', version: '1.0' });
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', root], env, stderr: 'pipe' }));
+  t.after(() => client.close());
+  const mcp = async (name, args) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
+  return { ...context, store: await realpath(store), storeGit, checkouts, client, mcp };
+}
+
+// spec: change-archival / Party evidence missing
+test('a store slice whose party has no recorded checkout holds the change with evidence_missing', async t => {
+  const { store, cli, mcp, checkouts: { site } } = await storeFixture(t, { located: ['site'] });
+  const missing = { code: 'evidence_missing', slices: [{ id: 'guest', party: 'game', reason: 'checkout_missing',
+    remedies: ['repos locate team/shared/game <path>', 'repos clone team/shared/game [<path>]'] }] };
+  // Each unlanded slice is named by one blocker: the unknown one by evidence_missing, the rest by slices_unlanded.
+  const waiting = (await cli('specs', 'archivable', '--store', 'shared')).json;
+  assert.deepEqual(waiting.changes, [{ name: 'embed', tasks: { completed: 3, total: 3 }, plan: 'present', ready: false,
+    blockers: [missing, { code: 'slices_unlanded', slices: ['host'] }] }]);
+  assert.deepEqual(await mcp('archivable_changes', { store: 'shared' }), waiting);
+  await site.land('host');
+  const result = (await cli('specs', 'archivable', '--store', 'shared')).json;
+  assert.deepEqual([result.root, result.source], [store, { kind: 'store', storeId: 'shared' }]);
+  assert.deepEqual(result.changes.map(({ name, ready, blockers }) => [name, ready, blockers]), [['embed', false, [missing]]]);
+  assert.deepEqual(await mcp('archivable_changes', { store: 'shared' }), result);
+  // Archiving skips it with the same blocker and leaves the store's tree as it was.
+  const before = await hashes(store);
+  const { code, json } = await cli('specs', 'archive', '--ready', '--store', 'shared');
+  assert.equal(code, 0, JSON.stringify(json));
+  assert.deepEqual([json.archived, json.skipped], [[], [{ name: 'embed', blockers: [missing] }]]);
+  assert.deepEqual(await hashes(store), before);
+});
+
+// spec: change-archival / Archive a finished store change
+test('archive --ready --store archives a finished store change only under the store\'s openspec/', async t => {
+  const { base, git, store, storeGit, cli, mcp, client, checkouts: { site, game } } = await storeFixture(t);
+  await site.land('host');
+  await game.land('guest');
+  const readiness = (await cli('specs', 'archivable', '--store', 'shared')).json;
+  assert.deepEqual(readiness.changes.map(({ name, ready, blockers }) => [name, ready, blockers]), [['embed', true, []]]);
+  assert.deepEqual(await mcp('archivable_changes', { store: 'shared' }), readiness);
+  // Archiving stays CLI-only.
+  assert.ok(!(await client.listTools()).tools.some(tool => tool.name === 'archive_ready'));
+  assert.equal((await mcp('archive_ready', { store: 'shared' })).error.code, 'UNKNOWN_OPERATION');
+  const heads = () => Promise.all([git, storeGit, site.git, game.git].map(async run => (await run('rev-parse', 'HEAD')).stdout.trim()));
+  const [before, headsBefore] = [await hashes(base), await heads()];
+  const { code, json } = await cli('specs', 'archive', '--ready', '--store', 'shared');
+  assert.equal(code, 0, JSON.stringify(json));
+  assert.deepEqual([json.root, json.source], [store, { kind: 'store', storeId: 'shared' }]);
+  assert.deepEqual(json.archived.map(item => [item.name, item.specsUpdated, item.totals.added]), [['embed', true, 2]]);
+  assert.deepEqual([json.skipped, json.valid], [[], true]);
+  // The contract is canonical in the store, and the change is in the store's archive.
+  const canonical = await readFile(join(store, 'openspec/specs/game-embedding/spec.md'), 'utf8');
+  assert.match(canonical, /Requirement: Host/);
+  assert.match(canonical, /Requirement: Guest/);
+  assert.ok(!(await readdir(join(store, 'openspec/changes'))).includes('embed'));
+  assert.ok((await readdir(join(store, 'openspec/changes/archive'))).includes(json.archived[0].archivedAs));
+  assert.deepEqual((await cli('specs', 'parties', '--store', 'shared')).json.contracts,
+    [{ spec: 'game-embedding', parties: ['site', 'game'], status: 'canonical' }]);
+  // Nothing outside the store's openspec/ changed: not the workspace, the store's other files,
+  // the party checkouts or the registry; and nothing was committed anywhere.
+  const after = await hashes(base);
+  const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(file => before[file] !== after[file]);
+  assert.ok(changed.length > 0);
+  assert.deepEqual(changed.filter(file => !file.startsWith('shared-store/openspec/')), []);
+  assert.deepEqual(await heads(), headsBefore);
 });

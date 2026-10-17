@@ -29,7 +29,7 @@ tests do. No network.
 
 ## 5. Slice `store-archive`
 
-- [ ] 5.1 `evidence_missing` blocker, and `archive --ready --store` writing only under the store's `openspec/`. Link `test/e2e/archival.test.mjs` to "Party evidence missing" and "Archive a finished store change"
+- [x] 5.1 `evidence_missing` blocker, and `archive --ready --store` writing only under the store's `openspec/`. Link `test/e2e/archival.test.mjs` to "Party evidence missing" and "Archive a finished store change"
 
 ## 6. Slice `party-reconcile`
 

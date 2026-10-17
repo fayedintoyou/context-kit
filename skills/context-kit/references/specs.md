@@ -245,11 +245,24 @@ not `landed`, and `specs next` offers no packet for them.
 A change is ready to archive when OpenSpec counts every task ticked and, with a
 slice plan, every slice has landed. `specs archivable` lists each active change
 with `ready` or its blockers: `no_tasks`, `tasks_incomplete` (an unticked task
-also holds a change open on purpose), `slices_unlanded` (naming the slices) or
-`invalid_plan`. `specs archive --ready` archives exactly the ready changes
-through the pinned OpenSpec CLI, validates canonical specs strictly and reports
-`archived` and `skipped`. It never commits and is not offered over MCP. Both
-take `--store <id>` to read and archive a store's changes in the store's root.
+also holds a change open on purpose), `slices_unlanded` (naming the slices),
+`evidence_missing` or `invalid_plan`. `evidence_missing` lists each store slice
+whose state is `unknown` with its `party`, `reason` (`checkout_missing`,
+`remote_missing` or `remote_not_fetched`) and `remedies`. Each unlanded slice is
+named by exactly one blocker: an `unknown` slice only by `evidence_missing`,
+every other one (its dependents included) by `slices_unlanded`. `invalid_plan`
+carries the plan's own failure as `error: { code, message }`, usually
+`INVALID_CONFIG` naming `slices.yaml`.
+
+`specs archive --ready` archives exactly the ready changes through the pinned
+OpenSpec CLI, validates canonical specs strictly and reports `archived` and
+`skipped`. It never commits and is not offered over MCP. Both take
+`--store <id>` to read and archive a store's changes in the store's root: run
+from the workspace, whose registry records the party checkouts that prove each
+slice landed, `specs archive --ready --store <id>` writes only under the store's
+`openspec/` (the change moves to its archive and its contract becomes canonical
+there). Fetch the party checkouts first; then commit the result in the store's
+repository.
 
 The reusable `.github/workflows/openspec.yml` runs this on every push to the
 default branch, tests the result and pushes the archive commit, and on pull
