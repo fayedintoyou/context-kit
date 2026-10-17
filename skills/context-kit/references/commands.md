@@ -31,6 +31,7 @@ CLI: `context-kit [--root <dir>] <command>`; inside a workspace, `npm run hub --
 | `specs read <id>` | `read_spec` | One spec (`--store`) |
 | `specs audit` | `audit_specs` | Structural audit (`--store`) |
 | `specs garden` | `garden_specs` | Spec gardening signals (`--store`) |
+| `specs parties --store <id>` | `list_parties` | A store's parties and contracts |
 | `specs status <change>` | `change_status` | Derived slice and requirement progress of a change |
 | `specs next <change>` | `next_slices` | Work packets for slices ready to start |
 | `specs slice <change> <slice>` | `read_slice` | One slice's packet and review inputs |
