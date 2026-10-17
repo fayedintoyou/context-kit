@@ -48,11 +48,22 @@ the parties and contracts with the store as source; a store without the file
 has none. Parties belong to stores: without a store the call fails with
 `INVALID_INPUT`, and a repository's own `openspec/parties.yaml` is never read.
 
+Store specs are labelled with their contract: `specs list --store <id>` and
+`specs read <spec-id> --store <id>` give each spec `contract: { parties: [...] }`
+when the parties file names it, otherwise `contract: null`. When a repository's
+`specs list` includes a referenced store, each of that store's specs also
+carries `party`: the contract party whose upstream matches any of the
+repository's git remotes (SSH and HTTPS forms match), or `null` when it plays
+none, isn't a git checkout, or the spec is no contract (`contract: null`). The
+repository's own specs carry neither field.
+
 An invalid file (bad YAML, party name or upstream, a shared upstream, an
 undeclared party, a contract with fewer than two parties, or a contract spec
-that is neither canonical nor added by an active change) fails `specs parties`
-and `specs list --store <id>` with `INVALID_CONFIG` naming the file and the
-problem. Renaming or removing a contract spec in a change means updating
+that is neither canonical nor added by an active change) fails `specs parties`,
+`specs list --store <id>` and `specs read --store <id>` with `INVALID_CONFIG`
+naming the file and the problem. In a repository's listing, a referenced store
+with an invalid file becomes a `warning` reference carrying that issue, and the
+repository's own specs are still listed. Renaming or removing a contract spec in a change means updating
 `parties.yaml` in the same change.
 
 ## Audits and gardening
