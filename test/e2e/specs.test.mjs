@@ -6,6 +6,8 @@ import { mkdtemp, mkdir, writeFile, rm, realpath, chmod } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const exec = promisify(execFile);
 const kit = fileURLToPath(new URL('../../', import.meta.url));
@@ -57,7 +59,13 @@ async function fixture(t) {
     }
   };
   const hubCli = Object.assign(run({}), { withEnv: run });
-  return { base, env, workspace, store, hubCli };
+  const mcp = async () => {
+    const client = new Client({ name: 'specs-test', version: '1.0' });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', workspace], env, stderr: 'pipe' }));
+    t.after(() => client.close());
+    return async (name, args) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
+  };
+  return { base, env, workspace, store, hubCli, mcp };
 }
 
 // spec: canonical-spec-audit / Read a declared store
@@ -285,4 +293,174 @@ test('store gardening uses its own canonical tree, locks, taxonomy and no code t
   assert.deepEqual(report.requirements.map(r => r.key), (await hubCli('specs', 'audit', '--store', 'platform')).checklist.map(r => r.key));
   assert.equal((await hubCli('specs', 'garden', '--store', 'unknown')).error.code, 'UNKNOWN_STORE');
   assert.equal((await hubCli('specs', 'garden', '--store', '../bad')).error.code, 'INVALID_INPUT');
+});
+
+// Parties use fictional upstreams; contracts map spec ids to party names.
+const site = 'https://github.com/example/site';
+const game = 'https://github.com/example/game';
+const partiesFile = (contracts, parties = { site, game }) => 'parties:\n' +
+  Object.entries(parties).map(([name, upstream]) => `  ${name}: ${upstream}\n`).join('') +
+  'contracts:\n' + Object.entries(contracts).map(([spec, names]) => `  ${spec}: [${names.join(', ')}]\n`).join('');
+async function storeChange(store, env, name, specId) {
+  await exec(process.execPath, [openspecBin, 'new', 'change', name], { cwd: store, env });
+  await writeFile(join(store, 'openspec/changes', name, 'proposal.md'), `# Why\n\nAgree on ${specId} between the site and the game.\n\n## What Changes\n\nAdd ${specId}.\n\n## Impact\n\nShared specs.\n`);
+  await writeFile(join(store, 'openspec/changes', name, 'tasks.md'), `- [x] Write ${specId}\n`);
+  await mkdir(join(store, 'openspec/changes', name, 'specs', specId), { recursive: true });
+  await writeFile(join(store, 'openspec/changes', name, 'specs', specId, 'spec.md'), spec(specId).replace('## Requirements', '## ADDED Requirements'));
+}
+
+// spec: cross-repo-contracts / Parties are listed
+test('a store lists its parties and contracts the same over CLI and MCP', async t => {
+  const { store, hubCli, mcp } = await fixture(t);
+  const source = { kind: 'store', storeId: 'platform' };
+  assert.deepEqual(await hubCli('specs', 'parties', '--store', 'platform'), { root: store, source, parties: [], contracts: [] });
+  await writeFile(join(store, 'openspec/parties.yaml'), partiesFile({ 'shared-auth': ['site', 'game'] }));
+  const listed = await hubCli('specs', 'parties', '--store', 'platform');
+  assert.deepEqual(listed, { root: store, source, parties: [{ name: 'site', upstream: site }, { name: 'game', upstream: game }],
+    contracts: [{ spec: 'shared-auth', parties: ['site', 'game'], status: 'canonical' }] });
+  assert.deepEqual(await (await mcp())('list_parties', { store: 'platform' }), listed);
+});
+
+// spec: cross-repo-contracts / Parties belong to stores
+test('parties are read only from stores, never from a repository', async t => {
+  const { workspace, hubCli, mcp } = await fixture(t);
+  await writeFile(join(workspace, 'openspec/parties.yaml'), 'parties: [not: valid\n');
+  const refused = await hubCli('specs', 'parties');
+  assert.equal(refused.error.code, 'INVALID_INPUT');
+  assert.match(refused.error.message, /declared by stores/);
+  assert.deepEqual(await (await mcp())('list_parties', {}), refused);
+  assert.deepEqual((await hubCli('specs', 'list')).specs.map(item => item.id), ['local-only']);
+});
+
+// spec: cross-repo-contracts / Contract names an unknown party
+test('an invalid parties file fails store reads with INVALID_CONFIG naming the problem', async t => {
+  const { store, hubCli, mcp } = await fixture(t);
+  const call = await mcp();
+  const tools = { parties: ['list_parties', {}], list: ['list_specs', {}], read: ['read_spec', { id: 'shared-auth' }] };
+  const file = join(store, 'openspec/parties.yaml');
+  const fails = async (content, problem, commands = [['parties']]) => {
+    await writeFile(file, content);
+    for (const command of commands) {
+      const { error } = await hubCli('specs', ...command, '--store', 'platform');
+      assert.equal(error?.code, 'INVALID_CONFIG', `${command} ${content}`);
+      assert.match(error.message, /openspec\/parties\.yaml/);
+      assert.match(error.message, problem);
+      const [tool, args] = tools[command[0]];
+      assert.deepEqual(await call(tool, { ...args, store: 'platform' }), { error });
+    }
+  };
+  await fails(partiesFile({ 'shared-auth': ['site', 'web'] }), /undeclared party "web"/, [['parties'], ['list'], ['read', 'shared-auth']]);
+  await fails(partiesFile({ 'shared-auth': ['site', '""'] }), /undeclared party ""/);
+  await fails(partiesFile({}, { site: 'file:///tmp/%ZZ', game }), /party site upstream is not a git URL/);
+  await fails('parties:\n  site: { url: x }\n  game: ' + game + '\n', /party site upstream is not a git URL: a map/);
+  await fails('parties:\n  site: &loop { self: *loop }\n  game: ' + game + '\n', /party site upstream is not a git URL: a map/);
+  await fails('parties:\n  site: &loop [*loop]\n  game: ' + game + '\n', /party site upstream is not a git URL: a list/);
+  await fails('parties: [site\n', /not valid YAML/);
+  await fails(partiesFile({}, { Site: site, game }), /invalid party name Site/);
+  await fails(partiesFile({}, { site: 'example/site', game }), /party site upstream is not a git URL/);
+  await fails(partiesFile({}, { site, web: 'git@github.com:Example/site.git' }), /parties site and web share upstream/);
+  await fails(partiesFile({ 'shared-auth': ['site'] }), /contract shared-auth needs at least two parties/);
+  await fails(partiesFile({ 'shared-auth': ['site', 'site'] }), /contract shared-auth needs at least two parties/);
+  await fails('parties: { site: ' + site + ' }\nowners: []\n', /parties and contracts/);
+});
+
+// spec: cross-repo-contracts / Contract names no spec
+test('a contract whose spec is neither canonical nor proposed fails', async t => {
+  const { env, store, hubCli, mcp } = await fixture(t);
+  await writeFile(join(store, 'openspec/parties.yaml'), partiesFile({ 'game-embedding': ['site', 'game'] }));
+  await storeChange(store, env, 'embed', 'game-embedding');
+  assert.equal((await hubCli('specs', 'parties', '--store', 'platform')).contracts[0].status, 'proposed');
+  await rm(join(store, 'openspec/changes/embed'), { recursive: true });
+  const { error } = await hubCli('specs', 'parties', '--store', 'platform');
+  assert.equal(error.code, 'INVALID_CONFIG');
+  assert.match(error.message, /openspec\/parties\.yaml: contract game-embedding names no canonical spec/);
+  assert.deepEqual(await (await mcp())('list_parties', { store: 'platform' }), { error });
+});
+
+// spec: cross-repo-contracts / Contract proposed with its change
+test('a contract declared with its change is proposed until the change archives', async t => {
+  const { env, store, hubCli, mcp } = await fixture(t);
+  const call = await mcp();
+  await writeFile(join(store, 'openspec/parties.yaml'), partiesFile({ 'game-embedding': ['site', 'game'] }));
+  await storeChange(store, env, 'embed', 'game-embedding');
+  const proposed = await hubCli('specs', 'parties', '--store', 'platform');
+  assert.deepEqual(proposed.contracts, [{ spec: 'game-embedding', parties: ['site', 'game'], status: 'proposed' }]);
+  assert.deepEqual(await call('list_parties', { store: 'platform' }), proposed);
+  assert.deepEqual((await hubCli('specs', 'list', '--store', 'platform')).specs.map(item => item.id), ['shared-auth']);
+  const archive = JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', store, 'specs', 'archive', '--ready'], { env })).stdout);
+  assert.deepEqual([archive.archived.map(item => item.name), archive.valid], [['embed'], true]);
+  const canonical = await hubCli('specs', 'parties', '--store', 'platform');
+  assert.deepEqual(canonical.contracts, [{ spec: 'game-embedding', parties: ['site', 'game'], status: 'canonical' }]);
+  assert.deepEqual(await call('list_parties', { store: 'platform' }), canonical);
+});
+
+// spec: cross-repo-contracts / Contract lists its parties
+test('store specs carry their contract the same over CLI and MCP', async t => {
+  const { store, hubCli, mcp } = await fixture(t);
+  const call = await mcp();
+  const labels = listing => listing.specs.map(({ id, contract }) => ({ id, contract }));
+  await writeSpec(store, 'game-embedding');
+  assert.deepEqual(labels(await hubCli('specs', 'list', '--store', 'platform')),
+    [{ id: 'game-embedding', contract: null }, { id: 'shared-auth', contract: null }]);
+  await writeFile(join(store, 'openspec/parties.yaml'), partiesFile({ 'game-embedding': ['site', 'game'] }));
+  const listed = await hubCli('specs', 'list', '--store', 'platform');
+  assert.deepEqual(labels(listed), [{ id: 'game-embedding', contract: { parties: ['site', 'game'] } }, { id: 'shared-auth', contract: null }]);
+  assert.ok(listed.specs.every(item => !('party' in item)));
+  assert.deepEqual(await call('list_specs', { store: 'platform' }), listed);
+  const read = await hubCli('specs', 'read', 'game-embedding', '--store', 'platform');
+  assert.deepEqual(read.spec.contract, { parties: ['site', 'game'] });
+  assert.match(read.spec.content, /Shared game-embedding behavior/);
+  assert.deepEqual(await call('read_spec', { id: 'game-embedding', store: 'platform' }), read);
+  assert.equal((await hubCli('specs', 'read', 'shared-auth', '--store', 'platform')).spec.contract, null);
+  // Parties are a store feature, so the repository's own specs carry no label.
+  assert.ok((await hubCli('specs', 'list')).specs.every(item => !('contract' in item)));
+  assert.ok(!('contract' in (await call('read_spec', { id: 'local-only' })).spec));
+});
+
+// spec: cross-repo-contracts / A repository sees its contracts
+test('a repository listing names the party it plays in each referenced contract', async t => {
+  const { workspace, store, hubCli, mcp } = await referencing(t);
+  const editor = 'https://github.com/example/editor';
+  await writeSpec(store, 'game-embedding');
+  await writeSpec(store, 'level-format');
+  await writeFile(join(store, 'openspec/parties.yaml'),
+    partiesFile({ 'game-embedding': ['site', 'game'], 'level-format': ['game', 'editor'] }, { site, game, editor }));
+  const labels = async () => (await hubCli('specs', 'list')).references[0].specs.map(({ id, contract, party }) => ({ id, contract, party }));
+  const embedding = { id: 'game-embedding', contract: { parties: ['site', 'game'] } };
+  const format = { id: 'level-format', contract: { parties: ['game', 'editor'] } };
+  const auth = { id: 'shared-auth', contract: null, party: null };
+  // Outside a git checkout the repository has no remotes, so it plays no party.
+  assert.deepEqual(await labels(), [{ ...embedding, party: null }, { ...format, party: null }, auth]);
+  const git = (...args) => exec('git', args, { cwd: workspace });
+  await git('init', '-q');
+  await git('remote', 'add', 'origin', 'git@github.com:Example/site.git');
+  const listing = await hubCli('specs', 'list');
+  assert.equal(listing.references[0].storeId, 'platform');
+  assert.deepEqual(await labels(), [{ ...embedding, party: 'site' }, { ...format, party: null }, auth]);
+  assert.ok(listing.specs.every(item => !('contract' in item) && !('party' in item)));
+  assert.deepEqual(await (await mcp())('list_specs', {}), listing);
+  // Any remote counts, such as a checkout of the game whose origin is a fork.
+  await git('remote', 'set-url', 'origin', 'git@github.com:someone/fork.git');
+  await git('remote', 'add', 'upstream', game + '.git');
+  assert.deepEqual(await labels(), [{ ...embedding, party: 'game' }, { ...format, party: 'game' }, auth]);
+  // A malformed remote is skipped without hiding the others.
+  await git('remote', 'add', 'unrelated', 'file:///tmp/%ZZ');
+  assert.deepEqual(await labels(), [{ ...embedding, party: 'game' }, { ...format, party: 'game' }, auth]);
+  // Remotes matching two parties of one contract play the first in its listed order.
+  await git('remote', 'set-url', 'origin', site);
+  assert.deepEqual(await labels(), [{ ...embedding, party: 'site' }, { ...format, party: 'game' }, auth]);
+  await writeFile(join(store, 'openspec/parties.yaml'),
+    partiesFile({ 'game-embedding': ['game', 'site'], 'level-format': ['game', 'editor'] }, { site, game, editor }));
+  assert.deepEqual((await labels())[0], { id: 'game-embedding', contract: { parties: ['game', 'site'] }, party: 'game' });
+
+  // A referenced store's broken parties file is a warning, not a failure of this listing.
+  await writeFile(join(store, 'openspec/parties.yaml'), partiesFile({ 'game-embedding': ['site', 'web'] }));
+  const degraded = await hubCli('specs', 'list');
+  assert.deepEqual(degraded.specs.map(item => item.id), ['local-only', 'shared-auth']);
+  assert.deepEqual(degraded.references.map(({ storeId, status }) => ({ storeId, status })),
+    [{ storeId: 'platform', status: 'warning' }, { storeId: 'missing', status: 'warning' }]);
+  const [broken] = degraded.references;
+  assert.equal(broken.issues[0].code, 'INVALID_CONFIG');
+  assert.match(broken.issues[0].message, /openspec\/parties\.yaml: contract game-embedding names undeclared party "web"/);
+  assert.equal(broken.specs, undefined);
 });
