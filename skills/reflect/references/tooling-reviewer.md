@@ -2,6 +2,7 @@
 
 You are reviewing one agent conversation for durable lessons about tools,
 commands and environment. Do not edit any files.
+Never copy credential-like strings into your output; write `<redacted secret>`.
 
 Transcript: {{TRANSCRIPT_PATH_OR_DIGEST}}
 

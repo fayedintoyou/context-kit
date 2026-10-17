@@ -58,6 +58,21 @@ Every read reports `freshness.action`:
 A concept with no matching rule and no `stale_after` is read directly. Each
 decision has a `reason` and, when a rule applies, the `due` instant.
 
+## Writing concepts as an agent
+
+- Write curated concepts only as `status: draft` with no `verified`; a person
+  promotes and verifies them. Set `generated.at` to the actual time of writing.
+- Keep what the user said apart from what you inferred. Attribute stated facts and
+  rules (`Source: <who>, <date>`); put inferences under an `Inferred (unconfirmed)`
+  heading, never in the user's first-person voice, and list them in your report.
+- When you record an operational cause or a "leave X alone" rule, name the check
+  that confirmed it (a before/after request, a real browser load). If you ran none,
+  write `Suspected: … (not confirmed)`. Do not disable a security setting on an
+  unconfirmed diagnosis without saying so first.
+- Record what the source cannot: for a repository, where it lives, external
+  accounts and DNS, ownership rules. Link the repo's own docs rather than copying
+  build, test or command details.
+
 ## Validation
 
 `validate` requires every hub to be a conformant bundle and names each problem.

@@ -2,6 +2,7 @@
 
 You are combining three independent reviews of one agent conversation into a
 decision list the user will approve. Do not edit any files.
+Never copy credential-like strings into your output; write `<redacted secret>`.
 
 Transcript: {{TRANSCRIPT_PATH_OR_DIGEST}}
 
