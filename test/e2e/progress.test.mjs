@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, writeFile, rm, realpath, symlink, chmod } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, appendFile, rm, realpath, symlink, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +31,16 @@ async function put(root, path, content) {
   await mkdir(join(root, path, '..'), { recursive: true });
   await writeFile(join(root, path), content);
 }
+// The fake gh for parties answers only for the repository it is asked about with -R, and refuses
+// the default one (GH_REPO or the checkout's), logging every call.
+function partyGh(repositories, log) {
+  return ['#!/bin/sh', `printf '%s\\n' "$*" >> '${log}'`, "repository=''",
+    'while [ $# -gt 0 ]; do if [ "$1" = -R ]; then repository=$2; fi; shift; done', 'case "$repository" in',
+    ...Object.entries(repositories).map(([name, list]) => `  '${name}') printf '%s\\n' '${JSON.stringify(list)}' ;;`),
+    '  *) echo "fake gh: refusing ${repository:-the default repository $GH_REPO}" >&2; exit 1 ;;', 'esac', ''].join('\n');
+}
 // PATH holds only git and, when a test asks for it, a fake gh, so a real gh never reaches GitHub.
+// gh is either one pull request list, whatever gh is asked, or lists by -R repository for parties.
 async function fixture(t, { slices = plan, gh } = {}) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'context-kit-progress-')));
   t.after(() => rm(base, { recursive: true, force: true }));
@@ -40,7 +49,7 @@ async function fixture(t, { slices = plan, gh } = {}) {
   await mkdir(bin);
   await symlink((await exec('sh', ['-c', 'command -v git'])).stdout.trim(), join(bin, 'git'));
   if (gh) {
-    await writeFile(join(bin, 'gh'), `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify(gh)}'\n`);
+    await writeFile(join(bin, 'gh'), Array.isArray(gh) ? `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify(gh)}'\n` : partyGh(gh, join(base, 'gh.log')));
     await chmod(join(bin, 'gh'), 0o755);
   }
   const env = { ...process.env, PATH: bin, XDG_DATA_HOME: join(base, 'data'), XDG_CONFIG_HOME: join(base, 'config'),
@@ -72,15 +81,53 @@ async function fixture(t, { slices = plan, gh } = {}) {
 const parties = 'parties:\n  site: https://github.com/example/site\n  game: https://github.com/example/game\n';
 const storePlan = plan.replace('  - id: storage\n', '  - id: storage\n    repo: game\n')
   .replace('  - id: api\n', '  - id: api\n    repo: site\n').replace('  - id: client\n', '  - id: client\n    repo: site\n');
+// A party checkout recorded with `repos locate`. Its remotes carry fictional upstream URLs, each
+// backed by a bare repository with the given default branch. Only the fixture's own git reaches
+// those, through an isolated insteadOf config; the CLI reads what the checkout already has.
+async function partyCheckout({ base, env, cli }, name, remotes = { origin: [name, 'main'] }) {
+  const config = join(base, 'parties.gitconfig');
+  const run = (cwd, ...args) => exec('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args],
+    { cwd, env: { ...env, GIT_CONFIG_GLOBAL: config } });
+  const checkout = join(base, 'parties', name);
+  await mkdir(checkout, { recursive: true });
+  await run(checkout, 'init', '-q', '-b', 'main');
+  await run(checkout, 'commit', '-q', '--allow-empty', '-m', `Start ${name}`);
+  for (const [remote, [repository, branch]] of Object.entries(remotes)) {
+    const bare = join(base, 'upstreams', `${repository}.git`);
+    await mkdir(bare, { recursive: true });
+    await run(bare, 'init', '-q', '--bare', '-b', branch);
+    await appendFile(config, `[url "file://${bare}"]\n\tinsteadOf = https://github.com/example/${repository}\n`);
+    await run(checkout, 'remote', 'add', remote, `https://github.com/example/${repository}`);
+    await run(checkout, 'push', '-q', remote, `HEAD:refs/heads/${branch}`);
+    await run(checkout, 'remote', 'set-head', remote, '--auto');
+  }
+  const located = await cli('repos', 'locate', `team/shared/${name}`, checkout);
+  assert.equal(located.repository?.status, 'located', JSON.stringify(located));
+  const git = (...args) => run(checkout, ...args);
+  const rev = async ref => (await git('rev-parse', ref)).stdout.trim();
+  // A slice commit with a qualified trailer by default, inside the slice's declared scope.
+  const land = async (slice, change = 'shared:embed', file = `src/search/${slice}-${change.replace(/\W/g, '-')}.mjs`) => {
+    await put(checkout, file, `export const built = ${JSON.stringify(`${change} ${slice}`)};\n`);
+    await git('add', '.');
+    await git('commit', '-qm', `Build ${slice}\n\nOpenSpec-Change: ${change}\n${slice ? `OpenSpec-Slice: ${slice}\n` : ''}`);
+    return rev('HEAD');
+  };
+  return { checkout: await realpath(checkout), git, rev, land };
+}
 // The workspace's hub declares store `shared`: a git repository registered in the isolated
 // OpenSpec registry that plans change `embed` across parties `site` and `game`. Store `stray`
-// is registered but declared by no hub.
-async function storeFixture(t) {
-  const context = await fixture(t);
+// is registered but declared by no hub. The hub registers both parties' upstreams; the
+// `located` ones have recorded checkouts, with `remotes` per party as partyCheckout takes them.
+async function storeFixture(t, { located = ['site', 'game'], remotes = {}, gh, env: extra = {} } = {}) {
+  const context = await fixture(t, { gh });
   const { base, env, root } = context;
+  Object.assign(env, extra);
   await put(root, 'hubs/team/README.md', '---\ntype: Guide\n---\n\nTeam context\n');
   await put(root, 'hubs/team/hub.json', JSON.stringify({ version: 1, id: 'team/shared', description: 'Team',
     documents: ['README.md'], skills: [], links: [], specStores: ['shared'] }));
+  for (const name of ['site', 'game']) {
+    await put(root, `hubs/team/${name}.md`, `---\ntype: Repository\ntitle: ${name}\nresource: https://github.com/example/${name}\n---\n\n# ${name}\n`);
+  }
   const store = join(base, 'shared-store');
   await put(store, 'openspec/config.yaml', 'schema: spec-driven\n');
   await put(store, 'openspec/specs/locations/spec.md', spec(requirement('Search', 'Use Search', 'The store SHALL describe search for every party.')));
@@ -98,11 +145,13 @@ async function storeFixture(t) {
   await git('init', '-q', '-b', 'main');
   await git('add', '.');
   await git('commit', '-qm', 'Plan embed');
+  const checkouts = {};
+  for (const name of located) checkouts[name] = await partyCheckout(context, name, remotes[name]);
   const client = new Client({ name: 'progress-store-test', version: '1.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', root], env, stderr: 'pipe' }));
   t.after(() => client.close());
   const mcp = async (name, args) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
-  return { ...context, store, storeGit: git, client, mcp };
+  return { ...context, store, storeGit: git, client, mcp, checkouts };
 }
 const states = status => Object.fromEntries(status.slices.map(slice => [slice.id, slice.state]));
 const requirementStates = status => Object.fromEntries(status.requirements.map(item => [item.id, item.state]));
@@ -342,7 +391,7 @@ test('reconcile lists change scenarios no test links', async t => {
 
 // spec: change-progress / Store change over CLI and MCP
 test('delivery operations read a declared store change over CLI and MCP', async t => {
-  const { root, store, storeGit, cli, client, mcp } = await storeFixture(t);
+  const { root, store, storeGit, cli, client, mcp, checkouts: { site, game } } = await storeFixture(t);
   const head = (await storeGit('rev-parse', 'HEAD')).stdout.trim();
   const source = { kind: 'store', storeId: 'shared' };
   const status = await cli('specs', 'status', 'embed', '--store', 'shared');
@@ -350,7 +399,9 @@ test('delivery operations read a declared store change over CLI and MCP', async 
   assert.deepEqual(status.source, source);
   assert.equal(status.change, 'embed');
   assert.deepEqual(states(status), { storage: 'ready', api: 'blocked', client: 'blocked' });
-  assert.deepEqual(status.base, { ref: 'main', refs: ['main'], commit: head });
+  // Evidence comes from each party's checkout, not from the store's own history.
+  assert.equal(status.base, undefined);
+  assert.deepEqual(status.repos.map(repo => [repo.party, repo.base.commit]), [['site', await site.rev('HEAD')], ['game', await game.rev('HEAD')]]);
   assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), status);
   for (const call of [cli('specs', 'status', 'embed', '--store', 'stray'), mcp('change_status', { change: 'embed', store: 'stray' })]) {
     assert.equal((await call).error.code, 'UNKNOWN_STORE');
@@ -366,9 +417,9 @@ test('delivery operations read a declared store change over CLI and MCP', async 
   assert.deepEqual([next.root, next.source, next.packets.map(packet => packet.slice.id)], [store, source, ['storage']]);
   assert.deepEqual(await mcp('next_slices', { change: 'embed', store: 'shared' }), next);
   const packet = await cli('specs', 'slice', 'embed', 'api', '--store', 'shared');
-  assert.deepEqual([packet.root, packet.source, packet.base.commit], [store, source, head]);
+  assert.deepEqual([packet.root, packet.source, packet.base.commit], [store, source, await site.rev('HEAD')]);
   assert.equal(packet.requirements.find(item => item.id === 'locations / Search').canonical.text, 'The store SHALL describe search for every party.');
-  assert.equal(packet.trailers, 'OpenSpec-Change: embed\nOpenSpec-Slice: api');
+  assert.equal(packet.trailers, 'OpenSpec-Change: shared:embed\nOpenSpec-Slice: api');
   assert.deepEqual(await mcp('read_slice', { change: 'embed', slice: 'api', store: 'shared' }), packet);
   const report = await cli('specs', 'reconcile', 'embed', '--store', 'shared');
   assert.deepEqual([report.root, report.source, report.uncovered], [store, source, []]);
@@ -394,12 +445,12 @@ test('delivery operations read a declared store change over CLI and MCP', async 
 
 // spec: change-progress / Plan across party repositories
 test('a store plan lists each slice with its party and upstream', async t => {
-  const { cli, mcp } = await storeFixture(t);
+  const { cli, mcp, checkouts: { site, game } } = await storeFixture(t);
   const status = await cli('specs', 'status', 'embed', '--store', 'shared');
   assert.deepEqual(status.slices.map(slice => [slice.id, slice.repo]), [
-    ['storage', { party: 'game', upstream: 'https://github.com/example/game' }],
-    ['api', { party: 'site', upstream: 'https://github.com/example/site' }],
-    ['client', { party: 'site', upstream: 'https://github.com/example/site' }]]);
+    ['storage', { party: 'game', upstream: 'https://github.com/example/game', checkout: game.checkout }],
+    ['api', { party: 'site', upstream: 'https://github.com/example/site', checkout: site.checkout }],
+    ['client', { party: 'site', upstream: 'https://github.com/example/site', checkout: site.checkout }]]);
   assert.deepEqual(states(status), { storage: 'ready', api: 'blocked', client: 'blocked' });
   assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), status);
   // A repository's slices land in the repository itself and name no party.
@@ -457,4 +508,198 @@ test('store slices must name a declared party and repository slices none', async
     assert.equal(result.error?.code, 'INVALID_CONFIG', JSON.stringify(result));
     assert.match(result.error.message, /openspec\/changes\/deliver\/slices\.yaml: slice client names repo site/);
   }
+});
+
+const upstream = name => `https://github.com/example/${name}`;
+const status = (cli, ...args) => cli('specs', 'status', 'embed', '--store', 'shared', ...args);
+
+// spec: change-progress / Slice landed in another repository
+test('a store slice lands from its qualified trailer on its party checkout default branch', async t => {
+  const { cli, mcp, checkouts: { site, game } } = await storeFixture(t);
+  const commit = await game.land('storage');
+  // Committed but not pushed: the party's base is its remote's tip, so the slice is only in progress.
+  const local = await status(cli);
+  assert.deepEqual(states(local), { storage: 'in_progress', api: 'blocked', client: 'blocked' });
+  assert.deepEqual(local.slices[0].branches, ['main']);
+  await game.git('push', '-q', 'origin', 'main');
+  const result = await status(cli);
+  assert.deepEqual(states(result), { storage: 'landed', api: 'ready', client: 'blocked' });
+  const [storage] = result.slices;
+  assert.deepEqual(storage.repo, { party: 'game', upstream: upstream('game'), checkout: game.checkout });
+  assert.deepEqual(storage.commits.map(item => [item.sha, item.landed]), [[commit, true]]);
+  assert.equal(requirementStates(result)['locations / Radius'], 'landed');
+  assert.deepEqual(result.repos, [
+    { party: 'site', upstream: upstream('site'), checkout: site.checkout, remote: 'origin',
+      base: { ref: 'main', refs: ['refs/remotes/origin/main'], commit: await site.rev('origin/main') }, pullRequests: { status: 'not_collected', reason: 'gh is not installed' } },
+    { party: 'game', upstream: upstream('game'), checkout: game.checkout, remote: 'origin',
+      base: { ref: 'main', refs: ['refs/remotes/origin/main'], commit }, pullRequests: { status: 'not_collected', reason: 'gh is not installed' } }]);
+  assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), result);
+  // The landed dependency appears in the ready slice's packet.
+  const next = await cli('specs', 'next', 'embed', '--store', 'shared');
+  assert.deepEqual(next.packets.map(packet => [packet.slice.id, packet.dependencies]), [['api', [{ id: 'storage', state: 'landed', commits: [commit] }]]]);
+});
+
+// spec: change-progress / Same change name elsewhere
+test('a party commit for another change of the same name never counts for the store change', async t => {
+  const { cli, mcp, checkouts: { game } } = await storeFixture(t);
+  await game.land('storage', 'embed');
+  await game.land('storage', 'other:embed');
+  const stray = await game.land('caching');
+  await game.git('push', '-q', 'origin', 'main');
+  const result = await status(cli);
+  assert.deepEqual(states(result), { storage: 'ready', api: 'blocked', client: 'blocked' });
+  assert.deepEqual([result.slices[0].commits, result.slices[0].branches], [[], []]);
+  assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), result);
+  // Only the store's own qualified trailers are reconciled: the caching commit is stray, the others are not this change's.
+  const report = await cli('specs', 'reconcile', 'embed', '--store', 'shared');
+  assert.deepEqual(report.strayTrailers.map(item => [item.sha, item.slice]), [[stray, 'caching']]);
+  assert.deepEqual(await mcp('reconcile_change', { change: 'embed', store: 'shared' }), report);
+});
+
+// spec: change-progress / No checkout for a party
+test('a party with no recorded checkout leaves its slices unknown with remedies', async t => {
+  const context = await storeFixture(t, { located: ['site'] });
+  const { cli, mcp, checkouts: { site } } = context;
+  const result = await status(cli);
+  assert.deepEqual(states(result), { storage: 'unknown', api: 'blocked', client: 'blocked' });
+  const [storage, api] = result.slices;
+  assert.deepEqual([storage.repo, storage.reason, storage.remedies], [{ party: 'game', upstream: upstream('game'), checkout: null }, 'checkout_missing',
+    ['repos locate team/shared/game <path>', 'repos clone team/shared/game [<path>]']]);
+  assert.deepEqual(api.blockedBy, ['storage']);
+  assert.deepEqual(result.repos.map(({ party, checkout, reason }) => [party, checkout, reason]), [['site', site.checkout, undefined], ['game', null, 'checkout_missing']]);
+  // The requirement is never landed; with nothing landed or in progress it is unstarted.
+  assert.equal(requirementStates(result)['locations / Radius'], 'unstarted');
+  assert.deepEqual(result.totals, { slices: { landed: 0, total: 3 }, requirements: { landed: 0, total: 3 }, readyToReconcile: false });
+  assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), result);
+  const next = await cli('specs', 'next', 'embed', '--store', 'shared');
+  assert.deepEqual([next.packets, next.reason], [[], 'nothing_ready']);
+  assert.deepEqual(next.waiting.map(({ id, state, reason }) => [id, state, reason]), [['storage', 'unknown', 'checkout_missing'], ['api', 'blocked', undefined], ['client', 'blocked', undefined]]);
+  assert.deepEqual(await mcp('next_slices', { change: 'embed', store: 'shared' }), next);
+  // Following a remedy makes the party's evidence readable.
+  await partyCheckout(context, 'game');
+  assert.deepEqual(states(await status(cli)), { storage: 'ready', api: 'blocked', client: 'blocked' });
+});
+
+// spec: change-progress / Fork checkout
+// spec: change-progress / No checkout for a party
+// spec: change-progress / Party remote not fetched
+test('a party checkout with no remote for its upstream leaves its slices unknown', async t => {
+  const { cli, mcp, checkouts: { game } } = await storeFixture(t);
+  const checkout = game.checkout;
+  await game.land('storage');
+  assert.equal(states(await status(cli)).storage, 'in_progress');
+  // Without the party remote, the unpushed commit on the local main is not taken for landed.
+  await game.git('remote', 'remove', 'origin');
+  const result = await status(cli);
+  assert.deepEqual(states(result), { storage: 'unknown', api: 'blocked', client: 'blocked' });
+  const [storage, api] = result.slices;
+  assert.deepEqual([storage.repo, storage.reason, storage.remedies, storage.commits], [{ party: 'game', upstream: upstream('game'), checkout }, 'remote_missing',
+    [`git -C ${checkout} remote add <remote> ${upstream('game')}`, `git -C ${checkout} fetch <remote>`], []]);
+  assert.deepEqual(api.blockedBy, ['storage']);
+  assert.deepEqual(result.repos.find(repo => repo.party === 'game'), { party: 'game', upstream: upstream('game'), checkout, reason: 'remote_missing' });
+  assert.equal(requirementStates(result)['locations / Radius'], 'unstarted');
+  assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), result);
+  const next = await cli('specs', 'next', 'embed', '--store', 'shared');
+  assert.deepEqual([next.packets, next.waiting[0].reason], [[], 'remote_missing']);
+  assert.deepEqual(await mcp('next_slices', { change: 'embed', store: 'shared' }), next);
+  // A remote for another repository, such as a fork, is no substitute.
+  await game.git('remote', 'add', 'origin', upstream('game-fork'));
+  assert.equal(states(await status(cli)).storage, 'unknown');
+  // With the party remote back but not yet fetched, there is no tip to judge by: unknown, never landed.
+  await game.git('remote', 'set-url', 'origin', upstream('game'));
+  const unfetched = await status(cli);
+  assert.deepEqual([states(unfetched).storage, states(unfetched).api], ['unknown', 'blocked']);
+  const stalled = unfetched.slices.find(slice => slice.id === 'storage');
+  assert.deepEqual([stalled.reason, stalled.remedies], ['remote_not_fetched', [`git -C ${checkout} fetch origin`]]);
+  assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), unfetched);
+  // A local branch named like the tracking ref is not the remote's tip.
+  await game.git('branch', 'origin/main');
+  assert.deepEqual([states(await status(cli)).storage, states(await status(cli)).api], ['unknown', 'blocked']);
+  await game.git('branch', '-D', 'origin/main');
+  // Fetched, its tip is the base again, and the unpushed commit is in progress.
+  await game.git('fetch', '-q', 'origin');
+  assert.equal(states(await status(cli)).storage, 'in_progress');
+});
+
+// spec: change-progress / Fork checkout
+test('a fork checkout is judged against the party remote and asks gh about the party', async t => {
+  const body = slice => `OpenSpec-Change: shared:embed\nOpenSpec-Slice: ${slice}\n`;
+  const { base, cli, mcp, checkouts: { game } } = await storeFixture(t, {
+    remotes: { game: { origin: ['game-fork', 'dev'], upstream: ['game', 'main'] } },
+    env: { GH_REPO: 'example/game-fork' },
+    gh: { 'example/site': [], 'example/game': [],
+      'example/game-fork': [{ number: 1, state: 'MERGED', headRefName: 'storage', baseRefName: 'dev', body: body('storage'), url: 'https://example.test/fork/pr/1' }] } });
+  await game.git('switch', '-q', '-c', 'dev', 'origin/dev');
+  const commit = await game.land('storage');
+  await game.git('push', '-q', 'origin', 'dev');
+  const result = await status(cli);
+  const [storage] = result.slices;
+  assert.equal(storage.state, 'in_progress');
+  assert.deepEqual([storage.commits.map(item => [item.sha, item.landed]), storage.branches, storage.pullRequests], [[[commit, false]], ['dev', 'origin/dev'], []]);
+  const party = result.repos.find(repo => repo.party === 'game');
+  assert.deepEqual([party.remote, party.base, party.pullRequests], ['upstream',
+    { ref: 'main', refs: ['refs/remotes/upstream/main'], commit: await game.rev('upstream/main') }, { status: 'collected' }]);
+  assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), result);
+  // gh is always named the party upstream, never left to its default (the fork).
+  const calls = (await readFile(join(base, 'gh.log'), 'utf8')).trim().split('\n');
+  assert.ok(calls.length >= 4 && calls.every(call => / -R example\/(site|game) /.test(call)), calls.join('\n'));
+  // Once the commit reaches the party's main, it lands.
+  await game.git('push', '-q', 'upstream', 'dev:main');
+  await game.git('fetch', '-q', 'upstream');
+  assert.equal(states(await status(cli)).storage, 'landed');
+});
+
+// spec: change-progress / Local base behind its remote
+test('a party base is its remote tip even when the local branch is older', async t => {
+  const { cli, mcp, checkouts: { game } } = await storeFixture(t);
+  await put(game.checkout, 'test/embed.test.mjs', "// spec: shared:locations / Use Radius\ntest('radius', () => {});\n");
+  const commit = await game.land('storage');
+  await game.git('push', '-q', 'origin', 'main');
+  await game.git('reset', '-q', '--hard', 'HEAD~1');
+  const result = await status(cli);
+  assert.equal(states(result).storage, 'landed');
+  const packet = await cli('specs', 'slice', 'embed', 'storage', '--store', 'shared');
+  assert.deepEqual(packet.base, { ref: 'main', refs: ['refs/remotes/origin/main'], commit });
+  assert.deepEqual(packet.review.commits.map(item => item.sha), [commit]);
+  assert.deepEqual(await mcp('read_slice', { change: 'embed', slice: 'storage', store: 'shared' }), packet);
+  // Reconcile reads the landed commit in the party checkout, though the local main lacks it.
+  // Reading the party's linked tests at that base arrives with the party-reconcile slice.
+  const report = await cli('specs', 'reconcile', 'embed', '--store', 'shared');
+  assert.deepEqual(report.slices.find(slice => slice.id === 'storage').files, ['src/search/storage-shared-embed.mjs', 'test/embed.test.mjs']);
+});
+
+// spec: change-progress / Same change name elsewhere
+// spec: change-progress / Fork checkout
+test('a party pull request counts only by its own trailers, never by a shared branch name', async t => {
+  const pr = (number, body) => ({ number, state: 'MERGED', headRefName: 'dev', baseRefName: 'main', body, url: `https://example.test/pr/${number}` });
+  const { cli, mcp, checkouts: { game } } = await storeFixture(t, {
+    remotes: { game: { origin: ['game-fork', 'dev'], upstream: ['game', 'main'] } },
+    gh: { 'example/site': [], 'example/game': [pr(42, 'OpenSpec-Change: other:embed\nOpenSpec-Slice: storage\n'),
+      pr(43, 'OpenSpec-Change: shared:embed\n'), pr(44, 'Unrelated work.\n')] } });
+  // The slice's only commit is on the fork's dev, the head branch name of unrelated party pull requests.
+  await game.git('switch', '-q', '-c', 'dev', 'origin/dev');
+  const commit = await game.land('storage');
+  await game.git('push', '-q', 'origin', 'dev');
+  const result = await status(cli);
+  assert.deepEqual(states(result), { storage: 'in_progress', api: 'blocked', client: 'blocked' });
+  const [storage] = result.slices;
+  assert.deepEqual([storage.commits.map(item => [item.sha, item.landed]), storage.branches, storage.pullRequests], [[[commit, false]], ['dev', 'origin/dev'], []]);
+  assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), result);
+});
+
+// spec: change-progress / Party pull request merged elsewhere
+test('a party pull request lands a slice only when merged into the party base', async t => {
+  const pr = (number, change, slice, baseRefName) => ({ number, state: 'MERGED', headRefName: slice, baseRefName,
+    body: `OpenSpec-Change: ${change}\nOpenSpec-Slice: ${slice}\n`, url: `https://example.test/pr/${number}` });
+  const { cli, mcp } = await storeFixture(t, { gh: {
+    'example/game': [pr(3, 'shared:embed', 'storage', 'release')],
+    'example/site': [pr(4, 'shared:embed', 'api', 'main'), pr(5, 'embed', 'client', 'main')] } });
+  const result = await status(cli);
+  assert.deepEqual(states(result), { storage: 'in_progress', api: 'landed', client: 'ready' });
+  assert.deepEqual(result.slices.map(slice => slice.pullRequests), [
+    [{ number: 3, state: 'MERGED', url: 'https://example.test/pr/3', baseRefName: 'release', landed: false }],
+    [{ number: 4, state: 'MERGED', url: 'https://example.test/pr/4', baseRefName: 'main', landed: true }],
+    []]);
+  assert.deepEqual(result.repos.map(repo => repo.pullRequests), [{ status: 'collected' }, { status: 'collected' }]);
+  assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), result);
 });

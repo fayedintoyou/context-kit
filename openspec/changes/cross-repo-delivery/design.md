@@ -51,8 +51,10 @@
    and its dependents blocked. Inside the checkout, the **party remote** is the remote
    whose URL normalizes to the party upstream. A fork's `origin` is never assumed to be
    the party. The base branch is the plan's `base`, else `refs/remotes/<party>/HEAD`,
-   else `main`/`master` on that remote. The **base commit** is `<party>/<base>` when it
-   exists, else the local branch. Landing, packet bases and test links all use that
+   else `main`/`master` on that remote. The **base commit** is `<party>/<base>`, the
+   remote's fetched tip. Without it the slices are `unknown` (`remote_not_fetched`):
+   missing tracking data doesn't show what landed, and a local branch can hold
+   unpushed work. Landing, packet bases and test links all use that
    one commit, so a stale local `main` can't hide evidence that has landed upstream.
    `gh` is always called with `-R <owner>/<name>` from the party upstream, overriding
    any `gh` default or `GH_REPO`. A merged PR counts only when its `baseRefName` is the
@@ -93,8 +95,10 @@
   merged into the party's base.
 - [The step is forgotten and a finished contract stays active] → `specs archivable
   --store` lists it as `ready`. The `reconcile-change` skill ends by naming the step.
-- [A stale checkout under-reports landing] → Landing counts `origin/<base>` as well as
-  the local base, as today. The docs say to fetch party checkouts before finishing.
+- [A stale checkout under-reports landing] → Party landing counts only the party
+  remote's fetched tip, so an unfetched checkout reports `in_progress` or
+  `remote_not_fetched` rather than landed. The docs say to fetch party checkouts before
+  finishing.
 
 ## Migration Plan
 

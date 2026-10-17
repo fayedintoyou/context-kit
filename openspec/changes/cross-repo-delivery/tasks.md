@@ -19,9 +19,9 @@ tests do. No network.
 
 ## 3. Slice `party-landing`
 
-- [ ] 3.1 Evidence per source in `lib/specs/landing.mjs`: party checkout by normalized upstream, qualified change id for store changes, party base resolution, and the `unknown` state in `deriveStatus`. Link `test/e2e/progress.test.mjs` to "Slice landed in another repository", "Same change name elsewhere" and "No checkout for a party". Existing progress tests must pass unchanged
-- [ ] 3.2 Party remote and base: the remote matching the party upstream, its default branch, and its branch tip as the single base commit for landing, packets and links. Link `test/e2e/progress.test.mjs` to "Fork checkout" (fork `origin` with another default branch, party `upstream`, fake `gh` whose default is the fork) and "Local base behind its remote"
-- [ ] 3.3 Party PR enrichment with `gh -R <owner>/<name>` from the party upstream, counting a merged PR only into the party's base. Link `test/e2e/progress.test.mjs` to "Party pull request merged elsewhere"
+- [x] 3.1 Evidence per source in `lib/specs/landing.mjs`: party checkout by normalized upstream, qualified change id for store changes, party base resolution, and the `unknown` state in `deriveStatus`. Link `test/e2e/progress.test.mjs` to "Slice landed in another repository", "Same change name elsewhere" and "No checkout for a party". Existing progress tests must pass unchanged
+- [x] 3.2 Party remote and base: the remote matching the party upstream, its default branch, and its branch tip as the single base commit for landing, packets and links. Link `test/e2e/progress.test.mjs` to "Fork checkout" (fork `origin` with another default branch, party `upstream`, fake `gh` whose default is the fork) and "Local base behind its remote"
+- [x] 3.3 Party PR enrichment with `gh -R <owner>/<name>` from the party upstream, counting a merged PR only into the party's base. Link `test/e2e/progress.test.mjs` to "Party pull request merged elsewhere"
 
 ## 4. Slice `party-packets`
 
