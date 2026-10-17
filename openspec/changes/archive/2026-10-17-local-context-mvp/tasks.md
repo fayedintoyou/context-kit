@@ -11,5 +11,5 @@
 ## 3. Verify
 - [x] Run behavior, subprocess and MCP integration tests.
 - [x] Independently review implementation and resolve material findings.
-- [ ] Validate and archive the change, then audit canonical specs.
+- [x] Validate and archive the change, then audit canonical specs (docs/audits/2026-10-17-canonical-specs.md).
 - [ ] Push the tested MVP.
