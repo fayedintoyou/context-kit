@@ -334,7 +334,9 @@ test('parties are read only from stores, never from a repository', async t => {
 
 // spec: cross-repo-contracts / Contract names an unknown party
 test('an invalid parties file fails store reads with INVALID_CONFIG naming the problem', async t => {
-  const { store, hubCli } = await fixture(t);
+  const { store, hubCli, mcp } = await fixture(t);
+  const call = await mcp();
+  const tools = { parties: 'list_parties', list: 'list_specs' };
   const file = join(store, 'openspec/parties.yaml');
   const fails = async (content, problem, commands = [['parties']]) => {
     await writeFile(file, content);
@@ -343,9 +345,13 @@ test('an invalid parties file fails store reads with INVALID_CONFIG naming the p
       assert.equal(error?.code, 'INVALID_CONFIG', `${command} ${content}`);
       assert.match(error.message, /openspec\/parties\.yaml/);
       assert.match(error.message, problem);
+      assert.deepEqual(await call(tools[command[0]], { store: 'platform' }), { error });
     }
   };
-  await fails(partiesFile({ 'shared-auth': ['site', 'web'] }), /undeclared party web/, [['parties'], ['list']]);
+  await fails(partiesFile({ 'shared-auth': ['site', 'web'] }), /undeclared party "web"/, [['parties'], ['list']]);
+  await fails(partiesFile({ 'shared-auth': ['site', '""'] }), /undeclared party ""/);
+  await fails(partiesFile({}, { site: 'file:///tmp/%ZZ', game }), /party site upstream is not a git URL/);
+  await fails('parties:\n  site: { url: x }\n  game: ' + game + '\n', /party site upstream is not a git URL/);
   await fails('parties: [site\n', /not valid YAML/);
   await fails(partiesFile({}, { Site: site, game }), /invalid party name Site/);
   await fails(partiesFile({}, { site: 'example/site', game }), /party site upstream is not a git URL/);
@@ -357,7 +363,7 @@ test('an invalid parties file fails store reads with INVALID_CONFIG naming the p
 
 // spec: cross-repo-contracts / Contract names no spec
 test('a contract whose spec is neither canonical nor proposed fails', async t => {
-  const { env, store, hubCli } = await fixture(t);
+  const { env, store, hubCli, mcp } = await fixture(t);
   await writeFile(join(store, 'openspec/parties.yaml'), partiesFile({ 'game-embedding': ['site', 'game'] }));
   await storeChange(store, env, 'embed', 'game-embedding');
   assert.equal((await hubCli('specs', 'parties', '--store', 'platform')).contracts[0].status, 'proposed');
@@ -365,18 +371,22 @@ test('a contract whose spec is neither canonical nor proposed fails', async t =>
   const { error } = await hubCli('specs', 'parties', '--store', 'platform');
   assert.equal(error.code, 'INVALID_CONFIG');
   assert.match(error.message, /openspec\/parties\.yaml: contract game-embedding names no canonical spec/);
+  assert.deepEqual(await (await mcp())('list_parties', { store: 'platform' }), { error });
 });
 
 // spec: cross-repo-contracts / Contract proposed with its change
 test('a contract declared with its change is proposed until the change archives', async t => {
-  const { env, store, hubCli } = await fixture(t);
+  const { env, store, hubCli, mcp } = await fixture(t);
+  const call = await mcp();
   await writeFile(join(store, 'openspec/parties.yaml'), partiesFile({ 'game-embedding': ['site', 'game'] }));
   await storeChange(store, env, 'embed', 'game-embedding');
-  assert.deepEqual((await hubCli('specs', 'parties', '--store', 'platform')).contracts,
-    [{ spec: 'game-embedding', parties: ['site', 'game'], status: 'proposed' }]);
+  const proposed = await hubCli('specs', 'parties', '--store', 'platform');
+  assert.deepEqual(proposed.contracts, [{ spec: 'game-embedding', parties: ['site', 'game'], status: 'proposed' }]);
+  assert.deepEqual(await call('list_parties', { store: 'platform' }), proposed);
   assert.deepEqual((await hubCli('specs', 'list', '--store', 'platform')).specs.map(item => item.id), ['shared-auth']);
   const archive = JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', store, 'specs', 'archive', '--ready'], { env })).stdout);
   assert.deepEqual([archive.archived.map(item => item.name), archive.valid], [['embed'], true]);
-  assert.deepEqual((await hubCli('specs', 'parties', '--store', 'platform')).contracts,
-    [{ spec: 'game-embedding', parties: ['site', 'game'], status: 'canonical' }]);
+  const canonical = await hubCli('specs', 'parties', '--store', 'platform');
+  assert.deepEqual(canonical.contracts, [{ spec: 'game-embedding', parties: ['site', 'game'], status: 'canonical' }]);
+  assert.deepEqual(await call('list_parties', { store: 'platform' }), canonical);
 });
