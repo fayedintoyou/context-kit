@@ -408,7 +408,7 @@ test('a store plan lists each slice with its party and upstream', async t => {
 
 // spec: change-progress / Unknown party
 test('store slices must name a declared party and repository slices none', async t => {
-  const { root, store, cli, mcp } = await storeFixture(t);
+  const { root, store, env, cli, mcp } = await storeFixture(t);
   const file = /openspec\/changes\/embed\/slices\.yaml: /;
   const cases = [
     [storePlan.replace('repo: site', 'repo: mobile'), /slice api names repo mobile, a party openspec\/parties\.yaml does not declare/],
@@ -427,6 +427,21 @@ test('store slices must name a declared party and repository slices none', async
     assert.equal(embed.plan, 'invalid');
     assert.ok(embed.blockers.some(blocker => message.test(blocker.message ?? '')), JSON.stringify(embed));
   }
+  // A malformed repo names its slice.
+  for (const [value, slice] of [['Mobile', 'api'], ['null', 'api'], ['""', 'api']]) {
+    await put(store, 'openspec/changes/embed/slices.yaml', storePlan.replace('repo: site', `repo: ${value}`));
+    for (const result of [await cli('specs', 'status', 'embed', '--store', 'shared'), await mcp('change_status', { change: 'embed', store: 'shared' })]) {
+      assert.equal(result.error?.code, 'INVALID_CONFIG', JSON.stringify(result));
+      assert.match(result.error.message, new RegExp(`slices\\.yaml: slice ${slice} repo: `));
+    }
+  }
+  // A store maintained in place (--root <store>) is still a store: its identity file says so.
+  await put(store, 'openspec/changes/embed/slices.yaml', storePlan);
+  const inPlace = (...args) => exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', store, ...args], { env })
+    .then(({ stdout }) => JSON.parse(stdout), error => JSON.parse(error.stderr || error.stdout));
+  assert.deepEqual((await inPlace('specs', 'status', 'embed')).slices.map(slice => slice.repo?.party), ['game', 'site', 'site']);
+  await put(store, 'openspec/changes/embed/slices.yaml', storePlan.replace('    repo: game\n', ''));
+  assert.match((await inPlace('specs', 'status', 'embed')).error?.message ?? '', /slice storage names no repo/);
   // A store without a parties file declares no party for a slice to name.
   await put(store, 'openspec/changes/embed/slices.yaml', storePlan);
   await rm(join(store, 'openspec/parties.yaml'));

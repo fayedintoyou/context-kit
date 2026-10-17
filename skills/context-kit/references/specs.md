@@ -176,8 +176,9 @@ slices:
 store doesn't declare (or a store with no parties file) fails with
 `INVALID_CONFIG` naming `slices.yaml` and the slice, and so does a repository
 plan whose slice names any `repo`: a repository's slices land in the repository
-itself. Whether a plan is a store's follows from how it was selected: with
-`--store`, not from where it lives on disk.
+itself. A plan is a store's when the store is selected with `--store`, or when
+its root is the store itself (`--root <store>`), which carries OpenSpec's
+`.openspec-store/store.yaml`.
 
 ## Archiving after merge
 
