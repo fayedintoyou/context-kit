@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, writeFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { auditSpecs } from '../lib/specs/audit.mjs';
 
 const exec = promisify(execFile);
 const kit = fileURLToPath(new URL('../', import.meta.url));
@@ -82,6 +83,9 @@ test('store audits report the store root and snapshot', async t => {
   assert.equal(audit.root, store);
   assert.deepEqual(audit.source, { kind: 'store', storeId: 'platform' });
   assert.equal(audit.checklist[0].spec, 'shared-auth');
+  assert.equal(audit.scope.semantic, 'not_assessed');
+  assert.match(audit.scope.review, /each repository that references this store/);
+  assert.equal(audit.referenced, undefined);
 });
 
 test('only declared, registered stores are readable', async t => {
@@ -98,4 +102,75 @@ test('a repository that delegates to a store is not mistaken for its own specs',
   await mkdir(join(workspace, 'openspec'));
   await writeFile(join(workspace, 'openspec/config.yaml'), 'schema: spec-driven\nstore: platform\n');
   assert.equal((await hubCli('specs', 'list')).error.code, 'WRONG_SPEC_ROOT');
+});
+
+// The workspace repository references `platform` (registered) and `missing` (not registered);
+// `platform` itself references `nested`, which must not be followed.
+async function referencing(t) {
+  const context = await fixture(t);
+  const { base, env, workspace, store } = context;
+  const nested = join(base, 'nested-store');
+  await writeSpec(nested, 'deep');
+  await writeFile(join(nested, 'openspec/config.yaml'), 'schema: spec-driven\n');
+  await exec(process.execPath, [openspecBin, 'store', 'register', nested, '--id', 'nested', '--yes', '--json'], { env });
+  await writeFile(join(store, 'openspec/config.yaml'), 'schema: spec-driven\nreferences:\n  - nested\n');
+  await writeSpec(workspace, 'shared-auth');
+  await writeFile(join(workspace, 'openspec/config.yaml'),
+    'schema: spec-driven\nreferences:\n  - platform\n  - id: missing\n    remote: https://example.com/missing.git\n');
+  // Readable through the reference alone, not through a hub declaration.
+  await writeFile(join(workspace, 'hubs/platform/hub.json'), JSON.stringify({ version: 1, id: 'team/platform',
+    description: 'Platform', documents: ['README.md'], skills: [], links: [] }));
+  return context;
+}
+
+test('repository listings report referenced stores separately and one level deep', async t => {
+  const { hubCli } = await referencing(t);
+  const listing = await hubCli('specs', 'list');
+  assert.deepEqual(listing.specs.map(item => item.id), ['local-only', 'shared-auth']);
+  const [platform, missing, ...rest] = listing.references;
+  assert.equal(rest.length, 0);
+  assert.equal(platform.storeId, 'platform');
+  assert.equal(platform.status, 'available');
+  assert.deepEqual(platform.specs.map(item => item.id), ['shared-auth']);
+  assert.equal(missing.storeId, 'missing');
+  assert.equal(missing.status, 'warning');
+  assert.equal(missing.issues[0].code, 'reference_unresolved');
+  assert.equal(missing.specs, undefined);
+
+  const read = await hubCli('specs', 'read', 'shared-auth', '--store', 'platform');
+  assert.deepEqual(read.source, { kind: 'store', storeId: 'platform' });
+  assert.equal((await hubCli('specs', 'list', '--store', 'nested')).error.code, 'UNKNOWN_STORE');
+});
+
+test('repository audits list referenced requirements apart from their own', async t => {
+  const { hubCli } = await referencing(t);
+  const audit = await hubCli('specs', 'audit');
+  assert.equal(audit.status, 'structurally_valid');
+  assert.deepEqual(audit.checklist.map(item => item.spec), ['local-only', 'shared-auth']);
+  assert.ok(audit.checklist.every(item => !('applicability' in item)));
+  assert.equal(audit.referenced.length, 1);
+  const [platform] = audit.referenced;
+  assert.equal(platform.storeId, 'platform');
+  assert.match(platform.snapshot.canonicalHash, /^[0-9a-f]{64}$/);
+  assert.equal(platform.checklist.length, 1);
+  assert.match(platform.checklist[0].key, /^store:platform\/shared-auth:[0-9a-f]{16}$/);
+  assert.equal(platform.checklist[0].applicability, 'not_assessed');
+  assert.equal(platform.checklist[0].semantic, 'not_assessed');
+  const ownKeys = new Set(audit.checklist.map(item => item.key));
+  assert.ok(!ownKeys.has(platform.checklist[0].key));
+  assert.deepEqual(audit.referenceWarnings.map(item => item.storeId), ['missing']);
+});
+
+test('an audit fails when a referenced store changes mid-collection', async () => {
+  const fake = (kind, versions) => {
+    let reads = 0;
+    const content = () => versions[Math.min(reads++, versions.length - 1)];
+    return { name: 'fake', version: '0', root: tmpdir(), source: kind === 'store' ? { kind, storeId: 'platform' } : { kind },
+      list: async () => [{ id: 'spec', requirementCount: 1 }],
+      read: async id => ({ id, content: content(), requirements: [{ name: 'R', text: 'T', scenarios: [] }] }),
+      validate: async () => ({ strict: true, valid: true, items: [] }) };
+  };
+  const repo = fake('repo', ['stable']);
+  const store = fake('store', ['before', 'after']);
+  await assert.rejects(auditSpecs(repo, [{ storeId: 'platform', source: store }]), { code: 'SNAPSHOT_CHANGED' });
 });

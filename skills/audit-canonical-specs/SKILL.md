@@ -21,6 +21,15 @@ version and requirement keys. Record any additional evidence needed to identify
 dirty implementation files. If code or specs change during review, recheck the
 affected claims. Do not relabel the deterministic audit as semantic verification.
 
+Specs may also live in a shared OpenSpec store used by several repositories.
+A repository audit lists requirements from stores it references under
+`referenced`, keyed `store:<id>/...` and marked `applicability: not_assessed`;
+`referenceWarnings` names stores that could not be read. First decide whether
+each referenced requirement applies to this repository, citing the evidence,
+then assess implementation as above. Report a missing referenced store as a
+coverage gap. `specs audit --store <id>` checks a store's structure only;
+assess its requirements from each referencing repository instead.
+
 Propose whether a mismatch requires an implementation fix, an intentional spec
 change, or further investigation. Never silently rewrite canonical intent to fit
 the current code. Use the repository's existing spec lifecycle for accepted
