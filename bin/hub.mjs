@@ -5,7 +5,8 @@ import { execute } from '../lib/operations.mjs';
 import { parseArgs } from '../lib/arguments.mjs';
 import { fail, errorData } from '../lib/files.mjs';
 
-const help = `Usage: node bin/hub.mjs [--root <directory>] <command>
+const help = `Usage: context-kit [--root <directory>] <command>        (context-kit help for topics)
+  help [topic]
   init <new-directory> [--kit <npm-spec>] [--addons a,b|none]
   setup <new-directory> [--kit <npm-spec>] [--addons a,b|none] [agents install options]
   agents install [--agent claude,codex] [--scope user|project] [--project <dir>] [--name <server>] [--link] [--force] [--allow-write] [--global-mcp]
@@ -52,7 +53,7 @@ try {
       if (options['--frontmatter'] && command !== 'read') fail('INVALID_INPUT', '--frontmatter applies only to read');
       if (options['--file'] && command !== 'read-skill') fail('INVALID_INPUT', '--file applies only to read-skill');
       const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', actor: options['--by'] || KIT_ACTOR, allowWrite: true };
-      const count = { addons: [0], skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [2], search: [1], 'read-skill': [2], capture: [2] };
+      const count = { help: [0, 1], addons: [0], skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [2], search: [1], 'read-skill': [2], capture: [2] };
       if (options['--inbox'] && !['context', 'search', 'browse', 'read'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context, search, browse and read');
       if (options['--store'] && (command !== 'specs' || args[0] === 'stores')) fail('INVALID_INPUT', '--store applies only to specs list/read/audit');
       const store = options['--store'] ? { store: options['--store'] } : {};
@@ -74,6 +75,7 @@ try {
         }
         if (command === 'read') result = await execute(selection, 'read_concept', { id: args[0], concept: args[1], frontmatter: Boolean(options['--frontmatter']), includeInbox });
         if (command === 'search') result = await execute(selection, 'search_context', { query: args[0], includeInbox });
+        if (command === 'help') result = await execute(selection, 'help', args[0] === undefined ? {} : { topic: args[0] });
         if (command === 'addons') result = await execute(selection, 'list_addons');
         if (command === 'skills') result = await execute(selection, 'list_skills');
         if (command === 'read-skill') result = await execute(selection, 'read_skill', { id: args[0], reference: args[1], ...(options['--file'] ? { file: options['--file'] } : {}) });

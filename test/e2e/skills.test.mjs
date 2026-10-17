@@ -67,10 +67,11 @@ test('skills declared by several hubs are listed once', async t => {
     documents: ['README.md'], skills: ['kit:reflect'], links: [] }));
   const { json } = await cli('skills');
   assert.deepEqual(json.skills.map(skill => [skill.reference, skill.name, skill.hubs]), [
+    ['kit:context-kit', 'context-kit', ['personal/main']],
     ['kit:reflect', 'reflect', ['personal/main', 'team/main']],
     ['kit:independent-review', 'independent-review', ['personal/main']],
     ['kit:audit-canonical-specs', 'audit-canonical-specs', ['personal/main']]]);
-  assert.match(json.skills[0].description, /Use when the user says reflect\.$/);
+  assert.match(json.skills[1].description, /Use when the user says reflect\.$/);
 });
 
 // spec: skill-library / Invoke a skill as a prompt
@@ -80,8 +81,8 @@ test('the MCP server offers declared skills as prompts', async t => {
   await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', workspace], env, stderr: 'pipe' }));
   t.after(() => client.close());
   const { prompts } = await client.listPrompts();
-  assert.deepEqual(prompts.map(prompt => prompt.name), ['reflect', 'independent-review', 'audit-canonical-specs']);
-  assert.match(prompts[0].description, /three parallel reviewers/);
+  assert.deepEqual(prompts.map(prompt => prompt.name), ['context-kit', 'reflect', 'independent-review', 'audit-canonical-specs']);
+  assert.match(prompts[1].description, /three parallel reviewers/);
   const prompt = await client.getPrompt({ name: 'reflect' });
   const text = prompt.messages[0].content.text;
   assert.match(text, /^# Reflect\n/);

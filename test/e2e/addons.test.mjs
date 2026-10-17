@@ -38,7 +38,7 @@ test('addons list core, kit addons and workspace skill-only addons', async t => 
   await writeFile(join(workspace, 'addons/drafting/skills/house-style/SKILL.md'), '---\nname: house-style\ndescription: How I write.\n---\n\n# House style\n');
   const { json } = await cli('addons');
   assert.deepEqual(json.addons.map(({ name, source, enabled, skills }) => [name, source, enabled, skills]), [
-    ['core', 'kit', true, []],
+    ['core', 'kit', true, ['context-kit']],
     ['reflect', 'kit', true, ['reflect']],
     ['review', 'kit', true, ['independent-review']],
     ['specs', 'kit', true, ['audit-canonical-specs']],
@@ -71,12 +71,12 @@ test('a core-only workspace has knowledge tools and no addon operations or skill
   const specs = await cli('specs', 'list');
   assert.equal(specs.error.code, 'ADDON_DISABLED');
   assert.match(specs.error.message, /specs addon/);
-  assert.deepEqual((await cli('skills')).json.skills, []);
+  assert.deepEqual((await cli('skills')).json.skills.map(skill => skill.name), ['context-kit']);
   // A hub declaring a bundled skill whose addon is disabled does not surface it.
   const manifestPath = join(workspace, 'hubs/personal/hub.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  await writeFile(manifestPath, JSON.stringify({ ...manifest, skills: ['kit:reflect'] }));
-  assert.deepEqual((await cli('skills')).json.skills, []);
+  await writeFile(manifestPath, JSON.stringify({ ...manifest, skills: ['kit:context-kit', 'kit:reflect'] }));
+  assert.deepEqual((await cli('skills')).json.skills.map(skill => skill.name), ['context-kit']);
 
   const client = new Client({ name: 'addons-test', version: '1.0.0' });
   await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', workspace], env, stderr: 'pipe' }));
@@ -84,7 +84,7 @@ test('a core-only workspace has knowledge tools and no addon operations or skill
   const tools = (await client.listTools()).tools.map(tool => tool.name);
   assert.ok(tools.includes('browse_hub') && tools.includes('list_addons'));
   assert.ok(!tools.some(name => /spec/.test(name)));
-  assert.deepEqual((await client.listPrompts()).prompts, []);
+  assert.deepEqual((await client.listPrompts()).prompts.map(prompt => prompt.name), ['context-kit']);
   const refused = await client.callTool({ name: 'audit_specs', arguments: {} });
   assert.equal(JSON.parse(refused.content[0].text).error.code, 'ADDON_DISABLED');
 });
