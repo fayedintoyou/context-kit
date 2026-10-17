@@ -11,7 +11,7 @@ tests do. No network.
 
 ## 1. Slice `store-selection`
 
-- [ ] 1.1 Store selection for `change_status`, `next_slices`, `read_slice`, `reconcile_change` and `archivable_changes`, and CLI `--store` on status/next/slice/reconcile/archivable/archive, through `specSource`. Link `test/e2e/progress.test.mjs` to "Store change over CLI and MCP"
+- [x] 1.1 Store selection for `change_status`, `next_slices`, `read_slice`, `reconcile_change` and `archivable_changes`, and CLI `--store` on status/next/slice/reconcile/archivable/archive, through `specSource`. Link `test/e2e/progress.test.mjs` to "Store change over CLI and MCP"
 
 ## 2. Slice `party-plans`
 
