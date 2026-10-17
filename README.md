@@ -29,6 +29,9 @@ node bin/hub.mjs validate
 npm test
 ```
 
+`context-kit help` lists help topics (`help <topic>` shows one); agents get the
+same help through the `help` MCP tool and the core `context-kit` skill.
+
 Output is JSON. `context` returns a hub's curated starting documents in manifest
 order. To explore further, browse progressively: `browse <hub-id> [directory]`
 lists one directory (concepts with OKF type, title, description and trust, plus
@@ -37,22 +40,53 @@ with its outgoing links classified, so you follow only what you need. `search`
 covers every concept. It does not perform semantic retrieval, execute instructions, fetch remote
 sources, or include linked hubs automatically. Commands work from any directory.
 
-## Your own workspace
+## Install
 
-This repository is the core tooling. Your context lives in your own workspace, an
-instance of the core kept in its own (usually private) repository:
+Context Kit is a core plus optional addons, installed into your agents from your
+own workspace (an instance of this core, usually a private repository):
 
 ```sh
-node bin/hub.mjs init ~/context          # starter hub plus a package.json pinning this core
-cd ~/context && npm install
-npm run hub -- list                      # the core's CLI, rooted at this workspace
-npm run mcp                              # the core's MCP server, rooted at this workspace
+npx -y github:fayedintoyou/context-kit setup ~/context --addons reflect,review --agent claude,codex
 ```
 
-`init` pins this core's repository at its current commit when the checkout is
-clean (or pass `--kit <npm-spec>`). Upgrade an instance deliberately by changing
-that dependency. Bundled skills are referenced as `kit:<name>`, so the instance
-uses the core's copies rather than forks.
+`setup` creates the workspace pinned to a core commit, runs `npm install`, and
+installs it into Claude Code and Codex: the enabled addons' skills go into each
+agent's skill directory, and one MCP server for the workspace is registered
+through each agent's own CLI.
+
+| Addon | Gives you |
+|---|---|
+| `core` (always) | OKF hubs, progressive `browse`/`read`, `search`, `capture`, skills |
+| `specs` | OpenSpec specs from repositories and shared stores, structural audits, the audit skill |
+| `reflect` | Turn a conversation's learnings into reviewed edits on skills and hubs |
+| `review` | Independent plan and output review |
+
+Your own skills are addons too: put `addons/<name>/addon.json` (`name`,
+`description`, `skills`) and `addons/<name>/skills/<skill>/SKILL.md` in your
+workspace and enable it. Enabled addons live in `context-kit.json`; `--addons
+none` gives just the core.
+
+From inside a workspace:
+
+```sh
+npm run agents -- install [--agent claude,codex] [--scope user|project] [--link] [--allow-write]
+npm run agents -- status
+npm run agents -- uninstall
+```
+
+`install` is a sync: rerun it after changing addons or upgrading the core, and it
+adds, updates and removes what it installed. It never overwrites or removes a skill
+it did not create or that you edited (`--force` overrides). `--link` symlinks
+skills so edits to one you are iterating on apply immediately. Project scope puts
+skills in the project and keeps the MCP server private to it (Codex needs
+`--global-mcp`). Restart your agent after changing addons so its MCP server
+reloads them.
+
+## Your own workspace
+
+`init <new-directory>` creates a workspace without installing it. Your context
+lives there, never in this toolkit: it pins this core in `package.json`, so
+upgrades are deliberate, and bundled skills are referenced as `kit:<name>`.
 
 `capture <hub-id> <title>` writes stdin as a new unreviewed note in that hub's
 `inbox/`, without committing. `search` and `context` include inbox notes only with
@@ -93,7 +127,7 @@ them (`kit:<name>` for skills bundled here), `skills` lists them, and
 files. The MCP server also offers every declared skill as a prompt, so a client
 can invoke it directly; Claude Code shows them as `/mcp__<server>__<skill>`.
 
-Bundled skills: `independent-review` (plan and output review),
+Bundled skills: `context-kit` (help for using Context Kit, always installed), `independent-review` (plan and output review),
 `audit-canonical-specs` (evidence-based spec audits) and `reflect` (three
 parallel reviewers turn a conversation's learnings into proposed edits on skills
 and hub knowledge, applied only after approval). Improve them with `reflect`

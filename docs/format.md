@@ -67,6 +67,11 @@ Required `hub.json` fields:
 
 Optional:
 
+- `freshness`: when this hub's knowledge must be checked or regenerated, as
+  ISO 8601 durations: `{"default": "P1Y", "types": {"Metric": "P1D"}}`. Reads
+  report `freshness.action`: `refresh` once `stale_after` passes, `verify` when
+  older than the type's (or default) age since last verified or generated, else
+  `read`.
 - `specStores`: IDs of shared OpenSpec stores (planning repositories registered
   with `openspec store register`) whose specs apply to this hub.
 

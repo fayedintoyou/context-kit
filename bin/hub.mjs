@@ -1,30 +1,51 @@
 #!/usr/bin/env node
 import { initWorkspace, selectRoot, KIT_ACTOR } from '../lib/workspace.mjs';
+import { installAgents, agentStatus, uninstallAgents, setupWorkspace } from '../lib/install.mjs';
 import { execute } from '../lib/operations.mjs';
 import { parseArgs } from '../lib/arguments.mjs';
 import { fail, errorData } from '../lib/files.mjs';
 
-const help = `Usage: node bin/hub.mjs [--root <directory>] <command>
-  init <new-directory> [--kit <npm-spec>]
+const help = `Usage: context-kit [--root <directory>] <command>        (context-kit help for topics)
+  help [topic]
+  init <new-directory> [--kit <npm-spec>] [--addons a,b|none]
+  setup <new-directory> [--kit <npm-spec>] [--addons a,b|none] [agents install options]
+  agents install [--agent claude,codex] [--scope user|project] [--project <dir>] [--name <server>] [--link] [--force] [--allow-write] [--global-mcp]
+  agents status | agents uninstall [--agent claude,codex] [--force]
   list | validate
   context <hub-id> [--inbox]
   browse <hub-id> [directory] [--offset <n>] [--inbox]
   read <hub-id> <concept-id> [--frontmatter] [--inbox]
   search <text> [--inbox]
-  skills
+  skills | addons
   read-skill <hub-id> <reference> [--file <path>]
   capture <hub-id> <title> [--by <actor>]   (UTF-8 body on stdin)
   specs stores | specs list | specs read <spec-id> | specs audit   [--store <id>]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
-  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--help']);
+  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--allow-write', '--global-mcp', '--name', '--help']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
     const [command, ...args] = positional;
     let result;
-    if (command === 'init' && args.length === 1) {
-      if (options['--root'] || options['--inbox'] || options['--store']) fail('INVALID_INPUT', 'init takes its destination as an argument');
-      result = await initWorkspace(args[0], { kit: options['--kit'] });
+    const list = value => value === undefined ? undefined : value === 'none' ? [] : value.split(',').map(item => item.trim()).filter(Boolean);
+    const installFlags = ['--agent', '--scope', '--project', '--name', '--link', '--force', '--allow-write', '--global-mcp'];
+    const installOptions = () => ({ agents: list(options['--agent']), scope: options['--scope'], project: options['--project'], name: options['--name'],
+      link: Boolean(options['--link']), force: Boolean(options['--force']), allowWrite: Boolean(options['--allow-write']), globalMcp: Boolean(options['--global-mcp']) });
+    if (!['agents', 'setup'].includes(command) && installFlags.some(flag => options[flag])) fail('INVALID_INPUT', 'Install options apply only to agents and setup');
+    if (options['--addons'] && !['init', 'setup'].includes(command)) fail('INVALID_INPUT', '--addons applies only to init and setup');
+    if ((command === 'init' || command === 'setup') && args.length === 1) {
+      if (options['--root'] || options['--inbox'] || options['--store']) fail('INVALID_INPUT', `${command} takes its destination as an argument`);
+      if (command === 'init') result = await initWorkspace(args[0], { kit: options['--kit'], addons: list(options['--addons']) });
+      else {
+        const installArgs = installFlags.flatMap(flag => options[flag] === undefined ? [] : options[flag] === true ? [flag] : [flag, options[flag]]);
+        result = await setupWorkspace(args[0], { kit: options['--kit'], addons: list(options['--addons']), installArgs });
+      }
+    } else if (command === 'agents') {
+      const root = (await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT)).root;
+      if (args[0] === 'install' && args.length === 1) result = await installAgents(root, installOptions());
+      else if (args[0] === 'status' && args.length === 1) result = await agentStatus(root);
+      else if (args[0] === 'uninstall' && args.length === 1) result = await uninstallAgents(root, installOptions());
+      else fail('INVALID_INPUT', help);
     } else {
       if (options['--kit']) fail('INVALID_INPUT', '--kit applies only to init');
       if (options['--by'] && command !== 'capture') fail('INVALID_INPUT', '--by applies only to capture');
@@ -32,7 +53,7 @@ try {
       if (options['--frontmatter'] && command !== 'read') fail('INVALID_INPUT', '--frontmatter applies only to read');
       if (options['--file'] && command !== 'read-skill') fail('INVALID_INPUT', '--file applies only to read-skill');
       const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', actor: options['--by'] || KIT_ACTOR, allowWrite: true };
-      const count = { skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [2], search: [1], 'read-skill': [2], capture: [2] };
+      const count = { help: [0, 1], addons: [0], skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [2], search: [1], 'read-skill': [2], capture: [2] };
       if (options['--inbox'] && !['context', 'search', 'browse', 'read'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context, search, browse and read');
       if (options['--store'] && (command !== 'specs' || args[0] === 'stores')) fail('INVALID_INPUT', '--store applies only to specs list/read/audit');
       const store = options['--store'] ? { store: options['--store'] } : {};
@@ -54,6 +75,8 @@ try {
         }
         if (command === 'read') result = await execute(selection, 'read_concept', { id: args[0], concept: args[1], frontmatter: Boolean(options['--frontmatter']), includeInbox });
         if (command === 'search') result = await execute(selection, 'search_context', { query: args[0], includeInbox });
+        if (command === 'help') result = await execute(selection, 'help', args[0] === undefined ? {} : { topic: args[0] });
+        if (command === 'addons') result = await execute(selection, 'list_addons');
         if (command === 'skills') result = await execute(selection, 'list_skills');
         if (command === 'read-skill') result = await execute(selection, 'read_skill', { id: args[0], reference: args[1], ...(options['--file'] ? { file: options['--file'] } : {}) });
         if (command === 'capture') {

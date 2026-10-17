@@ -1,0 +1,6 @@
+{
+  "name": "specs",
+  "description": "OpenSpec specs from repositories and shared stores, structural audits, and the evidence-based audit skill.",
+  "skills": ["audit-canonical-specs"],
+  "operations": "specs"
+}

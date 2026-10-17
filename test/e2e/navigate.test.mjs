@@ -62,7 +62,7 @@ test('browse lists concepts progressively', async t => {
     { id: 'references', concepts: 0, title: null, inbox: false }]);
   assert.deepEqual(root.json.concepts, [{ id: 'README', type: 'Guide', title: 'Personal context',
     description: 'Durable context and preferences for this workspace.', status: 'stable', trust: 'unverified', stale: false,
-    curated: true, inbox: false }]);
+    freshness: { action: 'read', reason: 'no freshness rule applies' }, curated: true, inbox: false }]);
   assert.deepEqual(root.json.totals, { directories: 2, concepts: 1 });
   assert.equal(root.json.truncated, false);
   assert.ok(root.json.warnings.some(warning => warning.startsWith('scratch.md:')));
