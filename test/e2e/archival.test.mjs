@@ -128,6 +128,23 @@ test('archive --ready archives only ready changes and validates the canonical sp
   assert.equal((await git('rev-list', '--count', 'HEAD')).stdout.trim(), '1');
 });
 
+// spec: change-archival / Archive a change without spec deltas
+test('archive --ready archives a change without spec deltas', async t => {
+  const { root, change, commit, cli } = await fixture(t);
+  await change('deploy', '- [x] Deploy it\n');
+  await rm(join(root, 'openspec/changes/deploy/specs'), { recursive: true });
+  await put(root, 'openspec/changes/deploy/.openspec.yaml', 'schema: spec-driven\nskip_specs: true\n');
+  await commit();
+  const specs = await readFile(join(root, 'openspec/specs/locations/spec.md'), 'utf8');
+  const { code, json } = await cli('specs', 'archive', '--ready');
+  assert.equal(code, 0, JSON.stringify(json));
+  assert.deepEqual(json.archived.map(item => [item.name, item.specsUpdated, item.totals]), [['deploy', false, {}]]);
+  assert.equal(json.valid, true);
+  assert.equal(await readFile(join(root, 'openspec/specs/locations/spec.md'), 'utf8'), specs);
+  assert.ok(!(await readdir(join(root, 'openspec/changes'))).includes('deploy'));
+  assert.ok((await readdir(join(root, 'openspec/changes/archive'))).includes(json.archived[0].archivedAs));
+});
+
 // spec: change-archival / Nothing ready
 test('with nothing ready, archive --ready changes no file', async t => {
   const { root, change, commit, cli } = await fixture(t);
