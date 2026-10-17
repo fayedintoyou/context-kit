@@ -39,6 +39,25 @@ the hub root.
 selection `context` returns), `skills`, `links` to other hubs, and optional
 `specStores`.
 
+## Freshness
+
+A hub tunes when knowledge must be checked or regenerated with `freshness` in
+`hub.json`: maximum ages as ISO 8601 durations, per OKF type and by default.
+
+```json
+"freshness": { "default": "P1Y", "types": { "Metric": "P1D", "Preferences": "P6M" } }
+```
+
+Every read reports `freshness.action`:
+
+- `refresh`: `stale_after` has passed; regenerate it from its sources.
+- `verify`: older than its age since last verified (or generated, if never
+  verified); check it against its sources, then add a `verified` entry.
+- `read`: use it as written.
+
+A concept with no matching rule and no `stale_after` is read directly. Each
+decision has a `reason` and, when a rule applies, the `due` instant.
+
 ## Validation
 
 `validate` requires every hub to be a conformant bundle and names each problem.

@@ -6,10 +6,9 @@ Each step is its own OpenSpec change with linked end-to-end tests.
 
 1. **Progressive disclosure** (done): browse a directory, read a concept by its
    OKF ID, follow classified links, search every concept.
-2. **Freshness policy**: per-hub and per-type sensitivity (for example metrics
-   daily, preferences twice a year) so each read says `read`, `verify` or
-   `refresh`, and why, from OKF `stale_after`, `generated`, `verified` and
-   `sources`.
+2. **Freshness policy** (done): per-hub, per-type maximum ages so each read says
+   `read`, `verify` or `refresh`, and why, from OKF `stale_after`, `generated`
+   and `verified`.
 3. **Federation**: a workspace mounts other personal or team bundles, read-only,
    with namespaced concept IDs (`team-data:/tables/orders`) and per-bundle
    provenance and trust. Links that leave a hub (`outside`) become resolvable when
@@ -17,6 +16,9 @@ Each step is its own OpenSpec change with linked end-to-end tests.
 4. **Wiki upkeep**: agents promote inbox notes into concepts, regenerate
    `index.md`, append `log.md`, and lint for broken links, orphans and stale or
    unverified concepts.
+
+Also done: addons with an agent installer for Claude Code and Codex, the `reflect`
+skill, and help through the core `context-kit` skill.
 
 ## Decisions
 
@@ -30,8 +32,13 @@ Agreed defaults, 2026-10-17:
 - A concept with no `stale_after` and no matching freshness rule is read directly;
   stricter rules are set per type.
 - The CLI stays in Node while the official MCP SDK and OpenSpec are Node and the
-  end-to-end tests pin behavior. Revisit a Go single binary when teammates install
-  Context Kit for federation, since it removes Node and PATH setup for MCP clients.
+  end-to-end tests pin behavior. Context Kit already runs unchanged under Bun.
+  When teammates install it for federation, ship a single executable with
+  `bun build --compile` (rather than a Go port), after embedding the core's own
+  files and giving the OpenSpec adapter a runtime that works inside the binary.
+- Installs use the npx installer (`setup`, `agents install`); native plugin
+  marketplaces are an option for distribution later (Codex also reads
+  Claude-format marketplaces).
 
 ## Later
 
