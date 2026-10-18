@@ -280,6 +280,8 @@ test('authorization shows a consent page before any GitHub redirect', async () =
   assert.equal(response.headers.get('location'), null);
   assert.equal(response.headers.get('x-frame-options'), 'DENY');
   assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+  // A form-action limited to this site would block the approval's redirect to GitHub in browsers.
+  assert.doesNotMatch(response.headers.get('content-security-policy'), /form-action/);
   const text = await html(response);
   assert.match(text, /Test Host/);
   assert.match(text, /tools this server offers/);
