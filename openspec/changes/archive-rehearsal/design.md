@@ -31,3 +31,10 @@
   archive order, so the rehearsal sees the combination.
 - [A change that can't be applied at all, such as MODIFIED on a missing requirement]
   → It is reported as that change's issue, and later changes still rehearse.
+- [OpenSpec dies midway through one change, leaving partial writes and its archive claim] → The
+  copy is checkpointed before each change and restored when one fails, so later changes
+  rehearse against the state before it.
+- [A requirement renamed by a change already had an issue] → Issues are carried across the
+  change's own renames, so a pure rename is not blamed for what its requirement already had.
+- [The rehearsal is cancelled] → Signal handlers remove the scratch copy and stop OpenSpec, then
+  re-raise the signal.

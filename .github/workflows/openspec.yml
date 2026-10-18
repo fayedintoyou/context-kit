@@ -107,11 +107,17 @@ jobs:
         run: |
           status=0
           ${{ inputs.kit }} --root . specs archive --rehearse > "$RUNNER_TEMP/rehearsal.json" || status=$?
+          # Issue text comes from files in the pull request, so it is data: the raw dump sits inside a
+          # stop-commands fence, and annotations escape what they carry the way GitHub unescapes it.
+          token=$(node -p 'require("crypto").randomUUID()')
+          echo "::stop-commands::$token"
           cat "$RUNNER_TEMP/rehearsal.json"
+          echo "::$token::"
           node -e '
+            const escape = text => String(text).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
             const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
             for (const c of r.changes) for (const i of c.issues) {
               const where = [i.spec, i.requirement && "requirement " + i.requirement, i.path].filter(Boolean).join(", ");
-              console.log("::error::Change " + c.name + " would not archive cleanly: " + (where && where + ": ") + i.message);
+              console.log("::error::" + escape("Change " + c.name + " would not archive cleanly: " + (where && where + ": ") + i.message));
             }' "$RUNNER_TEMP/rehearsal.json"
           exit $status

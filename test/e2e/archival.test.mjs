@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, appendFile, readFile, readdir, rm, realpath, symlink } from 'node:fs/promises';
@@ -8,6 +8,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { readFileSync } from 'node:fs';
+import { rehearseArchive } from '../../lib/specs/archival.mjs';
+import { openSpec } from '../../lib/specs/openspec.mjs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -503,19 +506,24 @@ test('rehearse --store reads and rehearses a store\'s changes, in the store and 
 });
 
 // The job's own script, run as the workflow runs it: the caller's `kit` input stands in for this checkout's CLI.
-// spec: change-archival / Rehearsal in a pull request
-test('the openspec workflow rehearses on pull requests and fails naming the change, spec and requirement', async t => {
-  const { base, root, change, commit } = await fixture(t);
-  const workflow = parse(await readFile(join(kit, '.github/workflows/openspec.yml'), 'utf8'));
-  const job = workflow.jobs['archive-rehearsal'];
-  assert.equal(job.if, "github.event_name == 'pull_request'");
-  assert.deepEqual(job.steps.filter(step => step.uses).map(step => step.uses), ['actions/checkout@v4', 'actions/setup-node@v4']);
-  assert.equal(job.steps.find(step => step.uses === 'actions/setup-node@v4').with['node-version'], '${{ inputs.node-version }}');
+function rehearsalJob({ base, root }) {
+  const job = parse(readFileSync(join(kit, '.github/workflows/openspec.yml'), 'utf8')).jobs['archive-rehearsal'];
   const script = job.steps.find(step => step.run?.includes('specs archive --rehearse')).run;
-  assert.ok(!/inputs\.(test|setup)/.test(JSON.stringify(job)), 'a rehearsal needs no tests, setup or browsers');
   const run = () => exec('bash', ['-c', script.replace('${{ inputs.kit }}', `node ${join(kit, 'bin/hub.mjs')}`)],
     { cwd: root, env: { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH}`, RUNNER_TEMP: base, TMPDIR: join(base, 'tmp') } })
     .then(({ stdout }) => ({ code: 0, stdout }), error => ({ code: error.code, stdout: error.stdout }));
+  return { job, script, run };
+}
+
+// spec: change-archival / Rehearsal in a pull request
+test('the openspec workflow rehearses on pull requests and fails naming the change, spec and requirement', async t => {
+  const { change, commit, root, base } = await fixture(t);
+  const { job, script, run } = rehearsalJob({ base, root });
+  assert.equal(job.if, "github.event_name == 'pull_request'");
+  assert.deepEqual(job.steps.filter(step => step.uses).map(step => step.uses), ['actions/checkout@v4', 'actions/setup-node@v4']);
+  assert.equal(job.steps.find(step => step.uses === 'actions/setup-node@v4').with['node-version'], '${{ inputs.node-version }}');
+  assert.ok(!/inputs\.(test|setup)/.test(JSON.stringify(job)), 'a rehearsal needs no tests, setup or browsers');
+  assert.ok(script.includes('specs archive --rehearse'));
   await change('radius', '- [ ] Build radius\n', { 'specs/locations/spec.md': `## ADDED Requirements\n${longRequirement('Radius')}` });
   await commit();
   const failing = await run();
@@ -528,3 +536,102 @@ test('the openspec workflow rehearses on pull requests and fails naming the chan
   assert.equal(passing.code, 0, passing.stdout);
   assert.doesNotMatch(passing.stdout, /::error::/);
 });
+
+// A capability directory is user data. Named with a newline and a workflow command, it reaches an OpenSpec
+// refusal message, and an annotation that printed it raw would end its line and start another command.
+// spec: change-archival / Rehearsal in a pull request
+test('the openspec workflow escapes what it prints, so a hostile capability name injects no workflow command', async t => {
+  const { change, commit, root, base } = await fixture(t);
+  const { run } = rehearsalJob({ base, root });
+  await change('bad', '- [ ] Build bad\n');
+  await rm(join(root, 'openspec/changes/bad/specs'), { recursive: true });
+  await put(root, 'openspec/changes/bad/specs/locations\n::warning::Injected annotation\n/spec.md', `## MODIFIED Requirements\n${requirement('Search')}`);
+  await commit();
+  const { code, stdout } = await run();
+  assert.notEqual(code, 0);
+  const lines = stdout.split('\n');
+  assert.ok(!lines.some(line => /^::warning/.test(line)), stdout);
+  // Every line that starts a command: the fence around the raw dump, and the one escaped annotation.
+  const commands = lines.filter(line => line.startsWith('::'));
+  assert.equal(commands.length, 3, stdout);
+  const token = commands[0].match(/^::stop-commands::(\S+)$/)?.[1];
+  assert.ok(token, 'the dump is fenced with stop-commands');
+  assert.equal(commands[1], `::${token}::`);
+  assert.match(commands[2], /^::error::Change bad would not archive cleanly: OpenSpec archive failed: locations%0A::warning::Injected annotation%0A: target spec does not exist/);
+  assert.ok(lines.indexOf(commands[0]) < lines.findIndex(line => line.startsWith('{')) && lines.findIndex(line => line.startsWith('{')) < lines.indexOf(commands[1]));
+});
+
+// spec: change-archival / A change that would not archive cleanly
+test('a change whose archive dies midway leaves nothing behind for the changes after it', async t => {
+  const { root, change, commit } = await fixture(t);
+  await change('alpha', '- [ ] Build alpha\n');
+  await change('beta', '- [ ] Build beta\n');
+  await commit();
+  // OpenSpec killed mid-archive (its call timing out, say): a canonical file written, the archive claim still held.
+  const open = scratch => Object.assign(Object.create(openSpec(scratch)), {
+    async archive(name) {
+      if (name !== 'alpha') return Object.getPrototypeOf(this).archive(name);
+      await put(scratch, 'openspec/specs/locations/spec.md', 'half written');
+      await put(scratch, 'openspec/changes/archive/.openspec-archive.lock', '{}');
+      throw new Error('OpenSpec archive failed: timed out');
+    },
+  });
+  const before = await hashes(root);
+  const result = await rehearseArchive(root, openSpec(root), root, open);
+  assert.deepEqual(result.changes.map(item => [item.name, item.issues.length]), [['alpha', 1], ['beta', 0]]);
+  assert.match(result.changes[0].issues[0].message, /timed out/);
+  assert.deepEqual([result.baseline, result.valid], [[], false]);
+  assert.deepEqual(await hashes(root), before);
+});
+
+// spec: change-archival / A clean rehearsal
+test('rehearse of a pure rename reports an issue the requirement already had as baseline, not as the rename\'s', async t => {
+  const { root, change, commit, cli } = await fixture(t);
+  const spec = 'openspec/specs/locations/spec.md';
+  await put(root, spec, (await readFile(join(root, spec), 'utf8')).replace(requirement('Search'), longRequirement('Search')));
+  await change('rename', '- [ ] Build rename\n', { 'specs/locations/spec.md': '## RENAMED Requirements\n- FROM: `### Requirement: Search`\n- TO: `### Requirement: Lookup`\n' });
+  await commit();
+  const { code, json } = await cli('specs', 'archive', '--rehearse');
+  assert.equal(code, 0, JSON.stringify(json));
+  assert.deepEqual(issueOf(json.baseline, 'spec', 'requirement'), [['locations', 'Search']]);
+  assert.deepEqual([json.changes, json.valid], [[{ name: 'rename', issues: [] }], true]);
+  // Only the rename's own carry-over is forgiven: a later change adding an issue is still blamed for it.
+  await change('widen', '- [ ] Build widen\n', { 'specs/locations/spec.md': `## ADDED Requirements\n${longRequirement('Widest')}` });
+  await commit();
+  const again = await cli('specs', 'archive', '--rehearse');
+  assert.deepEqual(again.json.changes.map(item => [item.name, issueOf(item.issues, 'requirement')]), [['rename', []], ['widen', [['Widest']]]]);
+});
+
+// Holds each OpenSpec archive for a while, so a signal can be sent while a rehearsal is under way.
+const slowArchive = `
+if (/openspec\\.js$/.test(process.argv[1] ?? '') && process.argv.includes('archive')) {
+  require('node:fs').writeFileSync(process.env.ARCHIVE_PIDFILE, String(process.pid));
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30000);
+}`;
+const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const until = async (condition, what) => {
+  for (let waited = 0; waited < 20000; waited += 20) { if (await condition()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
+  assert.fail(`timed out waiting for ${what}`);
+};
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  // spec: change-archival / A clean rehearsal
+  test(`${signal} during a rehearsal removes the scratch copy, stops OpenSpec and ends the process by that signal`, async t => {
+    const { base, root, env, change, commit } = await fixture(t);
+    await change('alpha', '- [ ] Build alpha\n');
+    await commit();
+    await put(base, 'slow.cjs', slowArchive);
+    const pidfile = join(base, 'archive.pid');
+    const child = spawn(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', root, 'specs', 'archive', '--rehearse'],
+      { env: { ...env, NODE_OPTIONS: `--require ${join(base, 'slow.cjs')}`, ARCHIVE_PIDFILE: pidfile }, stdio: 'ignore' });
+    const exited = new Promise(resolve => child.once('exit', (code, name) => resolve({ code, name })));
+    let pid;
+    t.after(() => { child.kill('SIGKILL'); if (pid && alive(pid)) process.kill(pid, 'SIGKILL'); });
+    await until(() => readFile(pidfile, 'utf8').then(text => { pid = Number(text); return pid; }, () => false), 'OpenSpec to start archiving');
+    assert.equal((await readdir(join(base, 'tmp'))).length, 1, 'the scratch copy exists while the rehearsal runs');
+    child.kill(signal);
+    assert.equal((await exited).name, signal);
+    assert.deepEqual(await readdir(join(base, 'tmp')), []);
+    await until(() => !alive(pid), 'OpenSpec to be stopped');
+  });
+}
