@@ -23,8 +23,8 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   repos | repos locate <repo> <path> | repos clone <repo> [<path>] | repos scan <directory> | repos sync
   specs stores | specs list | specs read <spec-id> | specs audit | specs garden   [--store <id>]
   specs parties --store <id>
-  specs status <change> | specs next <change> | specs slice <change> <slice> | specs reconcile <change>
-  specs archivable | specs archive --ready
+  specs status <change> | specs next <change> | specs slice <change> <slice> | specs reconcile <change>   [--store <id>]
+  specs archivable | specs archive --ready   [--store <id>]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
   const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--allow-write', '--global-mcp', '--name', '--help', '--path', '--alias', '--title', '--concept', '--description', '--ready']);
@@ -61,7 +61,8 @@ try {
       const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', actor: options['--by'] || KIT_ACTOR, allowWrite: true };
       const count = { help: [0, 1], addons: [0], skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [2], search: [1], 'read-skill': [2], capture: [2] };
       if (options['--inbox'] && !['context', 'search', 'browse', 'read'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context, search, browse and read');
-      if (options['--store'] && (command !== 'specs' || !['list', 'read', 'audit', 'garden', 'parties'].includes(args[0]))) fail('INVALID_INPUT', '--store applies only to specs list/read/audit/garden/parties');
+      const storeCommands = ['list', 'read', 'audit', 'garden', 'parties', 'status', 'next', 'slice', 'reconcile', 'archivable', 'archive'];
+      if (options['--store'] && (command !== 'specs' || !storeCommands.includes(args[0]))) fail('INVALID_INPUT', `--store applies only to specs ${storeCommands.join('/')}`);
       const store = options['--store'] ? { store: options['--store'] } : {};
       const addFlags = ['--path', '--alias', '--title', '--concept', '--description'];
       if (addFlags.some(flag => options[flag]) && !(command === 'repos' && args[0] === 'add')) fail('INVALID_INPUT', `${addFlags.join(', ')} apply only to repos add`);
@@ -83,15 +84,15 @@ try {
         else if (args[0] === 'garden' && args.length === 1) result = await execute(selection, 'garden_specs', store);
         else if (args[0] === 'audit' && args.length === 1) result = await execute(selection, 'audit_specs', store);
         else if (args[0] === 'read' && args.length === 2) result = await execute(selection, 'read_spec', { id: args[1], ...store });
-        else if (args[0] === 'status' && args.length === 2) result = await execute(selection, 'change_status', { change: args[1] });
-        else if (args[0] === 'next' && args.length === 2) result = await execute(selection, 'next_slices', { change: args[1] });
-        else if (args[0] === 'slice' && args.length === 3) result = await execute(selection, 'read_slice', { change: args[1], slice: args[2] });
-        else if (args[0] === 'archivable' && args.length === 1) result = await execute(selection, 'archivable_changes');
+        else if (args[0] === 'status' && args.length === 2) result = await execute(selection, 'change_status', { change: args[1], ...store });
+        else if (args[0] === 'next' && args.length === 2) result = await execute(selection, 'next_slices', { change: args[1], ...store });
+        else if (args[0] === 'slice' && args.length === 3) result = await execute(selection, 'read_slice', { change: args[1], slice: args[2], ...store });
+        else if (args[0] === 'archivable' && args.length === 1) result = await execute(selection, 'archivable_changes', store);
         else if (args[0] === 'archive' && args.length === 1) {
           if (!options['--ready']) fail('INVALID_INPUT', 'specs archive archives only ready changes; pass --ready');
-          result = await execute(selection, 'archive_ready');
+          result = await execute(selection, 'archive_ready', store);
         }
-        else if (args[0] === 'reconcile' && args.length === 2) result = await execute(selection, 'reconcile_change', { change: args[1] });
+        else if (args[0] === 'reconcile' && args.length === 2) result = await execute(selection, 'reconcile_change', { change: args[1], ...store });
         else fail('INVALID_INPUT', help);
       } else {
         if (!Object.hasOwn(count, command) || !count[command].includes(args.length)) fail('INVALID_INPUT', help);

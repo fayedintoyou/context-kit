@@ -1,0 +1,50 @@
+# Slices merge into the change's integration branch (PR #24). Before #24 merges to main,
+# its last commit sets `base: main`, and its squash message repeats every slice's
+# trailers: the repository deletes merged branches and squashes, so main must carry the
+# evidence itself (task 7.1).
+base: main
+slices:
+  - id: store-selection
+    title: --store / store on the delivery operations
+    implements:
+      - change-progress / Delivery from a store
+      - change-progress / Next slices
+    paths: ["lib/operations.mjs", "bin/hub.mjs", "lib/specs/progress.mjs", "lib/specs/archival.mjs", "test/e2e/progress.test.mjs", "openspec/changes/cross-repo-delivery/tasks.md", "skills/context-kit/references/**", "README.md"]
+  - id: party-plans
+    title: repo on store slices, validated against the store's parties
+    implements:
+      - change-progress / Slice plan
+      - change-progress / Slice plan validation
+    depends_on: [store-selection]
+    paths: ["lib/specs/slices.mjs", "lib/specs/parties.mjs", "test/e2e/progress.test.mjs", "openspec/changes/cross-repo-delivery/tasks.md", "skills/context-kit/references/**", "README.md"]
+  - id: party-landing
+    title: Evidence per party checkout, qualified change ids, party base, unknown state, party PRs
+    implements:
+      - change-progress / Slice landing
+      - change-progress / Party remote and base
+      - change-progress / Missing party evidence
+      - change-progress / Pull request enrichment
+    depends_on: [party-plans]
+    paths: ["lib/specs/landing.mjs", "lib/specs/slices.mjs", "lib/specs/progress.mjs", "lib/repos.mjs", "test/e2e/progress.test.mjs", "openspec/changes/cross-repo-delivery/tasks.md", "skills/context-kit/references/**", "README.md"]
+  - id: party-packets
+    title: Packets that name their party, checkout, base and qualified trailers
+    implements:
+      - change-progress / Slice packet
+      - change-progress / Next slices
+    depends_on: [party-landing]
+    paths: ["lib/specs/progress.mjs", "test/e2e/progress.test.mjs", "openspec/changes/cross-repo-delivery/tasks.md", "skills/context-kit/references/**", "README.md"]
+  - id: store-archive
+    title: Archive readiness and archive for a store, evidence_missing
+    implements:
+      - change-archival / Archive readiness
+      - change-archival / Archive ready changes
+    depends_on: [party-landing]
+    paths: ["lib/specs/archival.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/archival.test.mjs", "openspec/changes/cross-repo-delivery/tasks.md", "skills/context-kit/references/**", "README.md"]
+  - id: party-reconcile
+    title: Reconcile per party, contract test links; docs, skills and the end-to-end walk
+    implements:
+      - change-progress / Reconcile report
+      - change-progress / Reconcile across parties
+      - change-progress / Contract test links
+    depends_on: [party-packets, store-archive]
+    paths: ["lib/specs/progress.mjs", "lib/specs/links.mjs", "test/e2e/**", "docs/delivery.md", "skills/**", "openspec/changes/cross-repo-delivery/**"]

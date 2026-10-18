@@ -116,7 +116,9 @@ signals and proposes one maintenance change for review.
 Large changes can be delivered in slices: `slices.yaml` in the change plans
 independently mergeable PRs, and commits carry `OpenSpec-Change`/`OpenSpec-Slice`
 trailers. `specs status|next|slice|reconcile <change>` derive progress, hand out
-work packets for ready slices and list facts for reconciliation;
+work packets for ready slices and list facts for reconciliation, for the
+repository's changes or, with `--store <id>`, a store's, whose slices land in
+its parties' checkouts recorded with `repos locate`;
 [slice-change](skills/slice-change/SKILL.md) writes the plan and
 [reconcile-change](skills/reconcile-change/SKILL.md) checks what was built. See
 [docs/delivery.md](docs/delivery.md).
