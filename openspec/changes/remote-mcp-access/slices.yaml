@@ -1,16 +1,27 @@
+# Slices merge into the change's integration branch `remote-mcp-access`, which merges to
+# main once every scenario is linked; npm test's spec-link gate fails until then.
+base: remote-mcp-access
 slices:
   - id: http-origin
-    title: Streamable HTTP transport with loopback default and bearer token
+    title: Streamable HTTP origin with required token, host and origin checks, and sessions
     implements:
       - remote-access / HTTP transport
+      - remote-access / Origin token
       - remote-access / Loopback by default
-      - remote-access / Token-protected origin
+      - remote-access / Host and origin checks
+      - remote-access / Client attribution over HTTP
     paths: ["bin/mcp.mjs", "lib/mcp/**", "lib/help.mjs", "test/e2e/remote.test.mjs", "README.md", "skills/context-kit/references/**", "openspec/changes/remote-mcp-access/tasks.md"]
   - id: cloudflare-edge
-    title: OAuth edge on Cloudflare Workers with GitHub owner sign-in, forwarding to the origin
+    title: OAuth edge on Cloudflare Workers with consent, GitHub owner sign-in, and forwarding to the origin
     implements:
       - remote-access / OAuth edge
+      - remote-access / Registration redirect allowlist
+      - remote-access / Consent before sign-in
+      - remote-access / PKCE for every client
       - remote-access / Owner-only sign-in
+      - remote-access / Token renewal
       - remote-access / Forwarding to the origin
+      - remote-access / Origin failures
+      - remote-access / Edge configuration
     depends_on: [http-origin]
     paths: ["edge/cloudflare/**", "package.json", "package-lock.json", "test/e2e/edge.test.mjs", "test/manual-checks.md", "docs/remote.md", "README.md", "openspec/changes/remote-mcp-access/tasks.md"]

@@ -12,23 +12,24 @@ with deliberate authentication as the next step for phone access.
 ## What Changes
 
 - The MCP server can also serve Streamable HTTP (`mcp --http <port>`), offering
-  exactly the tools and prompts the stdio server offers, with the same results and
-  coded errors.
-- HTTP access is closed by default: the server binds to loopback, and listening on
-  any other address, or accepting traffic through a proxy, requires a bearer token
-  read from the environment. Requests without the token are refused before any
-  operation runs.
+  exactly the tools and prompts the stdio server offers, with the same results, coded
+  errors and capture attribution.
+- HTTP access is closed: the server binds to loopback by default, never runs without
+  a long bearer token from the environment, and rejects requests whose `Host` or
+  `Origin` it does not expect before any operation runs.
 - An optional edge for Cloudflare Workers ships with the kit: an OAuth 2.1
-  authorization server (discovery metadata, dynamic client registration, PKCE)
-  that signs the owner in with GitHub, admits only allowlisted GitHub accounts, and
+  authorization server (discovery metadata, dynamic client registration limited to
+  allowlisted redirect hosts, PKCE, refresh) that shows the owner a consent page per
+  client, signs them in with GitHub, admits only allowlisted GitHub user IDs, and
   forwards MCP requests to the workspace's HTTP server through a Cloudflare Tunnel,
-  adding the bearer token. Hosts never see the token.
+  adding the origin token. Hosts never see that token, and an unreachable origin is a
+  clear coded error.
 - A remote-access guide covers running the server, the tunnel, the edge, and adding
   the endpoint to ChatGPT and Claude.
 
 Out of scope, for later changes: ChatGPT "company knowledge" `search`/`fetch`
-tool shapes; serving a workspace without the owner's machine (a snapshot on the
-edge); remote capture as commits or pull requests.
+tool shapes; Client ID Metadata Documents; serving a workspace without the owner's
+machine (a snapshot on the edge); remote capture as commits or pull requests.
 
 ## Capabilities
 
