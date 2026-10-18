@@ -68,11 +68,16 @@ an idle timeout (30 minutes) or on `DELETE`. A fresh server per request would lo
 the client's declared name and version after `initialize`, so captures would be
 attributed to `unknown-client` (found in plan review). Every request reaches the same
 origin, so the edge needs no affinity; it forwards `Mcp-Session-Id` both ways.
-`enableJsonResponse: true` keeps responses plain JSON, which forward without SSE
-handling; the server sends no unsolicited notifications.
+`enableJsonResponse: true` keeps POST responses plain JSON. The SDK still offers a
+standalone SSE stream on `GET /mcp`, which its client opens after initializing, so
+the origin answers `GET` with 405 (the SDK client treats that as "no stream") and the
+edge passes 404 and 405 through unchanged (found in plan review round 2). At most
+`--max-sessions` (default 16) live at once; more get a coded 503. `--session-idle`
+(default 1800 seconds) lets tests shorten expiry.
 
 ### Origin options and checks
 
+- Options are parsed by `lib/arguments.mjs`, which gains repeatable options.
 - `--http <port>` (0 picks a free port), `--host <address>` (default `127.0.0.1`),
   `--public-host <host>` (repeatable; the tunnel hostname), `--allow-origin <origin>`
   (repeatable; none by default). On listening, one JSON line on stderr gives the URL.
@@ -96,7 +101,7 @@ binding, and stores only hashes and encrypted grants in KV. The Worker adds:
   host is not in `ALLOWED_REDIRECT_HOSTS` (default: `chatgpt.com`, `claude.ai`,
   `claude.com`). A stranger cannot register a client that sends tokens elsewhere.
 - **Authorize:** `parseAuthRequest()`, then refuse requests without an `S256` code
-  challenge (the library requires PKCE only for public clients), then refuse when
+  challenge (the library requires PKCE only for public clients; tests cover both kinds), then refuse when
   `ALLOWED_GITHUB_IDS` is empty, then `describeConsent()` + `beginConsent()` and render
   the consent page (client name, redirect host, escaped; no framing).
 - **Approve:** `approveConsent()` (browser-bound handle), then `beginUpstream()` and

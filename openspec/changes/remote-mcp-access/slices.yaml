@@ -10,7 +10,7 @@ slices:
       - remote-access / Loopback by default
       - remote-access / Host and origin checks
       - remote-access / Client attribution over HTTP
-    paths: ["bin/mcp.mjs", "lib/mcp/**", "lib/help.mjs", "test/e2e/remote.test.mjs", "README.md", "skills/context-kit/references/**", "openspec/changes/remote-mcp-access/tasks.md"]
+    paths: ["bin/mcp.mjs", "lib/mcp/**", "lib/arguments.mjs", "lib/help.mjs", "test/e2e/remote.test.mjs", "README.md", "skills/context-kit/references/**", "openspec/changes/remote-mcp-access/tasks.md"]
   - id: cloudflare-edge
     title: OAuth edge on Cloudflare Workers with consent, GitHub owner sign-in, and forwarding to the origin
     implements:

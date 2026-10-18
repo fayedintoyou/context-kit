@@ -21,6 +21,10 @@ The MCP server SHALL serve Streamable HTTP at `/mcp` when started with `--http <
 - **WHEN** a client reads a missing hub over HTTP and over stdio
 - **THEN** both return a tool error with the same error code
 
+#### Scenario: No standalone stream
+- **WHEN** a client sends `GET /mcp` with the correct token
+- **THEN** the response is 405, and an MCP SDK client still initializes and calls tools without transport errors
+
 #### Scenario: Read-only by default over HTTP
 - **WHEN** a client lists tools on an HTTP server started without `--allow-write`
 - **THEN** capture is absent
@@ -63,11 +67,19 @@ The HTTP server SHALL answer with HTTP 403, before checking the token or running
 - **THEN** it can list and call tools
 
 ### Requirement: Client attribution over HTTP
-The HTTP server SHALL keep a session per initialized client, so captures over HTTP are attributed to the client that initialized the session, as over stdio.
+The HTTP server SHALL keep a session per initialized client, so captures over HTTP are attributed to the client that initialized the session, as over stdio. Sessions SHALL end on `DELETE` or after an idle timeout, and the server SHALL refuse new sessions beyond a maximum (`--max-sessions`, default 16) with HTTP 503.
 
 #### Scenario: Two clients capture
 - **WHEN** two clients with different names connect over HTTP to a server with writes allowed and each captures a note
 - **THEN** each note's actor names the client that captured it
+
+#### Scenario: Ended session
+- **WHEN** a client deletes its session, or leaves it idle past `--session-idle`, and then sends a request with that session ID
+- **THEN** the response is 404 and no tool runs
+
+#### Scenario: Session limit
+- **WHEN** a server started with `--max-sessions 1` has one live session and a second client initializes
+- **THEN** the second client receives 503 and the first can still call tools
 
 ### Requirement: OAuth edge
 The Cloudflare edge SHALL be an OAuth 2.1 authorization server for its `/mcp` resource: it SHALL publish authorization server and protected resource metadata, accept dynamic client registration, and answer `/mcp` requests without a valid access token for that resource with 401 and a `WWW-Authenticate` header pointing to the resource metadata.
@@ -106,15 +118,19 @@ The edge SHALL show the owner a consent page naming the client and its redirect 
 The edge SHALL require PKCE with `S256` on every authorization request, whatever the client's registration.
 
 #### Scenario: Authorization without PKCE
-- **WHEN** a registered client starts authorization without a code challenge, or with method `plain`
-- **THEN** the edge refuses the request without showing a consent page
+- **WHEN** a public client and a confidential client each start authorization without a code challenge, or with method `plain`
+- **THEN** the edge refuses every request without showing a consent page
+
+#### Scenario: Wrong verifier
+- **WHEN** a host exchanges a valid authorization code with a code verifier that does not match its challenge
+- **THEN** no token is issued
 
 ### Requirement: Owner-only sign-in
 The edge SHALL sign users in with GitHub and SHALL complete authorization only for GitHub accounts whose numeric user ID is on its configured allowlist; it SHALL refuse to start authorization when the allowlist is empty.
 
 #### Scenario: Allowlisted account
 - **WHEN** a registered host completes authorization with PKCE and the user signs in to GitHub as an allowlisted account
-- **THEN** the host receives an access and refresh token, and a tool call with the access token returns the workspace's result
+- **THEN** the host receives an access and refresh token for the requested resource, and a tool call with the access token returns the workspace's result
 
 #### Scenario: Other account with the owner's login
 - **WHEN** the user signs in to GitHub as an account with the owner's login name but a different user ID
@@ -132,11 +148,11 @@ The edge SHALL issue refresh tokens with access tokens, and a refresh SHALL retu
 - **THEN** it receives a new access token that can call tools
 
 ### Requirement: Forwarding to the origin
-The edge SHALL forward authorized `/mcp` requests, including MCP session headers, to the configured origin's `/mcp`, replacing the host's authorization with the origin's bearer token, and SHALL never send that token anywhere else or to hosts.
+The edge SHALL forward authorized `/mcp` requests, including MCP session headers and the origin's 404 and 405 statuses, to the configured origin's `/mcp`, replacing the host's authorization with the origin's bearer token, and SHALL never send that token anywhere else or to hosts.
 
 #### Scenario: Authorized call reaches the workspace
 - **WHEN** a host calls a tool through the edge with a valid access token
-- **THEN** the origin receives its own bearer token instead of the host's access token, and the host receives the workspace's result without the origin token appearing in any response
+- **THEN** an MCP SDK client initializes and calls tools without transport errors, the origin receives its own bearer token instead of the host's access token, and no response contains the origin token
 
 #### Scenario: Origin redirect
 - **WHEN** the origin answers a forwarded request with a redirect to another address
