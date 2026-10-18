@@ -38,6 +38,7 @@ CLI: `context-kit [--root <dir>] <command>`; inside a workspace, `npm run hub --
 | `specs reconcile <change>` | `reconcile_change` | Facts for checking a change against what was built (`--store`) |
 | `specs archivable` | `archivable_changes` | Which active changes are ready to archive, or their blockers (`--store`) |
 | `specs archive --ready` | — | Archive ready changes and validate (CLI only, no commit; `--store`) |
+| `specs archive --rehearse` | — | Archive every active change into a scratch copy and report what would fail validation (CLI only, changes nothing, non-zero on an issue; `--store`) |
 
 MCP server (stdio): `context-kit-mcp --root <workspace> [--allow-write] [--no-skill-prompts]`
 (`npm run mcp` in a workspace). Its root is fixed at startup; tools cannot change it.

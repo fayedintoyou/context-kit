@@ -144,7 +144,8 @@ its parties' checkouts recorded with `repos locate`;
 Finished changes are archived after merge, not in PRs: the reusable
 [openspec workflow](.github/workflows/openspec.yml) runs `specs archive --ready`
 on every push to the default branch, tests the result and pushes the archive, and
-fails pull requests that edit `openspec/specs/` directly.
+fails pull requests that edit `openspec/specs/` directly or whose changes would not
+archive into valid canonical specs (`specs archive --rehearse`).
 
 ## Contribute
 

@@ -17,6 +17,7 @@ deltas are not canonical.
 | Reconcile a change | `specs reconcile <change> [--store <id>]` | `reconcile_change` |
 | Changes ready to archive | `specs archivable [--store <id>]` | `archivable_changes` |
 | Archive ready changes (no commit) | `specs archive --ready [--store <id>]` | CLI only |
+| Rehearse archiving every active change | `specs archive --rehearse [--store <id>]` | CLI only |
 
 Specs either live beside a repository's code or in a **shared store** (an
 OpenSpec planning repository registered with `openspec store register`). A store
@@ -319,7 +320,23 @@ slice landed, `specs archive --ready --store <id>` writes only under the store's
 there). Fetch the party checkouts first; then commit the result in the store's
 repository.
 
-The reusable `.github/workflows/openspec.yml` runs this on every push to the
-default branch, tests the result and pushes the archive commit, and on pull
-requests fails when `openspec/specs/` is edited directly unless the PR has the
-`canonical-edit` label. See `docs/delivery.md` for the caller workflow.
+`specs archive --rehearse` asks whether the active changes *will* archive
+cleanly. It never changes the repository: it copies `openspec/` to a temp
+directory, archives every active change there in archive order (readiness is
+ignored, since a change in review is unfinished), validates strictly after each
+one and reports `changes`, each with the `issues` it introduced (`spec`,
+`requirement`, `path`, `level`, `message`), plus `baseline` issues that were
+already there and `valid`. It exits non-zero when a change introduced an issue.
+A change that can't be applied at all (for example MODIFIED of a missing
+requirement) is reported as its own issue and later changes still rehearse.
+Not offered over MCP; takes `--store <id>`. To fix an issue, edit the change's
+delta, not the canonical spec: a requirement over 500 characters is shortened,
+its examples and edge cases moved into scenarios, or split into several
+requirements.
+
+The reusable `.github/workflows/openspec.yml` runs `--ready` on every push to the
+default branch, tests the result and pushes the archive commit. On pull requests
+it fails when `openspec/specs/` is edited directly unless the PR has the
+`canonical-edit` label, and when the `archive-rehearsal` job finds an issue a
+change introduces, naming the change, spec and requirement. See
+`docs/delivery.md` for the caller workflow.
