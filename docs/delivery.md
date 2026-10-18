@@ -43,6 +43,26 @@ Canonical specs change only by archiving a change. On pull requests, the
 workflow's `canonical-guard` check fails when `openspec/specs/` is edited
 directly; the `canonical-edit` label allows a deliberate exception.
 
+The archive can fail only after merge: `openspec validate --strict` on a change
+checks its deltas, not the canonical specs they produce, so a requirement that
+grows past OpenSpec's 500-character limit passes review and then fails the
+archive on the default branch. The workflow's `archive-rehearsal` check catches
+that on the pull request. `specs archive --rehearse [--store <id>]` archives
+every active change, ready or not, in archive order into a scratch copy of
+`openspec/`, validates the copy strictly after each change and reports the issues
+each one introduces, with the spec and requirement, under its name. Issues the
+canonical specs already had are listed as `baseline` and do not fail the check.
+The check fails, and the command exits non-zero, only when a change introduces
+an issue, such as `notes` requirement `Note export` being over 500 characters.
+Nothing in the repository changes.
+
+To fix what it reports, edit the change's delta, never the canonical spec:
+shorten the requirement to the one behavior it states, move examples and edge
+cases into scenarios, or split it into several requirements. A change that can't
+be applied at all, such as MODIFIED of a requirement that doesn't exist, is
+reported as that change's issue, and the changes after it are still rehearsed.
+Run the command locally before pushing to see the same result.
+
 To use the process in another repository, add a caller workflow pinned to a
 Context Kit commit:
 

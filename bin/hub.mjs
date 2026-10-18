@@ -24,10 +24,10 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   specs stores | specs list | specs read <spec-id> | specs audit | specs garden   [--store <id>]
   specs parties --store <id>
   specs status <change> | specs next <change> | specs slice <change> <slice> | specs reconcile <change>   [--store <id>]
-  specs archivable | specs archive --ready   [--store <id>]
+  specs archivable | specs archive --ready | specs archive --rehearse   [--store <id>]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
-  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--allow-write', '--global-mcp', '--name', '--help', '--path', '--alias', '--title', '--concept', '--description', '--ready']);
+  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--allow-write', '--global-mcp', '--name', '--help', '--path', '--alias', '--title', '--concept', '--description', '--ready', '--rehearse']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
     const [command, ...args] = positional;
@@ -56,7 +56,8 @@ try {
       if (options['--by'] && command !== 'capture' && !(command === 'repos' && args[0] === 'add')) fail('INVALID_INPUT', '--by applies only to capture and repos add');
       if (options['--offset'] !== undefined && command !== 'browse') fail('INVALID_INPUT', '--offset applies only to browse');
       if (options['--frontmatter'] && command !== 'read') fail('INVALID_INPUT', '--frontmatter applies only to read');
-      if (options['--ready'] && !(command === 'specs' && args[0] === 'archive')) fail('INVALID_INPUT', '--ready applies only to specs archive');
+      if ((options['--ready'] || options['--rehearse']) && !(command === 'specs' && args[0] === 'archive')) fail('INVALID_INPUT', '--ready and --rehearse apply only to specs archive');
+      if (options['--ready'] && options['--rehearse']) fail('INVALID_INPUT', 'Pass --ready or --rehearse to specs archive, not both');
       if (options['--file'] && command !== 'read-skill') fail('INVALID_INPUT', '--file applies only to read-skill');
       const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', actor: options['--by'] || KIT_ACTOR, allowWrite: true };
       const count = { help: [0, 1], addons: [0], skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [2], search: [1], 'read-skill': [2], capture: [2] };
@@ -89,8 +90,8 @@ try {
         else if (args[0] === 'slice' && args.length === 3) result = await execute(selection, 'read_slice', { change: args[1], slice: args[2], ...store });
         else if (args[0] === 'archivable' && args.length === 1) result = await execute(selection, 'archivable_changes', store);
         else if (args[0] === 'archive' && args.length === 1) {
-          if (!options['--ready']) fail('INVALID_INPUT', 'specs archive archives only ready changes; pass --ready');
-          result = await execute(selection, 'archive_ready', store);
+          if (!options['--ready'] && !options['--rehearse']) fail('INVALID_INPUT', 'specs archive archives only ready changes; pass --ready (or --rehearse to only check)');
+          result = await execute(selection, options['--rehearse'] ? 'archive_rehearse' : 'archive_ready', store);
         }
         else if (args[0] === 'reconcile' && args.length === 2) result = await execute(selection, 'reconcile_change', { change: args[1], ...store });
         else fail('INVALID_INPUT', help);

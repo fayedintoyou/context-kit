@@ -5,6 +5,8 @@ name: openspec
 #   ticked and whose planned slices have all landed, test the result, commit and push.
 # - canonical-guard: on pull requests, canonical specs change only through archived
 #   changes; the canonical-edit label allows a deliberate direct edit.
+# - archive-rehearsal: on pull requests, archive every active change into a scratch copy
+#   and fail when the canonical specs would not validate strictly, naming the change.
 # Callers grant `contents: write` and include `labeled`/`unlabeled` in pull_request types.
 on:
   workflow_call:
@@ -88,3 +90,28 @@ jobs:
             echo "::error file=$file::Canonical specs change only by archiving an OpenSpec change after merge. Put this edit in a change, or add the canonical-edit label."
           done
           exit 1
+
+  # An archive that fails after merge costs a follow-up pull request, so check it before. Cheap:
+  # no tests or browsers, and the rehearsal ignores readiness, since a change in review is unfinished.
+  archive-rehearsal:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+      - name: Install
+        run: if [ -f package-lock.json ]; then npm ci; fi
+      - name: Every active change would archive into valid canonical specs
+        run: |
+          status=0
+          ${{ inputs.kit }} --root . specs archive --rehearse > "$RUNNER_TEMP/rehearsal.json" || status=$?
+          cat "$RUNNER_TEMP/rehearsal.json"
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            for (const c of r.changes) for (const i of c.issues) {
+              const where = [i.spec, i.requirement && "requirement " + i.requirement, i.path].filter(Boolean).join(", ");
+              console.log("::error::Change " + c.name + " would not archive cleanly: " + (where && where + ": ") + i.message);
+            }' "$RUNNER_TEMP/rehearsal.json"
+          exit $status

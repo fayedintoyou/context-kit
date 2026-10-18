@@ -5,8 +5,9 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, appendFile, readFile, readdir, rm, realpath, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'yaml';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -27,15 +28,17 @@ async function hashes(root, path = '', result = {}) {
   }
   return result;
 }
-// PATH holds only git, so a real gh never reaches GitHub from slice status.
+// PATH holds only git, so a real gh never reaches GitHub from slice status. TMPDIR is the fixture's
+// own, so a test can see that nothing is left behind in it.
 async function fixture(t) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'context-kit-archival-')));
   t.after(() => rm(base, { recursive: true, force: true }));
   const root = join(base, 'repo');
   const bin = join(base, 'bin');
   await mkdir(bin);
+  await mkdir(join(base, 'tmp'));
   await symlink((await exec('sh', ['-c', 'command -v git'])).stdout.trim(), join(bin, 'git'));
-  const env = { ...process.env, PATH: bin, HOME: base, XDG_DATA_HOME: join(base, 'data'), XDG_CONFIG_HOME: join(base, 'config'),
+  const env = { ...process.env, PATH: bin, HOME: base, TMPDIR: join(base, 'tmp'), XDG_DATA_HOME: join(base, 'data'), XDG_CONFIG_HOME: join(base, 'config'),
     OPENSPEC_TELEMETRY: '0', DO_NOT_TRACK: '1', OPENSPEC_NO_UPDATE_CHECK: '1', GIT_CONFIG_NOSYSTEM: '1' };
   delete env.CONTEXT_KIT_ROOT;
   await put(root, 'openspec/config.yaml', 'schema: spec-driven\n');
@@ -175,6 +178,10 @@ test('specs archive without --ready refuses and archives nothing', async t => {
   assert.match(json.error.message, /--ready/);
   assert.deepEqual(await hashes(root), before);
   assert.equal((await cli('specs', 'archivable', '--ready')).json.error.code, 'INVALID_INPUT');
+  // Archiving and rehearsing are different questions; one command asks one of them.
+  assert.equal((await cli('specs', 'archive', '--ready', '--rehearse')).json.error.code, 'INVALID_INPUT');
+  assert.equal((await cli('specs', 'archivable', '--rehearse')).json.error.code, 'INVALID_INPUT');
+  assert.deepEqual(await hashes(root), before);
 });
 
 // The workspace's hub declares store `shared`, registered in the isolated OpenSpec registry. Its
@@ -397,4 +404,127 @@ test('a contract change sliced across two parties is delivered, reconciled and a
   assert.deepEqual((await cli('specs', 'archivable', '--store', 'shared')).json.changes, []);
   assert.deepEqual((await cli('specs', 'parties', '--store', 'shared')).json.contracts,
     [{ spec: 'game-embedding', parties: ['site', 'game'], status: 'canonical' }]);
+});
+
+// A requirement past OpenSpec's length limit: valid in the change's delta, flagged once canonical.
+const longRequirement = name => `### Requirement: ${name}\n${'The service SHALL support radius for location callers. '.repeat(12)}\n\n#### Scenario: Use ${name}\n- **WHEN** a caller uses ${name.toLowerCase()}\n- **THEN** it works\n`;
+const issueOf = (issues, ...fields) => issues.map(issue => fields.map(field => issue[field]));
+
+// spec: change-archival / A change that would not archive cleanly
+test('rehearse names the change, spec and requirement that would not validate, whatever the readiness, and changes nothing', async t => {
+  const { base, root, change, commit, cli } = await fixture(t);
+  await change('alpha', '- [x] Build alpha\n');
+  await change('radius', '- [ ] Build radius\n- [ ] Test radius\n', { 'specs/locations/spec.md': `## ADDED Requirements\n${longRequirement('Radius')}` });
+  await change('zeta', '- [x] Build zeta\n');
+  await commit();
+  const before = await hashes(root);
+  const { code, json } = await cli('specs', 'archive', '--rehearse');
+  assert.notEqual(code, 0);
+  assert.deepEqual([json.valid, json.baseline], [false, []]);
+  // Archive order; only radius introduced an issue, though its tasks are unticked and alpha and zeta come either side.
+  assert.deepEqual(json.changes.map(item => item.name), ['alpha', 'radius', 'zeta']);
+  assert.deepEqual(json.changes.map(item => item.issues.length), [0, 1, 0]);
+  const [issue] = json.changes[1].issues;
+  assert.deepEqual([issue.spec, issue.requirement, issue.path, issue.level], ['locations', 'Radius', 'requirements[2]', 'WARNING']);
+  assert.match(issue.message, /500 characters/);
+  assert.deepEqual(await hashes(root), before);
+  assert.deepEqual(await readdir(join(base, 'tmp')), []);
+});
+
+// spec: change-archival / A change that would not archive cleanly
+test('rehearse reports a change that cannot be applied as its issue and still rehearses the rest', async t => {
+  const { root, change, commit, cli } = await fixture(t);
+  await change('alpha', '- [x] Build alpha\n', { 'specs/locations/spec.md': `## MODIFIED Requirements\n${requirement('Missing')}` });
+  await change('beta', '- [ ] Build beta\n', { 'specs/locations/spec.md': `## ADDED Requirements\n${longRequirement('Radius')}` });
+  await commit();
+  const before = await hashes(root);
+  const { code, json } = await cli('specs', 'archive', '--rehearse');
+  assert.notEqual(code, 0);
+  assert.deepEqual(json.changes.map(item => [item.name, item.issues.length]), [['alpha', 1], ['beta', 1]]);
+  assert.match(json.changes[0].issues[0].message, /MODIFIED failed for header "### Requirement: Missing" - not found/);
+  assert.deepEqual(issueOf(json.changes[1].issues, 'spec', 'requirement', 'path'), [['locations', 'Radius', 'requirements[1]']]);
+  assert.equal(json.valid, false);
+  assert.deepEqual(await hashes(root), before);
+});
+
+// spec: change-archival / A clean rehearsal
+test('rehearse of changes that archive cleanly lists each without issues, exits zero and changes no file', async t => {
+  const { base, root, change, commit, cli } = await fixture(t);
+  await change('ordering', '- [ ] Build ordering\n');
+  await change('radius', '- [x] Build radius\n');
+  await change('filters', null);
+  await commit();
+  const before = await hashes(root);
+  const { code, json } = await cli('specs', 'archive', '--rehearse');
+  assert.equal(code, 0, JSON.stringify(json));
+  assert.deepEqual(json, { root, changes: ['filters', 'ordering', 'radius'].map(name => ({ name, issues: [] })), baseline: [], valid: true });
+  assert.deepEqual(await hashes(root), before);
+  assert.deepEqual(await readdir(join(base, 'tmp')), []);
+  // With nothing active there is nothing to rehearse.
+  await rm(join(root, 'openspec/changes'), { recursive: true });
+  assert.deepEqual((await cli('specs', 'archive', '--rehearse')).json.changes, []);
+});
+
+// spec: change-archival / Issues already in the canonical specs
+test('rehearse reports an issue the canonical specs already have as baseline and blames no change', async t => {
+  const { root, change, commit, cli } = await fixture(t);
+  const spec = 'openspec/specs/locations/spec.md';
+  await put(root, spec, (await readFile(join(root, spec), 'utf8')).replace(requirement('Search'), longRequirement('Search')));
+  await change('radius', '- [ ] Build radius\n');
+  await commit();
+  const before = await hashes(root);
+  const { code, json } = await cli('specs', 'archive', '--rehearse');
+  assert.equal(code, 0, JSON.stringify(json));
+  assert.deepEqual(issueOf(json.baseline, 'spec', 'requirement', 'path', 'level'), [['locations', 'Search', 'requirements[0]', 'WARNING']]);
+  assert.deepEqual([json.changes, json.valid], [[{ name: 'radius', issues: [] }], true]);
+  // A change that adds its own issue is blamed for that one only.
+  await change('widest', '- [ ] Build widest\n', { 'specs/locations/spec.md': `## ADDED Requirements\n${longRequirement('Widest')}` });
+  await commit();
+  const unchanged = await hashes(root);
+  const again = await cli('specs', 'archive', '--rehearse');
+  assert.notEqual(again.code, 0);
+  assert.deepEqual(again.json.baseline, json.baseline);
+  assert.deepEqual(again.json.changes.map(item => [item.name, issueOf(item.issues, 'requirement')]), [['radius', []], ['widest', [['Widest']]]]);
+  assert.deepEqual(await hashes(root), unchanged);
+});
+
+// spec: change-archival / A clean rehearsal
+test('rehearse --store reads and rehearses a store\'s changes, in the store and nowhere else, and is not offered over MCP', async t => {
+  const { base, store, cli, mcp, client } = await storeFixture(t);
+  assert.ok(!(await client.listTools()).tools.some(tool => tool.name === 'archive_rehearse'));
+  assert.equal((await mcp('archive_rehearse', { store: 'shared' })).error.code, 'UNKNOWN_OPERATION');
+  const before = await hashes(base);
+  const { code, json } = await cli('specs', 'archive', '--rehearse', '--store', 'shared');
+  assert.equal(code, 0, JSON.stringify(json));
+  assert.deepEqual([json.root, json.source, json.changes, json.baseline, json.valid],
+    [store, { kind: 'store', storeId: 'shared' }, [{ name: 'embed', issues: [] }], [], true]);
+  assert.deepEqual(await hashes(base), before);
+  assert.deepEqual(await readdir(join(base, 'tmp')), []);
+});
+
+// The job's own script, run as the workflow runs it: the caller's `kit` input stands in for this checkout's CLI.
+// spec: change-archival / Rehearsal in a pull request
+test('the openspec workflow rehearses on pull requests and fails naming the change, spec and requirement', async t => {
+  const { base, root, change, commit } = await fixture(t);
+  const workflow = parse(await readFile(join(kit, '.github/workflows/openspec.yml'), 'utf8'));
+  const job = workflow.jobs['archive-rehearsal'];
+  assert.equal(job.if, "github.event_name == 'pull_request'");
+  assert.deepEqual(job.steps.filter(step => step.uses).map(step => step.uses), ['actions/checkout@v4', 'actions/setup-node@v4']);
+  assert.equal(job.steps.find(step => step.uses === 'actions/setup-node@v4').with['node-version'], '${{ inputs.node-version }}');
+  const script = job.steps.find(step => step.run?.includes('specs archive --rehearse')).run;
+  assert.ok(!/inputs\.(test|setup)/.test(JSON.stringify(job)), 'a rehearsal needs no tests, setup or browsers');
+  const run = () => exec('bash', ['-c', script.replace('${{ inputs.kit }}', `node ${join(kit, 'bin/hub.mjs')}`)],
+    { cwd: root, env: { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH}`, RUNNER_TEMP: base, TMPDIR: join(base, 'tmp') } })
+    .then(({ stdout }) => ({ code: 0, stdout }), error => ({ code: error.code, stdout: error.stdout }));
+  await change('radius', '- [ ] Build radius\n', { 'specs/locations/spec.md': `## ADDED Requirements\n${longRequirement('Radius')}` });
+  await commit();
+  const failing = await run();
+  assert.notEqual(failing.code, 0);
+  assert.match(failing.stdout, /^::error::Change radius would not archive cleanly: locations, requirement Radius, requirements\[1\]: .*500 characters/m);
+  await rm(join(root, 'openspec/changes/radius'), { recursive: true });
+  await change('ordering', '- [ ] Build ordering\n');
+  await commit();
+  const passing = await run();
+  assert.equal(passing.code, 0, passing.stdout);
+  assert.doesNotMatch(passing.stdout, /::error::/);
 });
