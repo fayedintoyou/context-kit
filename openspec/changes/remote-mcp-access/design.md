@@ -75,9 +75,12 @@ loopback requests also need it, so a tunnel pointing at loopback is protected.
 
 ### Edge: a Worker with Cloudflare's OAuth provider
 
-`edge/cloudflare/` is a Worker using `@cloudflare/workers-oauth-provider`, which
-implements authorization server metadata, protected resource metadata, dynamic
-client registration and PKCE, storing grants in KV. Its default handler runs the
+`edge/cloudflare/` is one Worker using `@cloudflare/workers-oauth-provider` (1.2.x)
+in its single-Worker `OAuthProvider` shape (`apiRoute: '/mcp'`), which implements
+authorization server metadata, protected resource metadata, dynamic client
+registration, Client ID Metadata Documents (with the `global_fetch_strictly_public`
+compatibility flag) and PKCE, storing only hashed grants in KV. Both registration
+styles are on because ChatGPT and Claude each support either. Its default handler runs the
 GitHub sign-in (an OAuth app owned by the user) and completes authorization only
 for logins in `ALLOWED_GITHUB_LOGINS`. Its API handler forwards `/mcp` to
 `ORIGIN_URL` with `Authorization: Bearer ORIGIN_TOKEN`, dropping the host's token.
