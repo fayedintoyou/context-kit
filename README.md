@@ -113,6 +113,11 @@ checked. Each initialized client has a session, so captures name that client; se
 on `DELETE` or after `--session-idle` seconds (default 1800), and `--max-sessions`
 (default 16) bounds them, with 503 beyond. `GET /mcp` answers 405.
 
+To reach a workspace from ChatGPT or a Claude connector, put the HTTP server behind
+a Cloudflare Tunnel and the OAuth edge in `edge/cloudflare/`, a Cloudflare Worker
+that shows a consent page per client, signs you in with GitHub and admits only the
+GitHub user IDs you list. [Remote access](docs/remote.md) walks through it.
+
 ## Specs
 
 `specs list|read <id>|audit|garden` read a repository's canonical OpenSpec specs through
