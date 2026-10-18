@@ -25,7 +25,7 @@ A plan with a duplicate or invalid slice id, an unknown or cyclic dependency, an
 - **THEN** the operation fails with `INVALID_CONFIG` naming `slices.yaml` and the slice
 
 ### Requirement: Slice landing
-The `specs` addon SHALL provide a read-only `specs status <change>` operation, `change_status` over MCP, that derives each slice's state from commits carrying `OpenSpec-Change` and `OpenSpec-Slice` trailers: `landed` when such a commit is reachable from the base branch, `in_progress` when one exists only on other branches, `ready` when every dependency has landed, `unknown` when its evidence cannot be read, and otherwise `blocked`. A store change's trailer value SHALL be `<store-id>:<change>`, and a party slice SHALL be judged only in its party's repository against its party base.
+The `specs` addon SHALL provide a read-only `specs status <change>` operation, `change_status` over MCP, that derives each slice's state from its `OpenSpec-Change` and `OpenSpec-Slice` trailer commits: `landed` when one is reachable from the base branch, `in_progress` when one exists only elsewhere, `ready` when every dependency has landed, `unknown` when its evidence cannot be read, else `blocked`.
 
 #### Scenario: Partly delivered change
 - **WHEN** one slice's trailer commit is merged into the base branch, a second slice's trailer commit exists only on a feature branch, and a third slice depends on the second
@@ -70,7 +70,7 @@ The system SHALL provide `specs next <change>`, `next_slices` over MCP, returnin
 - **THEN** `specs next` returns no packets and says why
 
 ### Requirement: Slice packet
-A packet SHALL contain the change, the slice, the base branch and commit, each implemented requirement's delta text and scenarios with the canonical text it modifies, the dependencies with their landing commits, the declared paths, and the trailers to use. For a landed or in-progress slice, it SHALL also contain the commits, branches or pull requests to review. A party slice's packet SHALL also name the store, the party, its upstream and its checkout path or `null`. Its base SHALL be the party's base, each dependency SHALL name its repository, and its trailers SHALL carry the qualified change id.
+A packet SHALL contain the change, the slice, the base branch and commit, each implemented requirement's delta text and scenarios with the canonical text it modifies, the dependencies with their landing commits, the declared paths and the trailers to use, and, once started, the commits, branches or pull requests to review. A party slice's packet SHALL also name the store, party, upstream and checkout path or `null`, use the party's base, and name each dependency's repository.
 
 #### Scenario: Packet for a modified requirement
 - **WHEN** a slice implements a requirement the change modifies
@@ -86,7 +86,7 @@ The system SHALL provide a read-only `specs reconcile <change>`, `reconcile_chan
 - files changed by more than one slice
 - trailer commits naming an unknown slice of the change
 - requirements no slice implements
-- scenarios of the change that no test links, or `not_collected` when the repository has no test links; for a store change, links are read from every party a slice names, and untested scenarios are `not_collected` only when no party's links could be read
+- scenarios of the change that no test links, or `not_collected` when the repository has no test links
 
 #### Scenario: Out-of-scope file
 - **WHEN** a landed slice declares `src/search/**` and its trailer commit also changes `src/ingest/retry.mjs`
@@ -125,14 +125,14 @@ When the workspace records no checkout for a party's upstream, that party's slic
 - **THEN** status reports the slice `unknown` with reason `checkout_missing` and both remedies, its dependents are `blocked`, and `specs next` returns no packet for it
 
 ### Requirement: Delivery from a store
-`specs status`, `next`, `slice` and `reconcile` SHALL accept `--store <id>`, and `change_status`, `next_slices`, `read_slice` and `reconcile_change` SHALL accept `store`, reading the change from that store under the same declared-or-referenced rule as spec reads. Party checkouts SHALL come from the workspace's registry.
+`specs status`, `next`, `slice` and `reconcile` SHALL accept `--store <id>`, and `change_status`, `next_slices`, `read_slice` and `reconcile_change` SHALL accept `store`, reading the change from that store under the same declared-or-referenced rule as spec reads. Party checkouts SHALL come from the workspace's registry. A store change's trailer value SHALL be `<store-id>:<change>`, and a party slice SHALL be judged only in its party's repository against its party base.
 
 #### Scenario: Store change over CLI and MCP
 - **WHEN** a hub declares store `shared`, and a caller runs `specs status embed --store shared` and calls `change_status` with that change and store
 - **THEN** both return the same result labeled with the store as source, and the same call with an undeclared store fails with `UNKNOWN_STORE`
 
 ### Requirement: Reconcile across parties
-For party slices, reconcile SHALL check each slice's trailer commits against its paths within its party's repository, and SHALL report files shared by slices of the same repository. Every changed file SHALL be labeled with its repository.
+For party slices, reconcile SHALL check each slice's trailer commits against its paths within its party's repository, and SHALL report files shared by slices of the same repository. Every changed file SHALL be labeled with its repository. Test links SHALL be read from every party a slice names, and untested scenarios are `not_collected` only when no party's links could be read.
 
 #### Scenario: Out-of-scope file in a party repository
 - **WHEN** a landed `site` slice declares `src/embed/**` and its trailer commit in the `site` checkout also changes `src/nav.ts`
