@@ -16,6 +16,7 @@
     "ORIGIN_URL": "",
     "GITHUB_CLIENT_ID": ""
     // Secrets, set with `wrangler secret put`: GITHUB_CLIENT_SECRET, ORIGIN_TOKEN.
-    // GITHUB_URL and GITHUB_API_URL default to github.com and api.github.com.
+    // GITHUB_URL and GITHUB_API_URL default to github.com and api.github.com;
+    // ORIGIN_TIMEOUT_MS defaults to 30000.
   }
 }

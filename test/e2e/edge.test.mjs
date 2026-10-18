@@ -94,14 +94,19 @@ async function fakeGithub() {
 
 // An origin whose failure mode a test chooses; `target` records anything a redirect reaches.
 async function fixtureOrigin() {
-  const state = { mode: 'html', targetHits: [] };
+  const state = { mode: 'html', targetHits: [], originHits: 0 };
   const target = await listen((request, response) => {
     state.targetHits.push({ url: request.url, authorization: request.headers.authorization });
     response.writeHead(200, { 'Content-Type': 'application/json' }).end('{}');
   });
   const { url } = await listen((request, response) => {
+    state.originHits++;
     if (state.mode === 'redirect') response.writeHead(307, { Location: `${target.url}/mcp` }).end();
     else if (state.mode === 'drop') request.socket.destroy();
+    else if (state.mode === 'stall') { response.writeHead(200, { 'Content-Type': 'application/json' }); response.write('{"jsonrpc":"2.0",'); }
+    else if (state.mode === 'html404' || state.mode === 'html405') {
+      response.writeHead(Number(state.mode.slice(4)), { 'Content-Type': 'text/html' }).end('<html><body>Not found</body></html>');
+    } else if (state.mode === 'empty502') response.writeHead(502, { 'Content-Length': '0' }).end();
     else response.writeHead(530, { 'Content-Type': 'text/html' }).end('<html><body>Error 1033: Argo Tunnel error</body></html>');
   });
   return Object.assign(state, { url });
@@ -142,14 +147,15 @@ before(async () => {
   origin = await startOrigin();
   await Promise.all([
     startEdge('main', { ORIGIN_URL: origin.url, ORIGIN_TOKEN }),
-    startEdge('fixture', { ORIGIN_URL: fixture.url, ORIGIN_TOKEN }),
+    startEdge('fixture', { ORIGIN_URL: fixture.url, ORIGIN_TOKEN, ORIGIN_TIMEOUT_MS: '1500' }),
     startEdge('closed', { ORIGIN_URL: `http://127.0.0.1:${await freePort()}`, ORIGIN_TOKEN }),
     startEdge('unconfigured', { ALLOWED_GITHUB_IDS: '', ORIGIN_URL: origin.url, ORIGIN_TOKEN }),
-    startEdge('secretless', { ORIGIN_URL: origin.url }),
+    startEdge('secretless', { ORIGIN_URL: fixture.url }),
   ]);
 }, { timeout: 120_000 });
 after(async () => {
-  for (const child of children) child.kill();
+  await Promise.all(children.map(child => child.exitCode !== null ? undefined
+    : new Promise(resolve => { child.once('exit', resolve); child.kill(); })));
   await Promise.all(servers.map(server => new Promise(resolve => server.close(resolve))));
   if (base) await rm(base, { recursive: true, force: true });
 });
@@ -250,12 +256,11 @@ test('a host discovers the edge, its metadata and registers', async () => {
 
 // spec: remote-access / Invalid token
 test('a token the edge did not issue is refused', async () => {
-  fixture.mode = 'redirect';
-  fixture.targetHits.length = 0;
+  const hits = fixture.originHits;
   const response = await initialize(edges.fixture, 'not-a-token');
   assert.equal(response.status, 401);
   assert.match(response.headers.get('www-authenticate'), /resource_metadata=/);
-  assert.equal(fixture.targetHits.length, 0);
+  assert.equal(fixture.originHits, hits);
 });
 
 // spec: remote-access / Unlisted redirect host
@@ -277,6 +282,7 @@ test('authorization shows a consent page before any GitHub redirect', async () =
   assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
   const text = await html(response);
   assert.match(text, /Test Host/);
+  assert.match(text, /tools this server offers/);
   assert.match(text, /claude\.ai/);
   assert.ok(handleOf(text));
 });
@@ -408,10 +414,17 @@ test('an unreachable origin is a coded 502', async () => {
   const { error } = await response.json();
   assert.equal(error.code, 'ORIGIN_UNREACHABLE');
   assert.match(error.message, /unreachable/);
-  fixture.mode = 'drop';
   const fromFixture = await authorized(edges.fixture);
+  fixture.mode = 'drop';
   const dropped = await initialize(edges.fixture, fromFixture.tokens.access_token);
   assert.equal(dropped.status, 502);
+  // Headers then silence: the deadline covers the whole response, not just its start.
+  fixture.mode = 'stall';
+  const started = Date.now();
+  const stalled = await initialize(edges.fixture, fromFixture.tokens.access_token);
+  assert.equal(stalled.status, 502);
+  assert.equal((await stalled.json()).error.code, 'ORIGIN_UNREACHABLE');
+  assert.ok(Date.now() - started < 10_000);
 });
 
 // spec: remote-access / Tunnel error page
@@ -423,14 +436,22 @@ test('a tunnel error page becomes the same coded 502', async () => {
   const text = await response.text();
   assert.equal(JSON.parse(text).error.code, 'ORIGIN_UNREACHABLE');
   assert.ok(!text.includes('<html'));
+  for (const mode of ['html404', 'html405', 'empty502']) {
+    fixture.mode = mode;
+    const proxied = await initialize(edges.fixture, tokens.access_token);
+    assert.equal(proxied.status, 502, mode);
+    assert.equal((await proxied.json()).error.code, 'ORIGIN_UNREACHABLE', mode);
+  }
 });
 
 // spec: remote-access / Missing origin secret
 test('an edge without its origin token forwards nothing', async () => {
   const { tokens } = await authorized(edges.secretless);
+  const hits = fixture.originHits;
   const response = await initialize(edges.secretless, tokens.access_token);
   assert.equal(response.status, 500);
   const { error } = await response.json();
   assert.equal(error.code, 'EDGE_MISCONFIGURED');
   assert.match(error.message, /ORIGIN_TOKEN/);
+  assert.equal(fixture.originHits, hits);
 });

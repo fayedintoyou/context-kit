@@ -118,11 +118,17 @@ binding, and stores only hashes and encrypted grants in KV. The Worker adds:
   tests) and `ORIGIN_TOKEN` (32+ characters) or answers a coded 500. It forwards the
   method, body, `Content-Type`, `Accept`, `Mcp-Session-Id` and
   `Mcp-Protocol-Version` to `ORIGIN_URL` + `/mcp` with `Authorization: Bearer
-  ORIGIN_TOKEN`, `redirect: 'manual'` and a 30-second timeout. A redirect, a
-  connection failure, a timeout, or a response that is neither JSON nor an MCP status
-  (Cloudflare's tunnel error pages are HTML with 502/530) becomes a coded 502
+  ORIGIN_TOKEN`, `redirect: 'manual'` and a 30-second deadline (`ORIGIN_TIMEOUT_MS`)
+  that covers reading the whole response, which the edge buffers (up to 4 MiB) before
+  answering. A redirect, a connection failure, the deadline, a non-JSON response other
+  than an empty 2xx, or a 5xx other than the origin's coded 503 (Cloudflare's tunnel
+  error pages are HTML with 502/530; proxies may send empty 502s) becomes a coded 502
   `ORIGIN_UNREACHABLE` JSON error. Origin 401s become 502 too, since they mean the
-  edge is misconfigured, not that the host's token is bad.
+  edge is misconfigured, not that the host's token is bad. The OAuth provider is
+  cached by every setting it captures (public URL, redirect hosts), so a changed
+  setting takes effect even in an isolate that survives a deployment. Approval grants
+  only the `mcp` scope, and the consent page says the client gets the tools the server
+  offers, which include capture when the origin allows writes.
 - Access tokens last an hour; refresh tokens 30 days, sliding by a week on use.
 
 GitHub's endpoints are Worker variables defaulting to github.com, so tests point

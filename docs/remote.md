@@ -24,10 +24,13 @@ account.
 
 ## 1. Run the origin
 
-Create a token and keep it somewhere private, such as the macOS Keychain:
+Create a token and keep it somewhere private, such as the macOS Keychain. Generate
+it to the clipboard and paste it at the prompt, so it never appears in a command
+line:
 
 ```sh
-security add-generic-password -a "$USER" -s CONTEXT_KIT_MCP_TOKEN -w "$(openssl rand -hex 32)"
+openssl rand -hex 32 | tr -d '\n' | pbcopy
+security add-generic-password -a "$USER" -s CONTEXT_KIT_MCP_TOKEN -w
 ```
 
 Run the server from your workspace:

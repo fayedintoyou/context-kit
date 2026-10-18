@@ -4,7 +4,8 @@ import { OAuthProvider, AuthorizationError, authorizationErrorRedirect } from '@
 
 const DEFAULT_REDIRECT_HOSTS = ['chatgpt.com', 'claude.ai', 'claude.com'];
 const ORIGIN_TIMEOUT_MS = 30_000;
-const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id'];
+const MAX_ORIGIN_RESPONSE = 4 * 1024 * 1024;
+const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept', 'mcp-session-id', 'mcp-protocol-version'];
 const RETURNED_HEADERS = ['content-type', 'mcp-session-id', 'allow'];
 
 const list = value => String(value ?? '').split(/[\s,]+/).filter(Boolean);
@@ -68,7 +69,7 @@ async function authorize(request, env) {
   const loopback = details.redirectIsLoopback
     ? '<p><strong>This sends access to an app on your computer.</strong> Continue only if you just started connecting from it.</p>' : '';
   return page(200, 'Allow access to your Context Kit workspace?',
-    `<p><strong>${escape(details.clientName)}</strong> wants to read your Context Kit workspace.</p>` +
+    `<p><strong>${escape(details.clientName)}</strong> wants to use your Context Kit workspace through the tools this server offers.</p>` +
     `<p>Access will be sent to <strong>${escape(details.redirectHost)}</strong>.</p>${loopback}` +
     `<p>You will sign in with GitHub next.</p>` +
     `<form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}">` +
@@ -85,7 +86,8 @@ async function approve(request, env) {
       const denied = await oauth.denyConsent(request, handle);
       return new Response(null, { status: 302, headers: denied.headers });
     }
-    const approved = await oauth.approveConsent(request, handle);
+    // Grant only this server's scope, whatever the client asked for.
+    const approved = await oauth.approveConsent(request, handle, { scope: ['mcp'] });
     const verifier = randomToken();
     const { state, headers } = await oauth.beginUpstream(approved.request, { data: { verifier }, headers: approved.headers });
     const target = new URL(`${github(env, 'GITHUB_URL', 'https://github.com')}/login/oauth/authorize`);
@@ -147,6 +149,24 @@ function originConfig(env) {
 
 const unreachable = detail => jsonError(502, 'ORIGIN_UNREACHABLE', `The workspace origin is unreachable: ${detail}`);
 
+// Reads the whole origin response under the deadline, so a stalled body becomes a 502 too.
+async function readBody(response) {
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if ((size += value.length) > MAX_ORIGIN_RESPONSE) { await reader.cancel(); throw Object.assign(new Error('too large'), { name: 'TooLarge' }); }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.length; }
+  return body;
+}
+
 const forward = {
   async fetch(request, env) {
     const { endpoint, token, problem } = originConfig(env);
@@ -157,40 +177,46 @@ const forward = {
       if (value !== null) headers.set(name, value);
     }
     headers.set('Authorization', `Bearer ${token}`);
-    let response;
+    const timeout = Number(env.ORIGIN_TIMEOUT_MS) > 0 ? Number(env.ORIGIN_TIMEOUT_MS) : ORIGIN_TIMEOUT_MS;
+    let response, body;
     try {
       response = await fetch(endpoint, { method: request.method, headers, redirect: 'manual',
         body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer(),
-        signal: AbortSignal.timeout(ORIGIN_TIMEOUT_MS) });
+        signal: AbortSignal.timeout(timeout) });
+      body = await readBody(response);
     } catch (error) {
-      return unreachable(error?.name === 'TimeoutError' ? 'it did not answer in time' : 'it could not be reached');
+      if (error?.name === 'TooLarge') return unreachable('its response was too large');
+      return unreachable(['TimeoutError', 'AbortError'].includes(error?.name) ? 'it did not answer in time' : 'it could not be reached');
     }
     // Never follow a redirect: it would carry the origin token somewhere else.
-    if (response.status >= 300 && response.status < 400) { await response.body?.cancel(); return unreachable('it answered with a redirect'); }
-    if (response.status === 401 || response.status === 403) { await response.body?.cancel(); return unreachable('it refused the edge; check ORIGIN_TOKEN and --public-host'); }
-    const type = response.headers.get('content-type') ?? '';
-    const empty = response.status === 202 || response.status === 204 || response.headers.get('content-length') === '0';
-    const mcp = /^application\/json\b|^text\/event-stream\b/i.test(type);
-    // Session and stream statuses belong to the MCP exchange; tunnel and proxy errors arrive as HTML.
-    if (!(mcp || empty || response.status === 404 || response.status === 405)) {
-      await response.body?.cancel();
-      return unreachable(`it answered ${response.status} without an MCP response`);
-    }
+    if (response.status >= 300 && response.status < 400) return unreachable('it answered with a redirect');
+    if (response.status === 401 || response.status === 403) return unreachable('it refused the edge; check ORIGIN_TOKEN and --public-host');
+    // The origin answers in JSON, or with an empty 2xx for notifications and closed sessions.
+    // Anything else (a tunnel's HTML page, an empty proxy error) is not the workspace speaking.
+    const json = /^application\/json\b/i.test(response.headers.get('content-type') ?? '');
+    const emptySuccess = body.length === 0 && response.status >= 200 && response.status < 300;
+    if (!json && !emptySuccess) return unreachable(`it answered ${response.status} without an MCP response`);
+    if (response.status >= 500 && response.status !== 503) return unreachable(`it answered ${response.status}`);
     const returned = new Headers({ 'Cache-Control': 'no-store' });
     for (const name of RETURNED_HEADERS) {
       const value = response.headers.get(name);
       if (value !== null) returned.set(name, value);
     }
-    return new Response(response.body, { status: response.status, headers: returned });
+    return new Response(body.length ? body : null, { status: response.status, headers: returned });
   },
 };
 
 // The OAuth resource is this Worker's own /mcp, which is only known from its configuration.
+// Providers are cached by every setting they capture, so a changed setting builds a new one
+// even in an isolate that survived the deployment.
 const providers = new Map();
 function provider(env) {
   const base = publicUrl(env);
-  if (!providers.has(base)) {
-    providers.set(base, new OAuthProvider({
+  const redirectHosts = list(env.ALLOWED_REDIRECT_HOSTS).length ? list(env.ALLOWED_REDIRECT_HOSTS) : DEFAULT_REDIRECT_HOSTS;
+  const key = JSON.stringify([base, redirectHosts]);
+  if (!providers.has(key)) {
+    const hosts = new Set(redirectHosts.map(host => host.toLowerCase()));
+    providers.set(key, new OAuthProvider({
       apiRoute: '/mcp',
       apiHandler: forward,
       defaultHandler: site,
@@ -203,7 +229,6 @@ function provider(env) {
       refreshTokenTTL: 30 * 86400,
       refreshTokenIdleTTL: 7 * 86400,
       clientRegistrationCallback: ({ clientMetadata }) => {
-        const hosts = new Set(list(env.ALLOWED_REDIRECT_HOSTS).length ? list(env.ALLOWED_REDIRECT_HOSTS) : DEFAULT_REDIRECT_HOSTS);
         const uris = Array.isArray(clientMetadata.redirect_uris) ? clientMetadata.redirect_uris : [];
         const allowed = uris.length > 0 && uris.every(uri => {
           try { return hosts.has(new URL(String(uri)).hostname); } catch { return false; }
@@ -212,7 +237,7 @@ function provider(env) {
       },
     }));
   }
-  return providers.get(base);
+  return providers.get(key);
 }
 
 export default {
