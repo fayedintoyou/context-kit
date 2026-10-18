@@ -40,7 +40,9 @@ and record paths, symbols and commits:
   ones. In a store's change, slices and shared files name their `repo`; read
   their diffs in that party's checkout (`git -C <checkout> show <sha>`).
 - **Stray trailers**: a renamed slice, a typo, or work without a plan entry;
-  recommend fixing the plan or the PR description.
+  recommend fixing the plan or the PR description. A pull request naming two
+  sliced changes is a defect even when nothing is stray: its slice lines count
+  for both. Recommend splitting it.
 - **Uncovered requirements**: for a change with a slice plan, recommend adding
   them to a slice with `slice-change`. Do not invent slices for an unsliced change
   merely to clear this signal.

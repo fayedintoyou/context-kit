@@ -56,7 +56,9 @@ OpenSpec-Slice: <slice>
 ```
 
 An unqualified `OpenSpec-Change: <change>` is the party's own change and never
-counts for the store's. Party tests link the store's scenarios as
+counts for the store's. Slice lines count for every change a commit or PR names,
+so a pull request carries at most one sliced change: it may add the party's own
+change only when that change has no slice plan. Party tests link the store's scenarios as
 `// spec: <store-id>:<capability> / <scenario>`.
 
 ```yaml

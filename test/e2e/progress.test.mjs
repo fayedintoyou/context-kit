@@ -808,6 +808,18 @@ test('reconcile and packets read party links at the party base and at an in-prog
   assert.deepEqual(await mcp('read_slice', { change: 'embed', slice: 'api', store: 'shared' }), packet);
   const storage = await mcp('read_slice', { change: 'embed', slice: 'storage', store: 'shared' });
   assert.deepEqual(storage.review.linkedTests, { repo: 'game', status: 'collected', commit: landed, links: [radius] });
+  // The party's own git display settings don't change what is read.
+  await game.git('config', 'grep.column', 'true');
+  await game.git('config', 'color.grep', 'always');
+  assert.deepEqual((await cli('specs', 'slice', 'embed', 'storage', '--store', 'shared')).review.linkedTests, storage.review.linkedTests);
+  // A tracked path holding a newline is still named in full.
+  await put(game.checkout, 'checks/odd\nname.ts', "// spec: shared:locations / Use Radius\n");
+  await game.git('add', '.');
+  await game.git('commit', '-qm', 'Odd name');
+  await game.git('push', '-q', 'origin', 'main');
+  const odd = (await cli('specs', 'slice', 'embed', 'storage', '--store', 'shared')).review.linkedTests.links;
+  assert.deepEqual(odd.map(({ key, file, line }) => ({ key, file, line })),
+    [{ key: 'locations / Use Radius', file: 'checks/odd\nname.ts', line: 1 }, { key: 'locations / Use Radius', file: 'checks/radius.spec.ts', line: 3 }]);
 });
 
 // spec: change-progress / Pull request with no local commit

@@ -147,8 +147,10 @@ change open until the finishing step:
    ```
 
    The qualifier keeps `game`'s own changes, and other stores', from counting.
-   One commit's `OpenSpec-Slice` lines count for every `OpenSpec-Change` it names,
-   so if a party's own change is sliced too, keep its trailers on other commits.
+   A commit's or PR's `OpenSpec-Slice` lines count for every `OpenSpec-Change` it
+   names, and squash merges combine every commit's trailers. So carry **one sliced
+   change per pull request**: a party PR may also carry the party's own change only
+   when that change has no slice plan. Otherwise deliver the two in separate PRs.
    Tests link the contract's scenarios with the store's id, in any tracked file:
 
    ```js
