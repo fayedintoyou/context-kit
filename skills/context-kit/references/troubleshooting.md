@@ -14,6 +14,9 @@
 | `NOT_A_GIT_REPOSITORY` | Change progress is derived from git; run `specs status` in a git checkout |
 | `ADDON_DISABLED` | Enable the addon in `context-kit.json`, then restart the agent |
 | `WRITE_DISABLED` | Capture needs an explicit workspace, and over MCP `--allow-write` |
+| `TOKEN_REQUIRED` | `mcp --http` needs `CONTEXT_KIT_MCP_TOKEN` in the environment, at least 32 characters; it is never taken from arguments |
+| `UNAUTHORIZED`, `FORBIDDEN_HOST`, `FORBIDDEN_ORIGIN` | HTTP 401/403 from `mcp --http`: send `Authorization: Bearer <token>`, and use a `Host` the server listens on or was given with `--public-host`, and no `Origin` unless given with `--allow-origin` |
+| `SESSION_NOT_FOUND`, `SESSION_LIMIT` | HTTP 404 for an ended or expired session (initialize again); 503 when `--max-sessions` are live |
 | `WORKSPACE_EXISTS` | `init`/`setup` only create new directories |
 | `TOO_LARGE` | A file or result exceeds its limit; split it |
 | `WRONG_SPEC_ROOT`, `ADAPTER_FAILED`, `ADAPTER_FORMAT` | OpenSpec resolved another root or failed; check the repository and stores |

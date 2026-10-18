@@ -2,11 +2,11 @@
 
 ## 1. HTTP origin
 
-- [ ] 1.1 Move tool, prompt and actor setup from `bin/mcp.mjs` into `lib/mcp/server.mjs` and verify the existing `test/e2e/mcp.test.mjs` passes unchanged
-- [ ] 1.2 Add `--http <port>` and `--host <address>` serving stateful Streamable HTTP with JSON responses at `/mcp`, with idle session expiry, writing the listening URL as one JSON line to stderr; add repeatable options to `lib/arguments.mjs`; verify with `test/e2e/remote.test.mjs` linked to `remote-access / Same tools over HTTP`, `Same prompts over HTTP`, `Same coded errors over HTTP`, `No standalone stream`, `Read-only by default over HTTP`, `Default address`, `Two clients capture`, `Ended session` and `Session limit`
-- [ ] 1.3 Require `CONTEXT_KIT_MCP_TOKEN` (32+ characters, environment only, constant-time compare) in HTTP mode; verify with `test/e2e/remote.test.mjs` linked to `remote-access / Start without a token`, `Missing or wrong token` and `Correct token`
-- [ ] 1.4 Check Host and Origin before the token, with `--public-host` and `--allow-origin`; verify with `test/e2e/remote.test.mjs` linked to `remote-access / Rebinding host`, `Browser origin` and `Public host`
-- [ ] 1.5 Document the HTTP options and token in README "Agents over MCP", the `help` topics and `skills/context-kit/references`, and verify `node bin/hub.mjs validate` passes and `npm test` fails only on the edge's unlinked scenarios
+- [x] 1.1 Move tool, prompt and actor setup from `bin/mcp.mjs` into `lib/mcp/server.mjs` and verify the existing `test/e2e/mcp.test.mjs` passes unchanged
+- [x] 1.2 Add `--http <port>` and `--host <address>` serving stateful Streamable HTTP with JSON responses at `/mcp`, with idle session expiry, writing the listening URL as one JSON line to stderr; add repeatable options to `lib/arguments.mjs`; verify with `test/e2e/remote.test.mjs` linked to `remote-access / Same tools over HTTP`, `Same prompts over HTTP`, `Same coded errors over HTTP`, `No standalone stream`, `Read-only by default over HTTP`, `Default address`, `Two clients capture`, `Ended session` and `Session limit`
+- [x] 1.3 Require `CONTEXT_KIT_MCP_TOKEN` (32+ characters, environment only, constant-time compare) in HTTP mode; verify with `test/e2e/remote.test.mjs` linked to `remote-access / Start without a token`, `Missing or wrong token` and `Correct token`
+- [x] 1.4 Check Host and Origin before the token, with `--public-host` and `--allow-origin`; verify with `test/e2e/remote.test.mjs` linked to `remote-access / Rebinding host`, `Browser origin` and `Public host`
+- [x] 1.5 Document the HTTP options and token in README "Agents over MCP", the `help` topics and `skills/context-kit/references`, and verify `node bin/hub.mjs validate` passes and `npm test` fails only on the edge's unlinked scenarios
 
 ## 2. Cloudflare edge
 

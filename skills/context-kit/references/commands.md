@@ -39,5 +39,15 @@ CLI: `context-kit [--root <dir>] <command>`; inside a workspace, `npm run hub --
 | `specs archivable` | `archivable_changes` | Which active changes are ready to archive, or their blockers |
 | `specs archive --ready` | — | Archive ready changes and validate (CLI only, no commit) |
 
-MCP server: `context-kit-mcp --root <workspace> [--allow-write] [--no-skill-prompts]`
+MCP server (stdio): `context-kit-mcp --root <workspace> [--allow-write] [--no-skill-prompts]`
 (`npm run mcp` in a workspace). Its root is fixed at startup; tools cannot change it.
+
+Over HTTP: `CONTEXT_KIT_MCP_TOKEN=<32+ characters> context-kit-mcp --root <workspace>
+--http <port> [--host <address>] [--public-host <host>]... [--allow-origin <origin>]...
+[--max-sessions <n>] [--session-idle <seconds>]`. It serves `/mcp` with the same tools,
+prompts and coded errors, requires `Authorization: Bearer <token>` (the token is only
+ever read from the environment) and listens on `127.0.0.1` unless `--host` says
+otherwise; `--http 0` picks a free port, reported as one JSON line on stderr. A request
+whose `Host` is neither the server's own address nor a `--public-host`, or whose
+`Origin` is not an `--allow-origin`, gets 403 before the token is checked. Sessions
+(default 16, idle 1800 seconds) keep each client's name for captures; `GET /mcp` is 405.
