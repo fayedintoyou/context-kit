@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { request } from 'node:http';
+import { connect } from 'node:net';
 import { promisify } from 'node:util';
 import { mkdtemp, readFile, readdir, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -78,6 +79,19 @@ function raw(url, { method = 'POST', headers = {}, body } = {}) {
     });
     req.on('error', reject);
     req.end(body);
+  });
+}
+// Raw socket, for requests with repeated headers that http.request cannot send.
+function socketRequest(port, headerLines, body) {
+  return new Promise((resolve, reject) => {
+    const socket = connect(Number(port), '127.0.0.1', () => {
+      socket.write(['POST /mcp HTTP/1.1', ...headerLines, 'Accept: application/json, text/event-stream', 'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`, 'Connection: close', '', body].join('\r\n'));
+    });
+    let text = '';
+    socket.on('data', chunk => { text += chunk; });
+    socket.on('end', () => resolve({ status: Number(text.slice(9, 12)), text }));
+    socket.on('error', reject);
   });
 }
 const bearer = { Authorization: `Bearer ${token}` };
@@ -173,33 +187,39 @@ test('each capture over HTTP is attributed to the client that captured it', asyn
 });
 
 // spec: remote-access / Ended session
-test('a deleted session is gone', async t => {
-  const { serve, remote } = await fixture(t);
-  const { url } = await serve();
+test('a deleted session is gone and runs nothing', async t => {
+  const { serve, remote, hub } = await fixture(t);
+  const { url } = await serve(['--allow-write']);
   const client = await remote(url);
   const id = client.transport.sessionId;
   assert.ok(id);
   await client.transport.terminateSession();
-  const after = await raw(url, { headers: { ...bearer, 'Mcp-Session-Id': id, 'Mcp-Protocol-Version': '2025-06-18' }, body: toolCall('list_hubs', {}) });
+  const headers = { ...bearer, 'Mcp-Session-Id': id, 'Mcp-Protocol-Version': '2025-06-18' };
+  const after = await raw(url, { headers, body: toolCall('capture_note', { id: 'personal/main', title: 'After delete', body: 'Body.' }) });
   assert.equal(after.status, 404);
   assert.equal(after.json().error.code, 'SESSION_NOT_FOUND');
   const again = await raw(url, { method: 'DELETE', headers: { ...bearer, 'Mcp-Session-Id': id } });
   assert.equal(again.status, 404);
+  await assert.rejects(readdir(join(hub, 'inbox')), { code: 'ENOENT' });
 });
 
 // spec: remote-access / Ended session
-test('an idle session expires', async t => {
-  const { serve } = await fixture(t);
-  const { url } = await serve(['--session-idle', '1']);
+test('a session expires after inactivity, not age, and runs nothing once expired', async t => {
+  const { serve, hub } = await fixture(t);
+  const { url } = await serve(['--allow-write', '--session-idle', '1']);
   const opened = await raw(url, { headers: bearer, body: initialize() });
   assert.equal(opened.status, 200);
-  const id = opened.headers['mcp-session-id'];
-  const headers = { ...bearer, 'Mcp-Session-Id': id, 'Mcp-Protocol-Version': '2025-06-18' };
-  assert.equal((await raw(url, { headers, body: rpc('tools/list', {}) })).status, 200);
+  const headers = { ...bearer, 'Mcp-Session-Id': opened.headers['mcp-session-id'], 'Mcp-Protocol-Version': '2025-06-18' };
+  // Requests inside the idle window keep the session alive well past its first deadline (1 s after opening).
+  for (let i = 0; i < 4; i++) {
+    await sleep(600);
+    assert.equal((await raw(url, { headers, body: rpc('tools/list', {}) })).status, 200, `request ${i}`);
+  }
   await sleep(1600);
-  const after = await raw(url, { headers, body: rpc('tools/list', {}) });
+  const after = await raw(url, { headers, body: toolCall('capture_note', { id: 'personal/main', title: 'After expiry', body: 'Body.' }) });
   assert.equal(after.status, 404);
   assert.equal(after.json().error.code, 'SESSION_NOT_FOUND');
+  await assert.rejects(readdir(join(hub, 'inbox')), { code: 'ENOENT' });
 });
 
 // spec: remote-access / Session limit
@@ -214,6 +234,29 @@ test('sessions beyond --max-sessions get 503 and existing ones keep working', as
   // Ending the first session frees the slot.
   await first.transport.terminateSession();
   assert.equal((await raw(url, { headers: bearer, body: initialize('third') })).status, 200);
+});
+
+// spec: remote-access / Session limit
+test('a malformed initialize allocates no session and leaves capacity', async t => {
+  const { serve } = await fixture(t);
+  const { url } = await serve(['--max-sessions', '1']);
+  const params = { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'bad', version: '1.0' } };
+  const malformed = [JSON.stringify({ jsonrpc: '2.0', method: 'initialize', params }),
+    JSON.stringify({ jsonrpc: '2.0', id: null, method: 'initialize', params }),
+    JSON.stringify({ jsonrpc: '2.0', id: {}, method: 'initialize', params }),
+    JSON.stringify({ id: 1, method: 'initialize', params }),
+    JSON.stringify([JSON.parse(initialize())]),
+    JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
+    '{"jsonrpc"'];
+  for (const body of malformed) {
+    const response = await raw(url, { headers: bearer, body });
+    assert.equal(response.status, 400, body);
+    assert.equal(response.json().error.code, 'INVALID_INPUT');
+    assert.equal(response.headers['mcp-session-id'], undefined);
+  }
+  // The single slot is still free, and then taken.
+  assert.equal((await raw(url, { headers: bearer, body: initialize('good') })).status, 200);
+  assert.equal((await raw(url, { headers: bearer, body: initialize('over') })).status, 503);
 });
 
 // spec: remote-access / Start without a token
@@ -232,6 +275,16 @@ test('HTTP mode refuses to start without a long enough token', async t => {
   const flagged = await exec(process.execPath, [join(kit, 'bin/mcp.mjs'), '--root', workspace, '--http', '0', '--token', token], { env }).catch(error => error);
   assert.equal(flagged.code, 1);
   assert.equal(JSON.parse(flagged.stderr).error.code, 'INVALID_INPUT');
+  // Numeric options must be safe integers, and --session-idle must fit a timer (2147483 s at most).
+  const bad = [['--http', '65536'], ['--max-sessions', '0'], ['--max-sessions', '9007199254740993'], ['--max-sessions', '1e3'],
+    ['--session-idle', '0'], ['--session-idle', '2147484'], ['--session-idle', '99999999999999999999']];
+  for (const flags of bad) {
+    const refused = await exec(process.execPath, [join(kit, 'bin/mcp.mjs'), '--root', workspace, '--http', '0', ...flags],
+      { env: { ...env, CONTEXT_KIT_MCP_TOKEN: token } }).catch(error => error);
+    assert.equal(refused.code, 1, flags.join(' '));
+    assert.equal(JSON.parse(refused.stderr).error.code, 'INVALID_INPUT', flags.join(' '));
+  }
+  assert.equal((await serve(['--session-idle', '2147483'])).line.includes('listening'), true);
 });
 
 // spec: remote-access / Missing or wrong token
@@ -279,6 +332,25 @@ test('a foreign Host header gets 403 before the token is checked and runs nothin
   // Forwarded headers do not make a host acceptable, and the Host check precedes the token check.
   const forwarded = await raw(url, { headers: { Host: 'attacker.example', 'X-Forwarded-Host': `127.0.0.1:${new URL(url).port}` }, body: initialize() });
   assert.equal(forwarded.status, 403);
+  await assert.rejects(readdir(join(hub, 'inbox')), { code: 'ENOENT' });
+});
+
+// spec: remote-access / Rebinding host
+test('a request with more than one Host header gets 403 in either order and runs nothing', async t => {
+  const { serve, remote, hub } = await fixture(t);
+  const { url, port } = await serve(['--allow-write']);
+  const id = (await remote(url)).transport.sessionId;
+  const good = `Host: 127.0.0.1:${port}`;
+  const auth = `Authorization: Bearer ${token}`;
+  for (const hosts of [[good, 'Host: attacker.example'], ['Host: attacker.example', good], [good, good]]) {
+    for (const body of [initialize(), toolCall('capture_note', { id: 'personal/main', title: 'Doubled', body: 'Body.' })]) {
+      const response = await socketRequest(port, [...hosts, auth, `Mcp-Session-Id: ${id}`], body);
+      assert.equal(response.status, 403, hosts.join(' / '));
+      assert.match(response.text, /FORBIDDEN_HOST/);
+    }
+  }
+  // A single correct Host over the same raw path is still accepted.
+  assert.equal((await socketRequest(port, [good, auth], initialize())).status, 200);
   await assert.rejects(readdir(join(hub, 'inbox')), { code: 'ENOENT' });
 });
 

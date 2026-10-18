@@ -87,7 +87,9 @@ edge passes 404 and 405 through unchanged (found in plan review round 2). At mos
   fails to start rather than exposing the workspace through the tunnel.
 - Host and origin are checked by the adapter before the token, using the SDK's
   DNS-rebinding options where they fit, so a rebinding page cannot probe the token.
-  Allowed hosts are `127.0.0.1:<port>`, `localhost:<port>` and each `--public-host`.
+  Allowed hosts are `127.0.0.1:<port>`, `localhost:<port>`, the explicitly given
+  `--host` address with the port, and each `--public-host`. A request with more than
+  one `Host` header is refused (403), since the first and the last could differ.
   `X-Forwarded-*` headers are ignored.
 
 ### Edge: a Worker with Cloudflare's OAuth provider
