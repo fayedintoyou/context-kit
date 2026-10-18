@@ -1,0 +1,22 @@
+// Template for Context Kit's OAuth edge. Deploy from a workspace with its own copy of this
+// file (account, KV namespace id, route and variables); see docs/remote.md.
+{
+  "name": "context-kit-edge",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-10-01",
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "local" }],
+  "vars": {
+    // The edge's own public origin, e.g. https://context.example.com
+    "PUBLIC_URL": "http://127.0.0.1:8787",
+    // Numeric GitHub user IDs allowed to sign in, comma separated. Empty refuses everyone.
+    "ALLOWED_GITHUB_IDS": "",
+    // Hosts a dynamically registered client may redirect to; empty means chatgpt.com, claude.ai, claude.com.
+    "ALLOWED_REDIRECT_HOSTS": "",
+    // The workspace origin reached through Cloudflare Tunnel, e.g. https://origin.example.com
+    "ORIGIN_URL": "",
+    "GITHUB_CLIENT_ID": ""
+    // Secrets, set with `wrangler secret put`: GITHUB_CLIENT_SECRET, ORIGIN_TOKEN.
+    // GITHUB_URL and GITHUB_API_URL default to github.com and api.github.com;
+    // ORIGIN_TIMEOUT_MS defaults to 30000.
+  }
+}

@@ -100,6 +100,24 @@ refused.
 client over stdio. The root is fixed at startup. Capture is offered only with
 `--allow-write`.
 
+The same server also speaks Streamable HTTP, for a client on another machine or a
+tunnel: `CONTEXT_KIT_MCP_TOKEN=<32+ characters> node bin/mcp.mjs --root <workspace> --http <port>`
+serves `/mcp` with exactly the stdio server's tools, prompts and coded errors, and
+writes one JSON line with its URL to stderr when it is listening (`--http 0` picks a
+free port). It never runs without the token, which is read only from the
+environment and sent as `Authorization: Bearer`, and it listens on `127.0.0.1`
+unless `--host` says otherwise. Requests whose `Host` is not the server's own
+address or a `--public-host` (repeatable; the tunnel's hostname), or that carry an
+`Origin` not given with `--allow-origin` (repeatable), get 403 before the token is
+checked. Each initialized client has a session, so captures name that client; sessions end
+on `DELETE` or after `--session-idle` seconds (default 1800), and `--max-sessions`
+(default 16) bounds them, with 503 beyond. `GET /mcp` answers 405.
+
+To reach a workspace from ChatGPT or a Claude connector, put the HTTP server behind
+a Cloudflare Tunnel and the OAuth edge in `edge/cloudflare/`, a Cloudflare Worker
+that shows a consent page per client, signs you in with GitHub and admits only the
+GitHub user IDs you list. [Remote access](docs/remote.md) walks through it.
+
 ## Specs
 
 `specs list|read <id>|audit|garden` read a repository's canonical OpenSpec specs through
@@ -153,5 +171,5 @@ parallel reviewers turn a conversation's learnings into proposed edits on skills
 and hub knowledge, applied only after approval). Improve them with `reflect`
 itself.
 
-This is a local starting point. Remote MCP over HTTP, Tailscale hosting, external service
+This is a local starting point. An OAuth edge for hosted MCP clients, Tailscale hosting, external service
 adapters, and interactive pages are future increments.
