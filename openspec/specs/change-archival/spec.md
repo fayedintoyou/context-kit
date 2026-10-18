@@ -6,7 +6,7 @@ Archive a change as soon as all of its work has merged, from deterministic readi
 ## Requirements
 
 ### Requirement: Archive readiness
-The `specs` addon SHALL provide a read-only `specs archivable` operation, `archivable_changes` over MCP, that reports each active change of the workspace repository as ready to archive or lists its blockers: `no_tasks` when it has no tasks, `tasks_incomplete` when any task is unticked, and `slices_unlanded` when its slice plan has slices that have not landed on the base branch.
+The `specs` addon SHALL provide a read-only `specs archivable` operation, `archivable_changes` over MCP, that reports each active change of the workspace repository, or of the store selected with `--store` (`store` over MCP), as ready to archive or lists its blockers: `no_tasks` (no tasks), `tasks_incomplete` (a task is unticked), `slices_unlanded` (a planned slice has not landed on its base branch) and `evidence_missing` (a party slice is `unknown`).
 
 #### Scenario: Finished change
 - **WHEN** a change has every task ticked and no slice plan
@@ -24,8 +24,12 @@ The `specs` addon SHALL provide a read-only `specs archivable` operation, `archi
 - **WHEN** an MCP client calls `archivable_changes` in a workspace with the `specs` addon enabled
 - **THEN** it returns the same result as the CLI, and the tool is absent when the addon is disabled
 
+#### Scenario: Party evidence missing
+- **WHEN** a store change has every task ticked and a `game` slice whose party has no recorded checkout
+- **THEN** `specs archivable --store <id>` and `archivable_changes` with that store report it not ready with blocker `evidence_missing`, naming the slice and party
+
 ### Requirement: Archive ready changes
-The CLI SHALL provide `specs archive --ready`, never offered over MCP, that archives exactly the ready changes through the pinned OpenSpec CLI, then validates the canonical specs strictly. It SHALL report the changes archived and those skipped with their blockers, and SHALL NOT commit. Without `--ready` it SHALL refuse.
+The CLI SHALL provide `specs archive --ready [--store <id>]`, never offered over MCP, that archives exactly the ready changes of the workspace repository or the selected store through the pinned OpenSpec CLI, then validates that root's canonical specs strictly. It SHALL report the changes archived and those skipped with their blockers, and SHALL NOT commit. Without `--ready` it SHALL refuse.
 
 #### Scenario: Archive what is finished
 - **WHEN** one change is ready and another has an unticked task
@@ -42,6 +46,10 @@ The CLI SHALL provide `specs archive --ready`, never offered over MCP, that arch
 #### Scenario: Archive refused without the flag
 - **WHEN** a caller runs `specs archive` without `--ready`
 - **THEN** it fails with `INVALID_INPUT` and archives nothing
+
+#### Scenario: Archive a finished store change
+- **WHEN** every slice of a store change has landed in its party checkout and every task is ticked, and a caller runs `specs archive --ready --store <id>` from the workspace
+- **THEN** the change moves to the store's archive with its contract merged into the store's canonical specs, and no file outside the store's `openspec/` changes
 
 ### Requirement: Archive after merge
 The toolkit SHALL ship a reusable GitHub workflow that, on a push to the default branch, runs `specs archive --ready`, runs the repository's test command, and commits and pushes the archive only when something was archived and the tests pass. On pull requests, it SHALL fail a check that edits `openspec/specs/` directly unless the pull request carries the `canonical-edit` label.
