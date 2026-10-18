@@ -16,7 +16,9 @@ const jsonError = (status, code, message) =>
 const page = (status, title, body, headers = new Headers()) => {
   headers.set('Content-Type', 'text/html; charset=utf-8');
   headers.set('Cache-Control', 'no-store');
-  headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
+  // No form-action: browsers apply it to the redirect after a form post, and approving
+  // redirects to GitHub (denying, to the client), so 'self' blocks the sign-in.
+  headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'");
   headers.set('X-Frame-Options', 'DENY');
   return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">` +
     `<title>${escape(title)}</title><style>body{font:16px system-ui;max-width:32rem;margin:3rem auto;padding:0 1rem}` +
