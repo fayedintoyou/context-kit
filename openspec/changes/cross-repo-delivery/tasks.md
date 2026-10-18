@@ -41,8 +41,8 @@ tests do. No network.
 
 ## 7. Landing on main
 
-- [ ] 7.1 In #24's last commit, set `base: main` in slices.yaml and tick this task. Squash-merge #24 with `OpenSpec-Change: cross-repo-delivery` and every slice's `OpenSpec-Slice:` line in the message, so the archive finds the evidence on main after GitHub deletes the branch. Verify that the archive workflow archives the change
-- [ ] 7.2 Document this in `docs/delivery.md` for repositories that squash and delete merged branches, and propose a Context Kit change if the integration-branch flow needs tool support
+- [x] 7.1 In #24's last commit, set `base: main` in slices.yaml and tick this task. Squash-merge #24 with `OpenSpec-Change: cross-repo-delivery` and every slice's `OpenSpec-Slice:` line in the message, so the archive finds the evidence on main after GitHub deletes the branch. Verify that the archive workflow archives the change
+- [x] 7.2 Document this in `docs/delivery.md` for repositories that squash and delete merged branches, and propose a Context Kit change if the integration-branch flow needs tool support
 
 ## Workflow follow-up
 

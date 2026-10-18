@@ -73,6 +73,15 @@ keeps the PR's commit messages too; if you squash with a custom message, keep
 the trailers in the PR description and have `gh` installed so merged PRs still
 count as landed.
 
+When a change's slices merge into an integration branch (the plan's `base`) that
+later merges to the default branch as one pull request, that branch is the
+landing evidence. If the repository squashes and deletes merged branches, that
+evidence disappears with the branch, and the archive after merge fails with
+`Base branch not found`. Before that last merge, set `base` to the default branch
+in `slices.yaml`, and put `OpenSpec-Change: <change>` and every slice's
+`OpenSpec-Slice: <slice>` line in the squash message. The default branch then
+carries the evidence itself.
+
 Context Kit dogfoods this: `openspec/changes/change-progress/slices.yaml`
 planned the change that added it.
 

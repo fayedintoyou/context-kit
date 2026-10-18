@@ -2,7 +2,7 @@
 # its last commit sets `base: main`, and its squash message repeats every slice's
 # trailers: the repository deletes merged branches and squashes, so main must carry the
 # evidence itself (task 7.1).
-base: cross-repo-delivery
+base: main
 slices:
   - id: store-selection
     title: --store / store on the delivery operations
