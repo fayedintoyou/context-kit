@@ -256,6 +256,45 @@ Either way they never look `ready`
 or `landed`: their dependents are `blocked`, the requirements they cover are
 not `landed`, and `specs next` offers no packet for them.
 
+### Reconciling a store change
+
+`specs reconcile <change> --store <id>` checks each slice's trailer commits
+against its `paths` in its party's repository. Each slice entry names its `repo`,
+the repository its `files` and `outOfScope` are in, and each `sharedFiles` entry
+names its `repo`: the same path in two parties is two files, so only slices of
+one repository share one. A repository's report has no `repo` fields.
+
+Party repositories link a test to a store scenario with the store's id as
+qualifier, in any file git tracks, whatever their own test layout:
+
+```js
+// spec: shared:game-embedding / Game accepts its host
+```
+
+Only links qualified with the store's own id count for it: an unqualified link,
+or another store's (`other:`), never does. They are read with `git grep` at a
+named commit, never from the working tree: a landed slice's at its party's base
+commit, an in-progress slice's at its latest trailer commit. A slice in progress
+only through a pull request has no local commit to read; its links are
+`not_collected` with reason `no_local_commit` (nothing is fetched).
+
+- A party slice's packet `review.linkedTests` is
+  `{ repo, status, commit, links }` (or `{ repo, status: "not_collected", reason, links: [] }`),
+  each link `{ key, repo, file, line, commit }` for the slice's scenarios. A
+  repository packet's `linkedTests` stays a list of `{ key, kind, file, line }`.
+- Reconcile reads every party a slice names at its base, and every in-progress
+  slice at its latest commit; the union counts. `untested` adds `links` (the
+  change's linked scenarios, each naming its repository, file, line and the
+  commit read) and `reads` (each read's `repo`, `slice` for a slice's commit,
+  and `commit`, or `not_collected` with the `reason`). It is `not_collected`
+  only when no party could be read.
+
+A party's own link checker must ignore links whose capability carries a
+`<store-id>:` qualifier. Finishing a store change, once its last party slice
+lands, is a step in the store's repository: `specs reconcile --store`, tick the
+final task, `specs archive --ready --store`, commit. `docs/delivery.md` walks
+through an example.
+
 ## Archiving after merge
 
 A change is ready to archive when OpenSpec counts every task ticked and, with a

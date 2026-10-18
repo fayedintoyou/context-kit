@@ -33,11 +33,11 @@ tests do. No network.
 
 ## 6. Slice `party-reconcile`
 
-- [ ] 6.1 Reconcile per repository: out-of-scope and shared files labeled by repository. Link `test/e2e/progress.test.mjs` to "Out-of-scope file in a party repository"
-- [ ] 6.2 Contract test links via `git grep` at the party base (landed) or the slice's latest trailer commit (in progress), with repository and commit in results, and untested collection from every party. Link `test/e2e/progress.test.mjs` to "Party tests are found", "Pull request with no local commit" and "Unqualified or other-store links"
-- [ ] 6.3 `docs/delivery.md`: a worked fictional example (store change with `site` and `game` slices, each party's own change, the finishing step, who archives what, and that party link checkers ignore `<store-id>:` links). Also update `skills/context-kit/references/specs.md`. Verify the example's commands against the e2e fixture by running them in the integration test (6.5)
-- [ ] 6.4 `slice-change` (choose `repo` per store slice, qualified trailers) and `reconcile-change` (review a party slice's PR in its party repository; end a finished store change by naming the finishing step). Verify with `npm test`
-- [ ] 6.5 One integration test: a store with two parties and a contract change sliced across both. Land each slice in its party fixture, then `status` → `next` → `reconcile` → tick the final task → `archivable` is `ready` → `archive --ready --store` merges the contract into the store's canonical specs. Run `npm test` and `node bin/hub.mjs validate`
+- [x] 6.1 Reconcile per repository: out-of-scope and shared files labeled by repository. Link `test/e2e/progress.test.mjs` to "Out-of-scope file in a party repository"
+- [x] 6.2 Contract test links via `git grep` at the party base (landed) or the slice's latest trailer commit (in progress), with repository and commit in results, and untested collection from every party. Link `test/e2e/progress.test.mjs` to "Party tests are found", "Pull request with no local commit" and "Unqualified or other-store links"
+- [x] 6.3 `docs/delivery.md`: a worked fictional example (store change with `site` and `game` slices, each party's own change, the finishing step, who archives what, and that party link checkers ignore `<store-id>:` links). Also update `skills/context-kit/references/specs.md`. Verify the example's commands against the e2e fixture by running them in the integration test (6.5)
+- [x] 6.4 `slice-change` (choose `repo` per store slice, qualified trailers) and `reconcile-change` (review a party slice's PR in its party repository; end a finished store change by naming the finishing step). Verify with `npm test`
+- [x] 6.5 One integration test: a store with two parties and a contract change sliced across both. Land each slice in its party fixture, then `status` → `next` → `reconcile` → tick the final task → `archivable` is `ready` → `archive --ready --store` merges the contract into the store's canonical specs. Run `npm test` and `node bin/hub.mjs validate`
 
 ## 7. Landing on main
 

@@ -299,3 +299,102 @@ test('archive --ready --store archives a finished store change only under the st
   assert.deepEqual(changed.filter(file => !file.startsWith('shared-store/openspec/')), []);
   assert.deepEqual(await heads(), headsBefore);
 });
+
+// The walk-through in docs/delivery.md ("A change across repositories"), command for command.
+// spec: change-archival / Archive a finished store change
+// spec: change-progress / Party tests are found
+test('a contract change sliced across two parties is delivered, reconciled and archived in its store', async t => {
+  const { store, storeGit, cli, mcp, checkouts: { site, game } } = await storeFixture(t);
+  const scenario = (name, when, then) => `#### Scenario: ${name}\n- **WHEN** ${when}\n- **THEN** ${then}\n`;
+  await put(store, 'openspec/changes/embed/specs/game-embedding/spec.md', `# Game embedding\n\n## Purpose\nHow the site hosts the game and the game accepts its host.\n\n## ADDED Requirements\n\n`
+    + `### Requirement: Guest handshake\nThe game SHALL accept the page that embeds it as its host.\n\n${scenario('Game accepts its host', 'the site embeds the game', 'the game accepts the site as its host')}\n`
+    + `### Requirement: Host frame\nThe site SHALL open the game in a frame.\n\n${scenario('Site opens the game', 'a visitor opens the game page', 'the site opens the game in a frame')}`);
+  await put(store, 'openspec/changes/embed/slices.yaml', `slices:
+  - id: game-guest
+    repo: game
+    implements: [game-embedding / Guest handshake]
+    paths: ["src/embed/**", "test/embed/**", "openspec/changes/accept-host/**"]
+  - id: site-host
+    repo: site
+    implements: [game-embedding / Host frame]
+    depends_on: [game-guest]
+    paths: ["src/embed/**", "test/embed/**", "openspec/changes/embed-game/**"]
+`);
+  const tasks = (...ticked) => ['1.1 game-guest lands in game', '1.2 site-host lands in site', '2.1 Finish: reconcile, then archive in the store\'s repository']
+    .map(task => `- [${ticked.includes(task.split(' ')[0]) ? 'x' : ' '}] ${task}\n`).join('');
+  const tick = async (...ticked) => {
+    await put(store, 'openspec/changes/embed/tasks.md', tasks(...ticked));
+    await storeGit('add', '.');
+    await storeGit('commit', '-qm', `Tick ${ticked.at(-1) ?? 'nothing'}`);
+  };
+  await tick();
+  const status = () => cli('specs', 'status', 'embed', '--store', 'shared').then(result => result.json);
+  const states = result => Object.fromEntries(result.slices.map(slice => [slice.id, slice.state]));
+  // Each party proposes its own change, then one PR implements it and the slice with the qualified trailers and a contract link.
+  const build = async (party, slice, own, scenarioName) => {
+    await put(party.checkout, `openspec/changes/${own}/tasks.md`, '- [ ] 1.1 Build\n');
+    await party.git('add', '.');
+    await party.git('commit', '-qm', `Propose ${own}`);
+    await party.git('push', '-q', 'origin', 'main');
+    await party.git('switch', '-q', '-c', slice, 'origin/main');
+    await put(party.checkout, `openspec/changes/${own}/tasks.md`, '- [x] 1.1 Build\n');
+    await put(party.checkout, `src/embed/${slice}.ts`, `export const ${slice.replace('-', '_')} = true;\n`);
+    await put(party.checkout, `test/embed/${slice}.test.mjs`, ['// spec: embedding / Own scenario', `// spec: shared:game-embedding / ${scenarioName}`, `test('${slice}', () => {});`, ''].join('\n'));
+    await party.git('add', '.');
+    await party.git('commit', '-qm', `Build ${slice}\n\nOpenSpec-Change: shared:embed\nOpenSpec-Slice: ${slice}\n`);
+    return (await party.git('rev-parse', 'HEAD')).stdout.trim();
+  };
+  // The PR merges into the party's main, and the checkout is fetched.
+  const merge = async (party, slice) => {
+    await party.git('push', '-q', 'origin', `${slice}:main`);
+    await party.git('fetch', '-q', 'origin');
+  };
+
+  assert.deepEqual(states(await status()), { 'game-guest': 'ready', 'site-host': 'blocked' });
+  const [guestPacket] = (await cli('specs', 'next', 'embed', '--store', 'shared')).json.packets;
+  assert.deepEqual([guestPacket.slice.id, guestPacket.store, guestPacket.repo.party, guestPacket.repo.remote, guestPacket.trailers],
+    ['game-guest', 'shared', 'game', 'origin', 'OpenSpec-Change: shared:embed\nOpenSpec-Slice: game-guest']);
+  const guest = await build(game, 'game-guest', 'accept-host', 'Game accepts its host');
+  const guestLink = { key: 'game-embedding / Game accepts its host', repo: 'game', file: 'test/embed/game-guest.test.mjs', line: 2, commit: guest };
+  const review = (await cli('specs', 'slice', 'embed', 'game-guest', '--store', 'shared')).json;
+  assert.equal(review.slice.state, 'in_progress');
+  assert.deepEqual(review.review.linkedTests, { repo: 'game', status: 'collected', commit: guest, links: [guestLink] });
+  await merge(game, 'game-guest');
+  await tick('1.1');
+  assert.deepEqual(states(await status()), { 'game-guest': 'landed', 'site-host': 'ready' });
+  const [hostPacket] = (await cli('specs', 'next', 'embed', '--store', 'shared')).json.packets;
+  assert.deepEqual([hostPacket.slice.id, hostPacket.repo.party, hostPacket.dependencies],
+    ['site-host', 'site', [{ id: 'game-guest', repo: 'game', state: 'landed', commits: [guest] }]]);
+  const host = await build(site, 'site-host', 'embed-game', 'Site opens the game');
+  await merge(site, 'site-host');
+  await tick('1.1', '1.2');
+
+  // Finish: fetch, reconcile, tick the final task, check readiness, archive, and commit in the store's repository.
+  for (const party of [game, site]) await party.git('fetch', '-q');
+  const report = (await cli('specs', 'reconcile', 'embed', '--store', 'shared')).json;
+  assert.equal(report.status.totals.readyToReconcile, true);
+  assert.deepEqual(report.slices.map(({ id, repo, state, outOfScope }) => [id, repo, state, outOfScope]),
+    [['game-guest', 'game', 'landed', []], ['site-host', 'site', 'landed', []]]);
+  assert.deepEqual([report.sharedFiles, report.strayTrailers, report.uncovered], [[], [], []]);
+  assert.deepEqual([report.untested.status, report.untested.scenarios], ['collected', []]);
+  assert.deepEqual(report.untested.links, [
+    { key: 'game-embedding / Site opens the game', repo: 'site', file: 'test/embed/site-host.test.mjs', line: 2, commit: host }, guestLink]);
+  assert.deepEqual(await mcp('reconcile_change', { change: 'embed', store: 'shared' }), report);
+  const held = (await cli('specs', 'archivable', '--store', 'shared')).json;
+  assert.deepEqual(held.changes.map(({ name, ready, blockers }) => [name, ready, blockers]), [['embed', false, [{ code: 'tasks_incomplete' }]]]);
+  await put(store, 'openspec/changes/embed/tasks.md', tasks('1.1', '1.2', '2.1'));
+  const ready = (await cli('specs', 'archivable', '--store', 'shared')).json;
+  assert.deepEqual(ready.changes.map(({ name, ready, blockers }) => [name, ready, blockers]), [['embed', true, []]]);
+  const { code, json } = await cli('specs', 'archive', '--ready', '--store', 'shared');
+  assert.equal(code, 0, JSON.stringify(json));
+  assert.deepEqual([json.archived.map(item => item.name), json.valid], [['embed'], true]);
+  const canonical = await readFile(join(store, 'openspec/specs/game-embedding/spec.md'), 'utf8');
+  assert.match(canonical, /Requirement: Guest handshake[\s\S]*Scenario: Game accepts its host/);
+  assert.match(canonical, /Requirement: Host frame[\s\S]*Scenario: Site opens the game/);
+  await storeGit('add', '.');
+  await storeGit('commit', '-qm', 'Archive embed');
+  assert.equal((await storeGit('status', '--porcelain')).stdout, '');
+  assert.deepEqual((await cli('specs', 'archivable', '--store', 'shared')).json.changes, []);
+  assert.deepEqual((await cli('specs', 'parties', '--store', 'shared')).json.contracts,
+    [{ spec: 'game-embedding', parties: ['site', 'game'], status: 'canonical' }]);
+});

@@ -75,3 +75,119 @@ count as landed.
 
 Context Kit dogfoods this: `openspec/changes/change-progress/slices.yaml`
 planned the change that added it.
+
+## A change across repositories
+
+A shared store (`specs stores`) holds specs several repositories agree on, such as
+a contract between the parties its `openspec/parties.yaml` declares. A store holds
+no code, so a store change is planned in the store and built in its parties: each
+slice names with `repo` the party it lands in, and its evidence comes from that
+party's checkout. The delivery commands take `--store <id>`; run them from the
+workspace, whose registry records the party checkouts.
+
+A fictional walk-through: hub `team/shared` declares store `shared`, whose
+parties are `site` (`https://github.com/example/site`) and `game`
+(`https://github.com/example/game`), with contract `game-embedding: [site, game]`.
+The store's change `embed` adds the contract:
+
+```markdown
+### Requirement: Guest handshake
+The game SHALL accept the page that embeds it as its host.
+
+#### Scenario: Game accepts its host
+...
+
+### Requirement: Host frame
+The site SHALL open the game in a frame.
+
+#### Scenario: Site opens the game
+...
+```
+
+Its `slices.yaml` lands one slice in each party. Each party also proposes its own
+change in its own repository (`accept-host` in `game`, `embed-game` in `site`)
+for the app-internal detail, and the slice's PR implements both, so its paths
+include that change:
+
+```yaml
+slices:
+  - id: game-guest
+    repo: game
+    implements: [game-embedding / Guest handshake]
+    paths: ["src/embed/**", "test/embed/**", "openspec/changes/accept-host/**"]
+  - id: site-host
+    repo: site
+    implements: [game-embedding / Host frame]
+    depends_on: [game-guest]
+    paths: ["src/embed/**", "test/embed/**", "openspec/changes/embed-game/**"]
+```
+
+Its `tasks.md` has a task per slice and a final task, left unticked, that holds the
+change open until the finishing step:
+
+```markdown
+- [ ] 1.1 game-guest lands in game
+- [ ] 1.2 site-host lands in site
+- [ ] 2.1 Finish: reconcile, then archive in the store's repository
+```
+
+1. **Record the checkouts** once per machine: `repos locate team/shared/game
+   ~/src/game` and `repos locate team/shared/site ~/src/site` (or `repos clone`).
+   Without one, a party's slices are `unknown`, never `ready` or `landed`.
+2. **Build.** `specs status embed --store shared` shows `game-guest` ready and
+   `site-host` blocked. `specs next embed --store shared` returns the
+   `game-guest` packet naming store `shared`, party `game` with its upstream,
+   checkout and party remote, the party's base, and the qualified trailers. The
+   worker branches from that remote in the `game` checkout, and every commit and
+   the PR description carry:
+
+   ```
+   OpenSpec-Change: shared:embed
+   OpenSpec-Slice: game-guest
+   ```
+
+   The qualifier keeps `game`'s own changes, and other stores', from counting.
+   One commit's `OpenSpec-Slice` lines count for every `OpenSpec-Change` it names,
+   so if a party's own change is sliced too, keep its trailers on other commits.
+   Tests link the contract's scenarios with the store's id, in any tracked file:
+
+   ```js
+   // spec: embedding / Accept a host page
+   // spec: shared:game-embedding / Game accepts its host
+   test('accepts the embedding page as host', ...);
+   ```
+
+   A party's own link checker (one like Context Kit's `npm test` check) must
+   ignore links whose capability carries a `<store-id>:` qualifier: they name the
+   store's scenarios, which the party's own specs don't have.
+3. **Review** the PR in the party's repository, against
+   `specs slice embed game-guest --store shared`. Its `review` lists the commits,
+   the party's pull requests and the linked tests read from the slice's latest
+   commit. After it merges, `game`'s own workflow archives `accept-host`. Fetch the
+   checkout (`git -C ~/src/game fetch`): a slice lands only on the party remote's
+   fetched base. `specs next` then offers `site-host`, with `game-guest`'s commit
+   labeled repository `game` as its dependency, and it goes the same way in
+   `site`. A party PR can't tick the store's tasks: tick `1.1` and `1.2` in the
+   store's repository as their slices land.
+4. **Finish.** No workflow sees a party merge from the store's repository, so
+   after the last party slice lands, the store change is finished by hand:
+
+   ```sh
+   git -C ~/src/game fetch && git -C ~/src/site fetch
+   context-kit specs reconcile embed --store shared
+   # tick 2.1 in the store's openspec/changes/embed/tasks.md
+   context-kit specs archivable --store shared        # embed: ready
+   context-kit specs archive --ready --store shared
+   ```
+
+   then commit the result in the store's repository and merge it there.
+   Reconcile checks each slice's commits against its paths in its party's
+   repository and reads the contract's links from each party at its base, and
+   from each in-progress slice's latest commit. `specs archive --ready --store`
+   writes only under the store's `openspec/`: `embed` moves to its archive and
+   `game-embedding` becomes canonical in the store.
+
+Each change is archived where it lives: `accept-host` and `embed-game` by their
+party's own workflow when their PR merges, and the store's `embed` by the
+finishing step. `specs archivable --store shared` lists a store change that is
+`ready` but not yet archived.

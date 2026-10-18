@@ -704,10 +704,14 @@ test('a party base is its remote tip even when the local branch is older', async
   assert.deepEqual(packet.base, { ref: 'main', refs: ['refs/remotes/origin/main'], commit });
   assert.deepEqual(packet.review.commits.map(item => item.sha), [commit]);
   assert.deepEqual(await mcp('read_slice', { change: 'embed', slice: 'storage', store: 'shared' }), packet);
-  // Reconcile reads the landed commit in the party checkout, though the local main lacks it.
-  // Reading the party's linked tests at that base arrives with the party-reconcile slice.
+  // Reconcile reads the landed commit and the linked test at the remote's tip, though the local main lacks both.
+  const link = { key: 'locations / Use Radius', repo: 'game', file: 'test/embed.test.mjs', line: 1, commit };
+  assert.deepEqual(packet.review.linkedTests, { repo: 'game', status: 'collected', commit, links: [link] });
   const report = await cli('specs', 'reconcile', 'embed', '--store', 'shared');
   assert.deepEqual(report.slices.find(slice => slice.id === 'storage').files, ['src/search/storage-shared-embed.mjs', 'test/embed.test.mjs']);
+  assert.deepEqual(report.untested.links, [link]);
+  assert.ok(!report.untested.scenarios.some(item => item.scenario === 'Use Radius'));
+  assert.deepEqual(await mcp('reconcile_change', { change: 'embed', store: 'shared' }), report);
 });
 
 // spec: change-progress / Same change name elsewhere
@@ -744,4 +748,110 @@ test('a party pull request lands a slice only when merged into the party base', 
     []]);
   assert.deepEqual(result.repos.map(repo => repo.pullRequests), [{ status: 'collected' }, { status: 'collected' }]);
   assert.deepEqual(await mcp('change_status', { change: 'embed', store: 'shared' }), result);
+});
+
+// One party commit with the given files and the store's qualified trailers.
+async function commitTo(party, slice, files, change = 'shared:embed') {
+  for (const [file, content] of Object.entries(files)) await put(party.checkout, file, content);
+  await party.git('add', '.');
+  await party.git('commit', '-qm', `Build ${slice}\n\nOpenSpec-Change: ${change}\nOpenSpec-Slice: ${slice}\n`);
+  return party.rev('HEAD');
+}
+const reconcile = cli => cli('specs', 'reconcile', 'embed', '--store', 'shared');
+
+// spec: change-progress / Out-of-scope file in a party repository
+test('reconcile checks each party slice against its paths in its own repository', async t => {
+  const { store, cli, mcp, checkouts: { site, game } } = await storeFixture(t);
+  await put(store, 'openspec/changes/embed/slices.yaml', storePlan.replace('    depends_on: [storage]\n', '    depends_on: [storage]\n    paths: ["src/embed/**"]\n'));
+  await commitTo(game, 'storage', { 'src/search/index.ts': 'export const index = 1;\n', 'src/embed/frame.ts': 'export const guest = 1;\n' });
+  await game.git('push', '-q', 'origin', 'main');
+  await commitTo(site, 'api', { 'src/embed/frame.ts': 'export const host = 1;\n', 'src/nav.ts': 'export const nav = 1;\n' });
+  await commitTo(site, 'client', { 'src/embed/frame.ts': 'export const host = 2;\n' });
+  await site.git('push', '-q', 'origin', 'main');
+  const report = await reconcile(cli);
+  assert.deepEqual(states(report.status), { storage: 'landed', api: 'landed', client: 'landed' });
+  // Each slice's files are its party's, labeled with that repository and checked against its paths there.
+  assert.deepEqual(report.slices, [
+    { id: 'storage', repo: 'game', state: 'landed', scope: 'checked', files: ['src/embed/frame.ts', 'src/search/index.ts'], outOfScope: ['src/embed/frame.ts'] },
+    { id: 'api', repo: 'site', state: 'landed', scope: 'checked', files: ['src/embed/frame.ts', 'src/nav.ts'], outOfScope: ['src/nav.ts'] },
+    { id: 'client', repo: 'site', state: 'landed', scope: 'unchecked', files: ['src/embed/frame.ts'], outOfScope: [] }]);
+  // The same path in two repositories is two files: only slices of one repository share one.
+  assert.deepEqual(report.sharedFiles, [{ repo: 'site', file: 'src/embed/frame.ts', slices: ['api', 'client'] }]);
+  assert.deepEqual(await mcp('reconcile_change', { change: 'embed', store: 'shared' }), report);
+});
+
+// spec: change-progress / Party tests are found
+test('reconcile and packets read party links at the party base and at an in-progress slice commit', async t => {
+  const { cli, mcp, checkouts: { site, game } } = await storeFixture(t);
+  // Any tracked file links, on any line, whatever the party's test layout.
+  const landed = await commitTo(game, 'storage', { 'src/search/radius.ts': 'export const radius = 1;\n',
+    'checks/radius.spec.ts': "import { radius } from '../src/search/radius';\n\n  // spec: shared:locations / Use Radius\nit('radius', () => {});\n" });
+  await game.git('push', '-q', 'origin', 'main');
+  // Untracked files and uncommitted edits are never read.
+  await put(game.checkout, 'notes.md', '// spec: shared:locations / Use Search\n');
+  await site.git('switch', '-q', '-c', 'embed-api');
+  const working = await commitTo(site, 'api', { 'src/api.ts': 'export const api = 1;\n',
+    'tests/api.test.ts': "// spec: shared:locations / Use Ordering\ntest('ordering', () => {});\n" });
+  await put(site.checkout, 'tests/api.test.ts', "// spec: shared:locations / Use Search\ntest('search', () => {});\n");
+  const report = await reconcile(cli);
+  assert.deepEqual(states(report.status), { storage: 'landed', api: 'in_progress', client: 'blocked' });
+  const radius = { key: 'locations / Use Radius', repo: 'game', file: 'checks/radius.spec.ts', line: 3, commit: landed };
+  const ordering = { key: 'locations / Use Ordering', repo: 'site', file: 'tests/api.test.ts', line: 1, commit: working };
+  assert.deepEqual(report.untested, { status: 'collected', scenarios: [{ spec: 'locations', requirement: 'Search', scenario: 'Use Search' }],
+    links: [radius, ordering],
+    reads: [{ repo: 'site', status: 'collected', commit: await site.rev('origin/main') }, { repo: 'game', status: 'collected', commit: landed },
+      { repo: 'site', slice: 'api', status: 'collected', commit: working }] });
+  assert.deepEqual(await mcp('reconcile_change', { change: 'embed', store: 'shared' }), report);
+  // The in-progress site slice's packet lists its link from its latest commit; the landed game slice's comes from the game base.
+  const packet = await cli('specs', 'slice', 'embed', 'api', '--store', 'shared');
+  assert.deepEqual(packet.review.linkedTests, { repo: 'site', status: 'collected', commit: working, links: [ordering] });
+  assert.deepEqual(await mcp('read_slice', { change: 'embed', slice: 'api', store: 'shared' }), packet);
+  const storage = await mcp('read_slice', { change: 'embed', slice: 'storage', store: 'shared' });
+  assert.deepEqual(storage.review.linkedTests, { repo: 'game', status: 'collected', commit: landed, links: [radius] });
+});
+
+// spec: change-progress / Pull request with no local commit
+test('a slice in progress only through a pull request has its links not collected, and reconcile still reads the party base', async t => {
+  const pr = { number: 12, state: 'OPEN', headRefName: 'embed-api', baseRefName: 'main', body: 'OpenSpec-Change: shared:embed\nOpenSpec-Slice: api\n', url: 'https://example.test/pr/12' };
+  const { cli, mcp, checkouts: { site, game } } = await storeFixture(t, { gh: { 'example/site': [pr], 'example/game': [] } });
+  await put(site.checkout, 'tests/search.test.ts', "// spec: shared:locations / Use Search\ntest('search', () => {});\n");
+  await site.git('add', '.');
+  await site.git('commit', '-qm', 'Test search');
+  await site.git('push', '-q', 'origin', 'main');
+  const base = await site.rev('origin/main');
+  const packet = await cli('specs', 'slice', 'embed', 'api', '--store', 'shared');
+  assert.equal(packet.slice.state, 'in_progress');
+  assert.deepEqual([packet.review.commits, packet.review.pullRequests.map(item => item.number)], [[], [12]]);
+  assert.deepEqual(packet.review.linkedTests, { repo: 'site', status: 'not_collected', reason: 'no_local_commit', links: [] });
+  assert.deepEqual(await mcp('read_slice', { change: 'embed', slice: 'api', store: 'shared' }), packet);
+  const report = await reconcile(cli);
+  assert.equal(states(report.status).api, 'in_progress');
+  assert.deepEqual(report.untested.reads, [{ repo: 'site', status: 'collected', commit: base }, { repo: 'game', status: 'collected', commit: await game.rev('origin/main') },
+    { repo: 'site', slice: 'api', status: 'not_collected', reason: 'no_local_commit' }]);
+  assert.deepEqual(report.untested.links, [{ key: 'locations / Use Search', repo: 'site', file: 'tests/search.test.ts', line: 1, commit: base }]);
+  assert.deepEqual([report.untested.status, report.untested.scenarios.map(item => item.scenario)], ['collected', ['Use Radius', 'Use Ordering']]);
+  assert.deepEqual(await mcp('reconcile_change', { change: 'embed', store: 'shared' }), report);
+});
+
+// spec: change-progress / Unqualified or other-store links
+test('only links qualified with the store id count for a store change', async t => {
+  const { cli, mcp, checkouts: { game } } = await storeFixture(t);
+  const landed = await commitTo(game, 'storage', { 'test/links.test.mjs': ['// spec: locations / Use Radius', '// spec: other:locations / Use Radius',
+    '// spec: shared-old:locations / Use Radius', '// spec: xshared:locations / Use Radius', '//spec:shared:locations / Use Ordering', "test('links', () => {});", ''].join('\n') });
+  await game.git('push', '-q', 'origin', 'main');
+  const report = await reconcile(cli);
+  assert.deepEqual(report.untested.links, [{ key: 'locations / Use Ordering', repo: 'game', file: 'test/links.test.mjs', line: 5, commit: landed }]);
+  assert.deepEqual([report.untested.status, report.untested.scenarios.map(item => item.scenario)], ['collected', ['Use Radius', 'Use Search']]);
+  assert.deepEqual(await mcp('reconcile_change', { change: 'embed', store: 'shared' }), report);
+  const packet = await cli('specs', 'slice', 'embed', 'storage', '--store', 'shared');
+  assert.deepEqual(packet.review.linkedTests, { repo: 'game', status: 'collected', commit: landed, links: [] });
+});
+
+// spec: change-progress / Untested change scenario
+test('a store change\'s untested scenarios are not collected only when no party could be read', async t => {
+  const { cli, mcp } = await storeFixture(t, { located: [] });
+  const report = await reconcile(cli);
+  assert.deepEqual(report.untested, { status: 'not_collected', scenarios: [], links: [],
+    reads: [{ repo: 'site', status: 'not_collected', reason: 'checkout_missing' }, { repo: 'game', status: 'not_collected', reason: 'checkout_missing' }] });
+  assert.deepEqual(await mcp('reconcile_change', { change: 'embed', store: 'shared' }), report);
 });
