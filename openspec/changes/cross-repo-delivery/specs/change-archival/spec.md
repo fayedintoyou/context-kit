@@ -3,7 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Archive readiness
-The `specs` addon SHALL provide a read-only `specs archivable` operation, `archivable_changes` over MCP, that reports each active change of the workspace repository, or of the store selected with `--store` (`store` over MCP), as ready to archive or lists its blockers: `no_tasks` when it has no tasks, `tasks_incomplete` when any task is unticked, `slices_unlanded` when its slice plan has slices that have not landed on their base branch, and `evidence_missing` when a party slice's state is `unknown`.
+The `specs` addon SHALL provide a read-only `specs archivable` operation, `archivable_changes` over MCP, that reports each active change of the workspace repository, or of the store selected with `--store` (`store` over MCP), as ready to archive or lists its blockers: `no_tasks` (no tasks), `tasks_incomplete` (a task is unticked), `slices_unlanded` (a planned slice has not landed on its base branch) and `evidence_missing` (a party slice is `unknown`).
 
 #### Scenario: Finished change
 - **WHEN** a change has every task ticked and no slice plan
