@@ -31,7 +31,10 @@ is not independent review.
 
 For plans, examine whether the proposal solves the actual problem, what simpler
 alternatives exist, and which assumptions need evidence. For outputs, inspect
-correctness, missing requirements, and observable behavior. Ask for specific
+correctness, missing requirements, and observable behavior. When the deliverable
+runs (a server, an auth flow, a CLI), ask the reviewer to start it and probe it
+with real and hostile inputs, and to say which findings came from probing; passing
+tests are not evidence the reviewer may rely on. Ask for specific
 findings tied to evidence, their consequences, and a proportionate remedy.
 
 Review the findings yourself. Mark each material finding as accepted, deferred,

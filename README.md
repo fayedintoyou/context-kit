@@ -116,7 +116,7 @@ on `DELETE` or after `--session-idle` seconds (default 1800), and `--max-session
 To reach a workspace from ChatGPT or a Claude connector, put the HTTP server behind
 a Cloudflare Tunnel and the OAuth edge in `edge/cloudflare/`, a Cloudflare Worker
 that shows a consent page per client, signs you in with GitHub and admits only the
-GitHub user IDs you list. [Remote access](docs/remote.md) walks through it.
+GitHub user IDs you list. [Remote access](skills/context-kit/references/remote.md) (`help remote`) walks through it.
 
 ## Specs
 
