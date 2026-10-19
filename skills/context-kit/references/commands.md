@@ -109,7 +109,8 @@ plan-phase records and ones missing a field (malformed) are reported, not counte
 (a ruleset requires a merge queue), `HEAD_MISMATCH`, `CONFLICTING`,
 `EVIDENCE_INCOMPLETE` (any read failed, a response didn't match its endpoint's
 strict schema or listed the same item twice, a listing came up short of the pull
-request's own count or over GitHub's 3,000-file cap, or a newer same-named check run
+request's own count or over GitHub's 300-file compare cap (the changed files come from
+the compare of the base with the pinned head SHA), or a newer same-named check run
 can't be traced to its workflow), the checks, then `REVIEW_MISSING`. A failed post
 is `POST_FAILED`. Immediately before merging it runs every gate again on fresh reads
 of the pull request, the default branch, the checks and the review records: movement

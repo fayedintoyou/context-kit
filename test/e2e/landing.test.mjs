@@ -105,6 +105,9 @@ const record = (fields = {}) => {
   return ['<!-- context-kit:review -->', ...Object.entries(values).filter(([, value]) => value !== null).map(([key, value]) => `${key}: ${value}`)].join('\n');
 };
 
+// The changed files are read from the three-dot compare of the base with the pinned head.
+const FILES = `GET ${R}/compare/${OLD}...${A}?per_page=100`;
+const diff = files => ({ status: 'ahead', ahead_by: 1, behind_by: 0, total_commits: 1, merge_base_commit: { sha: OLD }, files });
 const TEST = { name: 'test', app: 'github-actions', workflow: '.github/workflows/checks.yml', event: 'pull_request' };
 const POLICY = { expectedChecks: [TEST], routine: { paths: ['docs/**', 'README.md'], excludePaths: ['openspec/**'] } };
 
@@ -114,13 +117,13 @@ function routes({ policy = POLICY, files = [file('docs/guide.md')], runs = [chec
   workflows = [workflowRun(50, 900, '.github/workflows/checks.yml')], pr = {}, comments = [], reviews = [] } = {}) {
   const head = pull({ changed_files: files.length, ...pr });
   return {
-    [`GET ${R}`]: [{ body: repository() }],
+    [`GET ${R}`]: [{ body: repository() }, { body: repository() }],
     [`GET ${R}/git/ref/heads/main`]: [{ body: ref('main', TIP) }, { body: ref('main', TIP) }],
     [`GET ${R}/contents/.context-kit/landing.json?ref=${TIP}`]: [policy === null ? notFound : { body: content(policy) }],
     [`GET ${R}/pulls/7`]: [{ body: head }, { body: head }],
     [`GET ${R}/rules/branches/main?per_page=100`]: [{ pages: [[]] }, { pages: [[]] }],
     ['POST graphql']: [{ body: { data: { repository: { mergeQueue: null } } } }, { body: { data: { repository: { mergeQueue: null } } } }],
-    [`GET ${R}/pulls/7/files?per_page=100`]: [{ pages: chunk(files, 100) }],
+    [FILES]: [{ body: diff(files) }],
     [`GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`]: [checkPages(runs), checkPages(runs)],
     [`GET ${R}/actions/runs?head_sha=${A}&per_page=100`]: [workflowPages(workflows), workflowPages(workflows)],
     [`GET ${R}/issues/7/comments?per_page=100`]: [{ pages: [comments] }, { pages: [comments] }],
@@ -210,7 +213,7 @@ test('a wrong head, a non-default base and a short file list refuse without merg
   short[`GET ${R}/pulls/7`] = [{ body: pull({ changed_files: 3 }) }];
   const result = await land(short, LAND);
   refused(result, 'EVIDENCE_INCOMPLETE');
-  assert.match(result.error.message, /reports 3 changed files but 2 were listed/);
+  assert.match(result.error.message, /reports 3 changed files but the compare of f{7}\.\.\.a{7} lists 2/);
 });
 
 test('a closed pull request, a conflicting one and a truncated listing refuse', async t => {
@@ -218,26 +221,27 @@ test('a closed pull request, a conflicting one and a truncated listing refuse', 
   refused(await land(routes({ pr: { state: 'closed', merged: true } }), LAND), 'NOT_OPEN');
   refused(await land(routes({ pr: { mergeable: false, mergeable_state: 'dirty' } }), LAND), 'CONFLICTING');
   const huge = routes();
-  huge[`GET ${R}/pulls/7`] = [{ body: pull({ changed_files: 3001 }) }];
+  huge[`GET ${R}/pulls/7`] = [{ body: pull({ changed_files: 301 }) }];
   const result = await land(huge, LAND);
   refused(result, 'EVIDENCE_INCOMPLETE');
-  assert.match(result.error.message, /at most 3000/);
+  assert.match(result.error.message, /compare lists at most 300/);
 });
 
 test('evidence is collected across pages, and a connection lost mid-listing refuses', async t => {
   const { land } = await machine(t);
   const files = Array.from({ length: 150 }, (_, i) => file(`docs/page-${i}.md`));
   const paged = routes({ files });
-  assert.equal(paged[`GET ${R}/pulls/7/files?per_page=100`][0].pages.length, 2);
   const runs = [...Array.from({ length: 120 }, (_, i) => checkRun(1000 + i, `lint ${i}`, 901)), checkRun(101, 'test', 900)];
   paged[`GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`] = [checkPages(runs), checkPages(runs)];
   const json = landed(await land(paged, LAND));
   assert.equal(json.checks[0].state, 'passed');
 
   const dropped = routes();
-  dropped[`GET ${R}/pulls/7/files?per_page=100`] = [{ pages: [[file('docs/a.md')], { drop: true }] }];
-  dropped[`GET ${R}/pulls/7`] = [{ body: pull({ changed_files: 2 }) }];
+  dropped[`GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`] = [{ pages: [{ total_count: 101, check_runs: runs.slice(0, 100) }, { drop: true }] }];
   refused(await land(dropped, LAND), 'EVIDENCE_INCOMPLETE');
+  const lostDiff = routes();
+  lostDiff[FILES] = [{ drop: true }];
+  refused(await land(lostDiff, LAND), 'EVIDENCE_INCOMPLETE');
 
   const failing = routes();
   failing[`GET ${R}/issues/7/comments?per_page=100`] = [{ status: 502, message: 'Bad Gateway' }];
@@ -727,7 +731,8 @@ test('every GitHub response is parsed strictly: a corrupted field refuses with n
       'merge_commit_sha', 'changed_files', 'labels', 'labels.0.name', 'base', 'base.ref', 'base.sha', 'head', 'head.ref', 'head.sha', 'head.repo', 'head.repo.full_name']],
     [withRule, `GET ${R}/rules/branches/main?per_page=100`, ['pages', 0, 0], ['type']],
     [routes(), 'POST graphql', ['body'], ['data', 'data.repository', 'data.repository.mergeQueue']],
-    [routes({ files: [file('docs/new.md', 'renamed', 'docs/old.md')] }), `GET ${R}/pulls/7/files?per_page=100`, ['pages', 0, 0], ['filename', 'status', 'previous_filename']],
+    [routes(), FILES, ['body'], ['status', 'merge_base_commit', 'merge_base_commit.sha', 'files']],
+    [routes({ files: [file('docs/new.md', 'renamed', 'docs/old.md')] }), FILES, ['body', 'files', 0], ['filename', 'status', 'previous_filename']],
     [routes(), `GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`, ['pages', 0], ['total_count', 'check_runs']],
     [routes(), `GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`, ['pages', 0, 'check_runs', 0],
       ['id', 'name', 'status', 'conclusion', 'app', 'app.slug', 'check_suite', 'check_suite.id']],
@@ -773,6 +778,9 @@ test('every GitHub response is parsed strictly: a corrupted field refuses with n
   cases.push({ label: 'one status id twice', fixtures: twoStatuses });
   cases.push({ label: 'one comment id twice', fixtures: routes({ files: [file('lib/x.mjs')], comments: [comment(1, record()), comment(1, record({ Outcome: 'changes-requested' }))] }) });
   cases.push({ label: 'one review id twice', fixtures: routes({ files: [file('lib/x.mjs')], reviews: [review, { ...review, body: record({ Outcome: 'changes-requested' }) }] }) });
+  // One workflow run id under two suites with different workflows would hide the newer failure.
+  cases.push({ label: 'one workflow run id under two check suites', fixtures: routes({ runs: [checkRun(101, 'test', 900), checkRun(140, 'test', 901, 'failure')],
+    workflows: [workflowRun(50, 900, '.github/workflows/checks.yml'), workflowRun(50, 901, '.github/workflows/deploy.yml')] }) });
   // A later claim for the failing run's suite would otherwise relabel it and hide the failure.
   cases.push({ label: 'two workflow runs claiming one check suite', fixtures: routes({ runs: [checkRun(101, 'test', 900), checkRun(140, 'test', 901, 'failure')],
     workflows: [workflowRun(50, 900, '.github/workflows/checks.yml'), workflowRun(60, 901, '.github/workflows/checks.yml'), workflowRun(61, 901, '.github/workflows/deploy.yml')] }) });
@@ -867,6 +875,34 @@ test('an unknown mergeability is re-read twice, then refuses', async t => {
   result = await land(resolved, LAND);
   landed(result);
   assert.equal(result.keys.filter(key => key === `GET ${R}/pulls/7`).length, 4);
+});
+
+// spec: pull-request-landing / Movement before the merge
+test('the refresh re-reads the default branch and the merge settings', async t => {
+  const { land } = await machine(t);
+  const renamed = routes();
+  renamed[`GET ${R}`] = [{ body: repository() }, { body: repository({ default_branch: 'trunk' }) }];
+  let result = await land(renamed, LAND);
+  refused(result, 'BASE_MOVED');
+  assert.match(result.error.message, /default branch changed from main to trunk/);
+  const settings = routes();
+  settings[`GET ${R}`] = [{ body: repository() }, { body: repository({ allow_squash_merge: false, allow_merge_commit: true }) }];
+  result = await land(settings, LAND);
+  refused(result, 'INVALID_INPUT');
+  assert.match(result.error.message, /no longer allows squash merges \(now merge\)/);
+});
+
+// spec: pull-request-landing / Wrong head, base or file list
+test('the changed files come from the compare pinned to the head SHA, never the mutable listing', async t => {
+  const { land } = await machine(t);
+  const result = await land(routes({ files: [file('docs/a.md')] }), LAND);
+  landed(result);
+  assert.ok(result.keys.includes(FILES), 'the compare of base...head is read');
+  assert.ok(!result.keys.some(key => key.includes('/pulls/7/files')), 'the pull request\'s file listing is not');
+  // A compare listing other files than the pull request's count refuses.
+  const more = routes({ files: [file('docs/a.md')] });
+  more[FILES] = [{ body: diff([file('docs/a.md'), file('lib/x.mjs')]) }];
+  refused(await land(more, LAND), 'EVIDENCE_INCOMPLETE');
 });
 
 test('pr land is never offered over MCP, even with writes on', async t => {
