@@ -10,4 +10,4 @@
 ## 2. Tests and review
 
 - [x] 2.1 E2E tests with a strict fake `gh`, and the guard's tests, for every scenario in design.md; `npm test` passes
-- [ ] 2.2 Independent output review of the implementation before merge
+- [x] 2.2 Independent output review of the implementation before merge
