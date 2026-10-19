@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile, lstat } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,6 +58,23 @@ test('the tripwire denies raw merges in any segment, flag order or ordinary quot
     'time command gh pr merge 5',
     '/opt/homebrew/bin/gh pr merge 5',
     'g\\h pr merge 5',
+    // Wrapper options are read past.
+    'env -i gh pr merge 5',
+    'env - gh pr merge 5',
+    'env -u GH_REPO gh pr merge 5',
+    'env --unset=GH_REPO gh pr merge 5',
+    'env -C /tmp gh pr merge 5',
+    'env --chdir=/tmp gh pr merge 5',
+    'env -i -u GH_REPO A=1 B=2 gh api -X PUT repos/o/r/pulls/5/merge',
+    'time -p gh pr merge 5',
+    'time -a -o /tmp/t gh pr merge 5',
+    'time -v gh pr merge 5',
+    'time -o /tmp/t gh pr merge 5',
+    'time -f "%e" gh pr merge 5',
+    'time --output=/tmp/t gh pr merge 5',
+    'time --format=%e gh pr merge 5',
+    'command -p gh pr merge 5',
+    'env -u GH_REPO time -p command -p gh pr merge 5',
   ];
   for (const command of denied) {
     const result = await hook(payload(command));
@@ -79,6 +96,9 @@ test('other commands produce no decision, and an unreadable payload fails open',
     'git merge main',
     'gh pr list --search merge',
     'gh api -X PUT repos/o/r/pulls/5/requested_reviewers',
+    'command -v gh',
+    // Out of the contract, as documented: env -S strings.
+    'env -S "gh pr merge 5"',
   ];
   for (const command of allowed) {
     const result = await hook(payload(command));
@@ -109,7 +129,8 @@ async function machine(t) {
   };
   return { base, env, run, workspace, user: join(env.CLAUDE_CONFIG_DIR, 'settings.json') };
 }
-const entryFor = core => ({ matcher: 'Bash', hooks: [{ type: 'command', command: `node "${join(core, 'bin/merge-guard.mjs')}"` }] });
+const quote = value => `'${value.replaceAll("'", `'\\''`)}'`;
+const entryFor = core => ({ matcher: 'Bash', hooks: [{ type: 'command', command: `${quote(process.execPath)} ${quote(join(core, 'bin/merge-guard.mjs'))}` }] });
 const guards = results => results.filter(item => item.kind === 'guard').map(item => [item.agent, item.action]);
 const json = async path => JSON.parse(await readFile(path, 'utf8'));
 
@@ -233,4 +254,79 @@ test('Codex is reported unsupported for the tripwire', async t => {
   assert.equal(result.action, 'unsupported');
   assert.match(result.reason, /Codex has no pre-command hook/);
   assert.deepEqual((await one.agents('status')).json.items.filter(item => item.kind === 'guard'), []);
+});
+
+test('the installed hook command runs with a PATH that has no node', async t => {
+  const { workspace, user } = await machine(t);
+  const one = await workspace('one');
+  await one.agents('install', '--agent', 'claude');
+  const [command] = (await json(user)).hooks.PreToolUse[0].hooks.map(item => item.command);
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn('/bin/sh', ['-c', command], { env: { PATH: '/nonexistent' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const out = []; const err = [];
+    child.stdout.on('data', chunk => out.push(chunk));
+    child.stderr.on('data', chunk => err.push(chunk));
+    child.on('error', reject);
+    child.on('close', code => resolve({ code, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString() }));
+    child.stdin.end(payload('gh pr merge 5'));
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), DENY);
+});
+
+test('settings keep their mode through install and uninstall, a new file is 0600, and a failed write leaves the file intact', async t => {
+  const { base, workspace, user } = await machine(t);
+  const one = await workspace('one');
+  await mkdir(join(user, '..'), { recursive: true });
+  await writeFile(user, '{\n  "model": "opus"\n}\n', { mode: 0o600 });
+  await chmod(user, 0o600);
+  await one.agents('install', '--agent', 'claude');
+  assert.equal((await stat(user)).mode & 0o777, 0o600);
+  await one.agents('uninstall', '--agent', 'claude');
+  assert.equal((await stat(user)).mode & 0o777, 0o600);
+  await chmod(user, 0o640);
+  await one.agents('install', '--agent', 'claude');
+  assert.equal((await stat(user)).mode & 0o777, 0o640);
+  const project = join(base, 'project');
+  await mkdir(project);
+  await one.agents('install', '--agent', 'claude', '--scope', 'project', '--project', project);
+  assert.equal((await stat(join(project, '.claude/settings.local.json'))).mode & 0o777, 0o600);
+  // A directory that can't take the temporary file: the install fails for the guard alone.
+  const locked = join(base, 'locked');
+  await mkdir(join(locked, '.claude/skills'), { recursive: true });
+  const before = '{\n  "model": "opus"\n}\n';
+  await writeFile(join(locked, '.claude/settings.local.json'), before);
+  await chmod(join(locked, '.claude'), 0o555);
+  let failed;
+  try { failed = (await one.agents('install', '--agent', 'claude', '--scope', 'project', '--project', locked)).json.results.find(item => item.kind === 'guard'); }
+  finally { await chmod(join(locked, '.claude'), 0o755); }
+  assert.equal(failed.action, 'failed');
+  assert.match(failed.reason, /could not write/);
+  assert.equal(await readFile(join(locked, '.claude/settings.local.json'), 'utf8'), before);
+});
+
+test('uninstall restores hook containers that existed before, even empty ones', async t => {
+  const { workspace, user } = await machine(t);
+  const one = await workspace('one');
+  await mkdir(join(user, '..'), { recursive: true });
+  for (const original of [{ hooks: {} }, { hooks: { PreToolUse: [] } }, { model: 'opus', hooks: { PreToolUse: [] } }]) {
+    const text = JSON.stringify(original, null, 2) + '\n';
+    await writeFile(user, text);
+    assert.deepEqual(guards((await one.agents('install', '--agent', 'claude')).json.results), [['claude', 'installed']]);
+    assert.deepEqual((await json(user)).hooks.PreToolUse, [entryFor(kit)]);
+    assert.deepEqual(guards((await one.agents('uninstall', '--agent', 'claude')).json.results), [['claude', 'removed']]);
+    assert.equal(await readFile(user, 'utf8'), text, JSON.stringify(original));
+  }
+});
+
+test('workspaces run from the same core share one guard entry', async t => {
+  const { workspace, user } = await machine(t);
+  const one = await workspace('one');
+  const two = await workspace('two');
+  assert.deepEqual(guards((await one.agents('install', '--agent', 'claude')).json.results), [['claude', 'installed']]);
+  assert.deepEqual(guards((await two.agents('install', '--agent', 'claude')).json.results), [['claude', 'unchanged']]);
+  assert.deepEqual((await json(user)).hooks.PreToolUse, [entryFor(kit)]);
+  assert.deepEqual(guards((await one.agents('uninstall', '--agent', 'claude')).json.results), [['claude', 'removed']]);
+  assert.equal(await exists(user), false, 'the shared entry is gone with the file the install created');
+  assert.deepEqual((await two.agents('status')).json.items.filter(item => item.kind === 'guard').map(item => item.state), ['missing']);
 });

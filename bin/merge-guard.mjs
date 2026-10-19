@@ -3,7 +3,10 @@
 // directly (`gh pr merge`, or a `gh api` PUT to a pull request's merge endpoint) and points to
 // `context-kit pr land`. It is a tripwire for agents acting in good faith, not a shell: it
 // follows a bounded token and segment contract, and `sh -c` or `eval` strings, aliases,
-// scripts and other clients such as curl are out of its reach. It fails open.
+// scripts and other clients such as curl are out of its reach. Leading NAME=value
+// assignments and the wrappers env (-i, -, -0, -v, -u NAME, --unset=NAME, -C DIR,
+// --chdir=DIR, NAME=value), time (-p, -a, -l, -v, -o FILE, -f FMT, --output=, --format=)
+// and command (-p) are read past; `env -S` strings are out of scope. It fails open.
 const MAX_COMMAND = 256 * 1024;
 const MAX_DEPTH = 32;
 export const DENY_REASON = 'Raw pull request merges are blocked by the Context Kit merge tripwire. ' +
@@ -61,7 +64,28 @@ export function segmentsOf(command) {
 }
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-const WRAPPERS = new Set(['env', 'command', 'time']);
+// Per wrapper: options that stand alone, options that take the next word, and --long= forms.
+const WRAPPERS = {
+  env: { alone: ['-i', '-', '-0', '-v', '--ignore-environment', '--null', '--debug'], valued: ['-u', '--unset', '-C', '--chdir'],
+    joined: /^(?:--unset=|--chdir=|-u.|-C.)/, assignments: true },
+  time: { alone: ['-p', '-a', '-l', '-v', '--portability', '--append', '--verbose'], valued: ['-o', '-f', '--output', '--format'], joined: /^(?:--output=|--format=|-o.|-f.)/ },
+  command: { alone: ['-p'], valued: [], joined: null },
+};
+// The words after a wrapper's own options, or null when an option is outside the contract.
+function pastWrapper(wrapper, words) {
+  const rules = WRAPPERS[wrapper];
+  let i = 0;
+  while (i < words.length) {
+    const word = words[i];
+    if (word === '--') { i++; break; }
+    if (rules.alone.includes(word)) i++;
+    else if (rules.valued.includes(word)) i += 2;
+    else if (rules.joined?.test(word)) i++;
+    else if (rules.assignments && ASSIGNMENT.test(word)) i++;
+    else break;
+  }
+  return words.slice(i);
+}
 const MERGE_ENDPOINT = /^\/?repos\/[^/\s]+\/[^/\s]+\/pulls\/[^/\s]+\/merge\/?(?:\?.*)?$/;
 // gh flags that take a value, so the value is not read as a subcommand.
 const VALUED = new Set(['-R', '--repo', '-X', '--method', '-H', '--header', '-f', '--raw-field', '-F', '--field', '--input',
@@ -71,7 +95,7 @@ export function isRawMerge(words) {
   let rest = [...words];
   for (;;) {
     if (rest.length && ASSIGNMENT.test(rest[0])) { rest.shift(); continue; }
-    if (rest.length && WRAPPERS.has(rest[0])) { rest.shift(); while (rest.length && rest[0].startsWith('-')) rest.shift(); continue; }
+    if (rest.length && Object.hasOwn(WRAPPERS, rest[0])) { rest = pastWrapper(rest[0], rest.slice(1)); continue; }
     break;
   }
   const [program, ...args] = rest;

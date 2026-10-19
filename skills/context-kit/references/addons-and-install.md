@@ -52,7 +52,9 @@ npm run agents -- uninstall [--agent claude,codex]
   `~/.claude/settings.json`); project scope writes `<project>/.claude/settings.local.json`.
   Other keys and hooks are kept; malformed settings are refused untouched
   (`SETTINGS_MALFORMED`); an entry you edited is kept and reported `edited` unless
-  `--force`. Codex has no such hook and is reported `unsupported`.
+  `--force`. Codex has no such hook and is reported `unsupported`. The entry belongs
+  to the core it runs, so workspaces run from the same core share one entry, and
+  uninstalling either of them removes it (the other then reports it `missing`).
 - `status` reports each item `installed`, `changed`, `stale` (source changed;
   reinstall) or `missing`, and `broken` if the Node path moved; the tripwire is
   `installed`, `edited` or `missing`.

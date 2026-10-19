@@ -141,7 +141,8 @@ The newest record for the head decides.
 momentum. `pr land` makes the gated path the easy one, and `agents install` adds a
 Claude Code `PreToolUse` hook that denies raw `gh pr merge` and `gh api … PUT
 …/pulls/<n>/merge` commands. That tripwire follows a bounded contract: it reads
-segments and ordinary quoting, not `sh -c` or `eval` strings, aliases or scripts.
+segments and ordinary quoting, and reads past `env`, `time` and `command` with their
+usual options, but not `sh -c`, `eval` or `env -S` strings, aliases or scripts.
 None of this stops an agent determined to bypass it, because the merge credentials
 stay with the agent. The residual bypasses are:
 
@@ -150,8 +151,11 @@ stay with the agent. The residual bypasses are:
 - a skip reason the agent writes itself (it is posted publicly on the pull request);
 - a review record the agent posts itself: `gh` comments carry the merging user's
   identity, so authorship can't prove independence, and a record is audit evidence;
-- the short window between the final re-read of checks and base and the merge (the
-  head itself is pinned by GitHub).
+- the short window between the final re-read of checks, base, labels and review
+  records and the merge (the head itself is pinned by GitHub);
+- a sub-second window in cleanup: the head branch is re-read immediately before it
+  is deleted, but GitHub's REST API has no conditional ref delete, so a push landing
+  between that read and the delete would be deleted with the branch.
 
 Closing them needs server-side enforcement: rulesets plus a required review check
 from a producer the merging agent can't impersonate. That is out of scope here.

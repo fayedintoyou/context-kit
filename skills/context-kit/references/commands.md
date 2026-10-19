@@ -119,8 +119,9 @@ allows (squash, rebase, merge). GitHub rejecting it, such as a head that moved a
 the refresh, is `MERGE_REJECTED`. A lost response is re-read: merged at the
 requested head counts; anything else is `MERGE_UNKNOWN`, with what was seen. Both
 say a merge call was made, and it is never retried. Afterwards it confirms the
-default branch contains the merge, deletes the head branch only when it is this
-repository's, unmoved and no other open pull request's head, and reports the pull
+default branch contains the merge, deletes the head branch only when that is
+confirmed and the branch is this repository's, unmoved (re-read just before the
+delete) and no other open pull request's head, and reports the pull
 requests that were based on it with their old and new base, to revalidate. The
 status is `merged`, or `merged_cleanup_incomplete` with the reason.
 
@@ -131,8 +132,8 @@ stop an agent that disables the hook or merges another way (`curl`, a script, `s
 -c`), runtimes without pre-command hooks (Codex), a skip reason the agent writes
 itself, or a review record the agent posts itself: comments carry the merging
 user's identity, so a record is audit evidence, not proof of independence. Check
-and base observations keep a small window before the merge that only server-side
-enforcement could close.
+and base observations keep a small window before the merge, and the branch delete a
+sub-second one after its final re-read, that only server-side enforcement could close.
 
 MCP server (stdio): `context-kit-mcp --root <workspace> [--allow-write] [--no-skill-prompts]`
 (`npm run mcp` in a workspace). Its root is fixed at startup; tools cannot change it.

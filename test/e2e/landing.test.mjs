@@ -26,8 +26,10 @@ const log = entry => fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.strin
 const args = process.argv.slice(2);
 if (args[0] !== 'api') { log({ unexpected: true, args }); process.stderr.write('fake gh: only api is served\\n'); process.exit(97); }
 let method = 'GET', endpoint, paginate = false, slurp = false, input = false;
+const fields = {};
 for (let i = 1; i < args.length; i++) {
   if (args[i] === '--method' || args[i] === '-X') method = args[++i];
+  else if (args[i] === '-f') { const [name, ...value] = args[++i].split('='); fields[name] = value.join('='); }
   else if (args[i] === '--paginate') paginate = true;
   else if (args[i] === '--slurp') slurp = true;
   else if (args[i] === '--input') input = args[++i] === '-';
@@ -48,7 +50,7 @@ if (!sequence || index >= sequence.length) {
 }
 state[key] = index + 1;
 fs.writeFileSync(stateFile, JSON.stringify(state));
-log({ key, method, endpoint, paginate, ...(body === undefined ? {} : { body }), served: index });
+log({ key, method, endpoint, paginate, ...(body === undefined ? {} : { body }), ...(Object.keys(fields).length ? { fields } : {}), served: index });
 const response = sequence[index];
 const lost = () => { process.stderr.write('Put "https://api.github.com/' + endpoint + '": read tcp: connection reset by peer\\n'); process.exit(1); };
 if (response.drop) lost();
@@ -117,15 +119,16 @@ function routes({ policy = POLICY, files = [file('docs/guide.md')], runs = [chec
     [`GET ${R}/contents/.context-kit/landing.json?ref=${TIP}`]: [policy === null ? notFound : { body: content(policy) }],
     [`GET ${R}/pulls/7`]: [{ body: head }, { body: head }],
     [`GET ${R}/rules/branches/main?per_page=100`]: [{ pages: [[]] }],
+    ['POST graphql']: [{ body: { data: { repository: { mergeQueue: null } } } }],
     [`GET ${R}/pulls/7/files?per_page=100`]: [{ pages: chunk(files, 100) }],
     [`GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`]: [checkPages(runs), checkPages(runs)],
     [`GET ${R}/actions/runs?head_sha=${A}&per_page=100`]: [workflowPages(workflows), workflowPages(workflows)],
-    [`GET ${R}/issues/7/comments?per_page=100`]: [{ pages: [comments] }],
-    [`GET ${R}/pulls/7/reviews?per_page=100`]: [{ pages: [reviews] }],
+    [`GET ${R}/issues/7/comments?per_page=100`]: [{ pages: [comments] }, { pages: [comments] }],
+    [`GET ${R}/pulls/7/reviews?per_page=100`]: [{ pages: [reviews] }, { pages: [reviews] }],
     [`GET ${R}/pulls?state=open&base=feature&per_page=100`]: [{ pages: [[]] }],
     [`PUT ${R}/pulls/7/merge`]: [{ body: { sha: M, merged: true, message: 'Pull Request successfully merged' } }],
-    [`GET ${R}/compare/${M}...main`]: [{ body: { status: 'ahead', ahead_by: 1, behind_by: 0 } }],
-    [`GET ${R}/git/ref/heads/feature`]: [{ body: ref('feature', A) }],
+    [`GET ${R}/compare/main...${M}`]: [{ body: { status: 'identical', ahead_by: 0, behind_by: 0 } }],
+    [`GET ${R}/git/ref/heads/feature`]: [{ body: ref('feature', A) }, { body: ref('feature', A) }],
     [`GET ${R}/pulls?state=open&head=acme%3Afeature&per_page=100`]: [{ pages: [[]] }],
     [`DELETE ${R}/git/refs/heads/feature`]: [{ body: null }],
   };
@@ -190,8 +193,12 @@ test('a routine pull request lands pinned to its SHA, confirmed and cleaned up',
   // The refresh re-reads the head, base and checks before the merge; the confirmation follows it.
   const order = result.keys;
   assert.ok(order.lastIndexOf(`GET ${R}/pulls/7`) < order.indexOf(`PUT ${R}/pulls/7/merge`));
-  assert.ok(order.indexOf(`GET ${R}/compare/${M}...main`) > order.indexOf(`PUT ${R}/pulls/7/merge`));
-  assert.ok(result.calls.every(call => call.endpoint.startsWith(`${R}`)), 'every call names the repository');
+  assert.ok(order.indexOf(`GET ${R}/compare/main...${M}`) > order.indexOf(`PUT ${R}/pulls/7/merge`));
+  // The head ref is read again after the sharing query, immediately before the delete.
+  assert.deepEqual(order.slice(-3), [`GET ${R}/pulls?state=open&head=acme%3Afeature&per_page=100`, `GET ${R}/git/ref/heads/feature`, `DELETE ${R}/git/refs/heads/feature`]);
+  assert.ok(result.calls.every(call => call.endpoint.startsWith(`${R}`) || call.endpoint === 'graphql'), 'every call names the repository');
+  assert.deepEqual(result.calls.find(call => call.endpoint === 'graphql').fields,
+    { query: 'query($o:String!,$r:String!,$b:String!){repository(owner:$o,name:$r){mergeQueue(branch:$b){id}}}', o: 'acme', r: 'widgets', b: 'main' });
 });
 
 // spec: pull-request-landing / Wrong head, base or file list
@@ -466,7 +473,7 @@ test('with no checks expected, landing needs a posted --no-checks reason', async
   posting[`POST ${R}/issues/7/comments`] = [{ body: { id: 77, html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-77' } }];
   const result = await land(posting, [...LAND, '--no-checks', 'validated by hand, see https://example.com/log']);
   const json = landed(result);
-  const posted = result.calls.find(call => call.method === 'POST');
+  const posted = result.calls.find(call => call.key === `POST ${R}/issues/7/comments`);
   assert.equal(posted.body.body, `<!-- context-kit:no-checks --> No checks expected for ${A}: validated by hand, see https://example.com/log`);
   assert.ok(result.keys.indexOf(posted.key) < result.keys.indexOf(`PUT ${R}/pulls/7/merge`));
   assert.deepEqual(json.checks, { none: true, reason: 'validated by hand, see https://example.com/log', url: 'https://github.com/acme/widgets/pull/7#issuecomment-77' });
@@ -544,7 +551,7 @@ test('--skip-review posts the skip before the merge and reports it', async t => 
   skipping[`POST ${R}/issues/7/comments`] = [{ body: { id: 88, html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-88' } }];
   const result = await land(skipping, [...LAND, '--skip-review', 'one-line typo fix in an error message']);
   const json = landed(result);
-  const posted = result.calls.find(call => call.method === 'POST');
+  const posted = result.calls.find(call => call.key === `POST ${R}/issues/7/comments`);
   assert.equal(posted.body.body, `<!-- context-kit:review-skipped --> Review skipped for ${A}: one-line typo fix in an error message`);
   assert.ok(result.keys.indexOf(posted.key) < result.keys.indexOf(`PUT ${R}/pulls/7/merge`));
   assert.deepEqual([json.review.status, json.review.reason, json.review.url], ['skipped', 'one-line typo fix in an error message', 'https://github.com/acme/widgets/pull/7#issuecomment-88']);
@@ -559,21 +566,52 @@ test('a shared, forked or moved head branch is kept and the cleanup is incomplet
   const { land } = await machine(t);
   const shared = routes();
   shared[`GET ${R}/pulls?state=open&head=acme%3Afeature&per_page=100`] = [{ pages: [[{ number: 9, head: { ref: 'feature' } }]] }];
-  let json = landed(await land(shared, LAND));
+  const noDelete = result => { assert.ok(!result.keys.some(key => key.startsWith('DELETE')), 'no DELETE call'); return landed(result); };
+  let json = noDelete(await land(shared, LAND));
   assert.equal(json.status, 'merged_cleanup_incomplete');
   assert.match(json.branch.kept, /#9/);
 
   const fork = routes({ pr: { head: { ref: 'feature', sha: A, repo: { full_name: 'someone/widgets' } } } });
   delete fork[`GET ${R}/pulls?state=open&base=feature&per_page=100`];
-  json = landed(await land(fork, LAND));
+  json = noDelete(await land(fork, LAND));
   assert.equal(json.status, 'merged_cleanup_incomplete');
   assert.match(json.branch.kept, /someone\/widgets/);
 
   const moved = routes();
   moved[`GET ${R}/git/ref/heads/feature`] = [{ body: ref('feature', B) }];
-  json = landed(await land(moved, LAND));
+  json = noDelete(await land(moved, LAND));
   assert.equal(json.status, 'merged_cleanup_incomplete');
   assert.match(json.branch.kept, /moved/);
+
+  // A push between the first read and the delete: the re-read just before it keeps the branch.
+  const late = routes();
+  late[`GET ${R}/git/ref/heads/feature`] = [{ body: ref('feature', A) }, { body: ref('feature', B) }];
+  json = noDelete(await land(late, LAND));
+  assert.equal(json.status, 'merged_cleanup_incomplete');
+  assert.match(json.branch.kept, new RegExp(`moved to ${B}`));
+
+  // A default branch that isn't shown to contain the merge keeps the branch.
+  for (const status of ['diverged', 'ahead']) {
+    const unconfirmed = routes();
+    unconfirmed[`GET ${R}/compare/main...${M}`] = [{ body: { status } }];
+    json = noDelete(await land(unconfirmed, LAND));
+    assert.equal(json.status, 'merged_cleanup_incomplete');
+    assert.match(json.branch.kept, /isn't confirmed to contain the merge/);
+    assert.match(json.warnings[0], new RegExp(status));
+  }
+
+  // A refused delete is "already deleted" only when the ref is confirmed gone.
+  const refusedDelete = routes();
+  refusedDelete[`DELETE ${R}/git/refs/heads/feature`] = [{ status: 422, message: 'Reference update failed' }];
+  refusedDelete[`GET ${R}/git/ref/heads/feature`] = [{ body: ref('feature', A) }, { body: ref('feature', A) }, { body: ref('feature', A) }];
+  json = landed(await land(refusedDelete, LAND));
+  assert.equal(json.status, 'merged_cleanup_incomplete');
+  assert.match(json.branch.kept, /delete failed/);
+  assert.equal(json.branch.alreadyDeleted, undefined);
+  refusedDelete[`GET ${R}/git/ref/heads/feature`] = [{ body: ref('feature', A) }, { body: ref('feature', A) }, notFound];
+  json = landed(await land(refusedDelete, LAND));
+  assert.equal(json.status, 'merged');
+  assert.deepEqual(json.branch, { ref: 'feature', deleted: false, alreadyDeleted: true });
 
   // Already deleted (repository auto-deletion) is noted, and the landing is complete.
   const gone = routes();
@@ -617,6 +655,99 @@ test('a lost merge response counts only if merged at the requested head, and is 
   assert.equal(elsewhere.error.code, 'MERGE_UNKNOWN');
   assert.equal(elsewhere.error.details.seen.head, B);
   for (const result of [notMerged, elsewhere]) assert.equal(result.calls.filter(call => call.method === 'PUT').length, 1);
+});
+
+test('malformed evidence refuses instead of being classified or matched', async t => {
+  const { land } = await machine(t);
+  // A docs path beside an entry with no filename would otherwise look routine.
+  let result = await land(routes({ files: [file('docs/a.md'), { status: 'modified' }] }), LAND);
+  refused(result, 'EVIDENCE_INCOMPLETE');
+  assert.match(result.error.message, /missing its filename/);
+  // A rename that doesn't say what it was renamed from hides the old path.
+  result = await land(routes({ files: [file('docs/new.md', 'renamed')] }), LAND);
+  refused(result, 'EVIDENCE_INCOMPLETE');
+  assert.match(result.error.message, /previous filename/);
+  // A newer failed check run with no app would otherwise sit unseen behind an older success.
+  const { app, ...appless } = checkRun(140, 'test', 900, 'failure');
+  result = await land(routes({ runs: [checkRun(101, 'test', 900), appless] }), LAND);
+  refused(result, 'EVIDENCE_INCOMPLETE');
+  assert.match(result.error.message, /missing its id, name, app, status or check suite/);
+  for (const field of ['id', 'status', 'check_suite']) {
+    const { [field]: dropped, ...partial } = checkRun(140, 'test', 900, 'failure');
+    refused(await land(routes({ runs: [checkRun(101, 'test', 900), partial] }), LAND), 'EVIDENCE_INCOMPLETE');
+  }
+  // A newer failed Actions check whose workflow run lacks its path or event.
+  for (const field of ['path', 'event']) {
+    const { [field]: dropped, ...partial } = workflowRun(60, 910, '.github/workflows/checks.yml');
+    result = await land(routes({ runs: [checkRun(101, 'test', 900), checkRun(140, 'test', 910, 'failure')],
+      workflows: [workflowRun(50, 900, '.github/workflows/checks.yml'), partial] }), LAND);
+    refused(result, 'EVIDENCE_INCOMPLETE');
+    assert.match(result.error.message, /missing its path or event/);
+  }
+});
+
+// spec: pull-request-landing / A required merge queue
+test('a merge queue from classic branch protection refuses, and an unreadable answer fails closed', async t => {
+  const { land } = await machine(t);
+  const classic = routes();
+  classic['POST graphql'] = [{ body: { data: { repository: { mergeQueue: { id: 'MQ_kwDOAbCd' } } } } }];
+  const result = await land(classic, LAND);
+  refused(result, 'MERGE_QUEUE_UNSUPPORTED');
+  assert.match(result.error.message, /has a merge queue/);
+  const unavailable = routes();
+  unavailable['POST graphql'] = [{ status: 200, message: 'Merge queue is not available for this repository',
+    body: { data: { repository: { mergeQueue: null } }, errors: [{ type: 'FORBIDDEN', message: 'Merge queue is not available for this repository' }] } }];
+  landed(await land(unavailable, LAND));
+  const failing = routes();
+  failing['POST graphql'] = [{ status: 502, message: 'Bad Gateway' }];
+  refused(await land(failing, LAND), 'EVIDENCE_INCOMPLETE');
+  const odd = routes();
+  odd['POST graphql'] = [{ body: { data: {} } }];
+  refused(await land(odd, LAND), 'EVIDENCE_INCOMPLETE');
+});
+
+// spec: pull-request-landing / A later record supersedes an approval
+test('the refresh re-reads review records and labels, and refuses on what arrived', async t => {
+  const { land } = await machine(t);
+  // A changes-requested record posted while --wait was polling.
+  const key = `GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`;
+  const workflows = `GET ${R}/actions/runs?head_sha=${A}&per_page=100`;
+  const waiting = routes({ files: [file('lib/x.mjs')], comments: [comment(1, record())] });
+  waiting[key] = [checkPages([checkRun(101, 'test', 900, null)]), checkPages([checkRun(101, 'test', 900)]), checkPages([checkRun(101, 'test', 900)])];
+  waiting[workflows] = [...waiting[workflows], waiting[workflows][0]];
+  waiting[`GET ${R}/issues/7/comments?per_page=100`] = [{ pages: [[comment(1, record())]] },
+    { pages: [[comment(1, record()), comment(2, record({ Outcome: 'changes-requested', Reviewer: 'second look' }))]] }];
+  let result = await land(waiting, [...LAND, '--wait', '--timeout', '0.02']);
+  refused(result, 'REVIEW_MISSING');
+  assert.match(result.error.message, /requests changes/);
+  // A substantial label added to a routine change before the refresh.
+  const labelled = routes();
+  labelled[`GET ${R}/pulls/7`] = [{ body: pull() }, { body: pull({ labels: [{ name: 'substantial' }] }) }];
+  result = await land(labelled, LAND);
+  refused(result, 'REVIEW_MISSING');
+  assert.match(result.error.message, /label substantial/);
+  // With --skip-review given, a change that became substantial posts its skip before the merge.
+  labelled[`POST ${R}/issues/7/comments`] = [{ body: { id: 89, html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-89' } }];
+  result = await land(labelled, [...LAND, '--skip-review', 'label added late; reviewed by hand']);
+  const json = landed(result);
+  assert.deepEqual([json.review.status, json.review.url], ['skipped', 'https://github.com/acme/widgets/pull/7#issuecomment-89']);
+  assert.ok(result.keys.indexOf(`POST ${R}/issues/7/comments`) < result.keys.indexOf(`PUT ${R}/pulls/7/merge`));
+});
+
+test('an unknown mergeability is re-read twice, then refuses', async t => {
+  const { land } = await machine(t);
+  const unknown = { mergeable: null, mergeable_state: 'unknown' };
+  const pending = routes();
+  pending[`GET ${R}/pulls/7`] = [{ body: pull(unknown) }, { body: pull(unknown) }, { body: pull(unknown) }];
+  let result = await land(pending, LAND);
+  refused(result, 'EVIDENCE_INCOMPLETE');
+  assert.match(result.error.message, /not computed whether #7 can merge/);
+  assert.equal(result.keys.filter(key => key === `GET ${R}/pulls/7`).length, 3);
+  const resolved = routes();
+  resolved[`GET ${R}/pulls/7`] = [{ body: pull(unknown) }, { body: pull(unknown) }, { body: pull() }, { body: pull() }];
+  result = await land(resolved, LAND);
+  landed(result);
+  assert.equal(result.keys.filter(key => key === `GET ${R}/pulls/7`).length, 4);
 });
 
 test('pr land is never offered over MCP, even with writes on', async t => {
