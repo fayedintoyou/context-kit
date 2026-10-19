@@ -90,7 +90,9 @@ The schema is validated strictly; unknown keys or a malformed file refuse (`INVA
   change between attempts; nothing is ordered by `run_attempt`, which restarts at 1 for every new
   workflow run. GitHub may report `path` with a ref suffix (`.github/workflows/deploy.yml@main`): the
   suffix is dropped before comparing with the policy's bare path. A check run that can't be joined
-  doesn't count for any Actions entry. Same-named checks from other workflows, events or apps never
+  never passes an Actions entry. And because missing data never means passing, an unjoined
+  `github-actions` check run with an entry's name that is newer (higher `id`) than that entry's
+  latest match refuses with `EVIDENCE_INCOMPLETE`: it might supersede the match. Same-named checks from other workflows, events or apps never
   match.
 - **Current means latest:** among the check runs matching one entry, the one created last wins, by
   check run `id` (GitHub assigns ids in creation order; a queued run has no `started_at`, so time isn't
@@ -256,7 +258,7 @@ before merging. The result carries the skip, and the merge report repeats it.
     - check identity: a same-named check from another workflow, event or app; a check run that can't be
       joined to a workflow run; a workflow path with an `@ref` suffix; a re-run attempt superseding a
       failure; an older run's success on attempt 3 followed by a newer run that failed, and one that's
-      pending; a skippable entry that's
+      pending; an older joined success followed by a newer same-named check run that can't be joined; a skippable entry that's
       skipped, and a non-skippable one that is;
     - no expected checks, with and without `--no-checks`; `--no-checks` with checks expected;
     - repository and policy: `--repo`, the origin remote, a conflicting `GH_REPO`, running from another

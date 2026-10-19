@@ -53,6 +53,10 @@ Each check the policy expects SHALL have a successful latest run on the head SHA
 - **WHEN** the only successful run of an expected check's name comes from another workflow, event or app
 - **THEN** the command refuses with `CHECKS_MISSING`
 
+#### Scenario: A newer check that can't be traced
+- **WHEN** an expected check's latest traceable run succeeded, and a newer check run with the same name can't be traced to its workflow
+- **THEN** the command refuses with `EVIDENCE_INCOMPLETE`
+
 #### Scenario: A re-run supersedes a failure
 - **WHEN** an expected check failed on its first attempt and succeeded on a re-run
 - **THEN** the check passes; and when the order is reversed, the command refuses with `CHECKS_FAILED`
