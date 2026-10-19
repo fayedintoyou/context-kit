@@ -83,6 +83,14 @@ jobs:
       test: npm test
 ```
 
+Its jobs run on GitHub's `ubuntu-latest`. A repository with its own runner names it with
+`runs-on`, as one label or a JSON list of labels, so a private repository's minutes aren't spent:
+
+```yaml
+    with:
+      runs-on: '["self-hosted", "my-mac"]'
+```
+
 and copy the lifecycle paragraph from this repository's `openspec/config.yaml`
 context. The job pushes with the workflow token, which doesn't trigger other
 workflows, so the archive commit neither loops nor redeploys. If the default

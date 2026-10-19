@@ -505,6 +505,29 @@ test('rehearse --store reads and rehearses a store\'s changes, in the store and 
   assert.deepEqual(await readdir(join(base, 'tmp')), []);
 });
 
+// What a job's `runs-on` asks for, given the caller's `runs-on` input, worked out as GitHub works out
+// the expression the workflow uses: a JSON list when the input starts with `[`, the label itself otherwise.
+const runnerFor = (expression, input) => {
+  assert.equal(expression, "${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}");
+  return input.startsWith('[') ? JSON.parse(input) : input;
+};
+
+// spec: change-archival / A caller's own runner
+test('every job of the openspec workflow runs on the runner its caller names, and on ubuntu-latest otherwise', () => {
+  const workflow = parse(readFileSync(join(kit, '.github/workflows/openspec.yml'), 'utf8'));
+  const input = workflow.on.workflow_call.inputs['runs-on'];
+  assert.ok(input, 'the workflow takes a runs-on input');
+  assert.equal(input.type, 'string');
+  assert.equal(input.default, 'ubuntu-latest');
+  const jobs = Object.entries(workflow.jobs);
+  assert.deepEqual(jobs.map(([name]) => name).sort(), ['archive', 'archive-rehearsal', 'canonical-guard']);
+  for (const [name, job] of jobs) {
+    assert.deepEqual(runnerFor(job['runs-on'], '["self-hosted", "my-mac"]'), ['self-hosted', 'my-mac'], name);
+    assert.equal(runnerFor(job['runs-on'], 'my-runner'), 'my-runner', name);
+    assert.equal(runnerFor(job['runs-on'], input.default), 'ubuntu-latest', name);
+  }
+});
+
 // The job's own script, run as the workflow runs it: the caller's `kit` input stands in for this checkout's CLI.
 function rehearsalJob({ base, root }) {
   const job = parse(readFileSync(join(kit, '.github/workflows/openspec.yml'), 'utf8')).jobs['archive-rehearsal'];
