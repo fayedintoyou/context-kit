@@ -156,15 +156,21 @@ before merging. The result carries the skip, and the merge report repeats it.
 2. **Gates, in order:**
    1. `NOT_OPEN`
    2. `NOT_DEFAULT_BASE`
-   3. `MERGE_QUEUE_UNSUPPORTED`: the repository or a ruleset requires a merge queue.
+   3. `MERGE_QUEUE_UNSUPPORTED`: a ruleset requires a merge queue (`rules/branches/<default>`; a
+      private repository without a paid plan answers 403 "Upgrade to GitHub Pro", meaning it can have
+      no rulesets), or the default branch has one at all, as GraphQL's
+      `repository(owner,name){mergeQueue(branch){id}}` shows (classic branch protection). A non-null
+      queue refuses; any GraphQL error or a missing field refuses `EVIDENCE_INCOMPLETE`.
    (`REPO_AMBIGUOUS`, `NO_POLICY` and `INVALID_POLICY` come before all of these.)
    4. `HEAD_MISMATCH`
    5. `CONFLICTING`
    6. `EVIDENCE_INCOMPLETE`
    7. the checks codes
    8. `REVIEW_MISSING`
-3. **Refresh immediately before merging:** open state, base, head, and the checks on the head. Movement
-   here refuses with no merge call (`HEAD_MOVED`, `BASE_MOVED`, `CHECKS_CHANGED`).
+3. **Refresh immediately before merging:** open state, base, head, the checks on the head, and the
+   labels, comments and reviews. Movement here refuses with no merge call (`HEAD_MOVED`, `BASE_MOVED`,
+   `CHECKS_CHANGED`), and substantiality and the review gate are decided again from the fresh labels
+   and records (`REVIEW_MISSING`).
 4. **Merge:** `PUT …/merge` with `sha` pinned, and the method allowed by the repository (squash, then
    rebase, then merge, unless `--method` is given). If the head moved after the refresh, GitHub rejects
    with 409, reported as `MERGE_REJECTED`; this attempt is the atomic guarantee. Check and base
@@ -176,13 +182,18 @@ before merging. The result carries the skip, and the merge report repeats it.
 
 ### After the merge
 
-- **Confirm:** the default branch contains the merge commit.
+- **Confirm:** the default branch contains the merge commit: `compare/<default>...<merge commit>` is
+  `identical` or `behind`. Anything else is a warning and `merged_cleanup_incomplete`.
 - **Delete the head ref only when all of these hold:**
+  - the merge is confirmed in the default branch;
   - it's in this repository, not a fork;
-  - it still points at the merged SHA;
+  - it still points at the merged SHA, read once and again immediately before the delete, after the
+    sharing query;
   - no other open pull request uses it as its head.
 
-  Otherwise it says why it didn't. An already-deleted ref is noted.
+  Otherwise it says why it didn't. An already-deleted ref is noted, but only an HTTP 404 establishes
+  absence, including after a refused delete; a malformed answer keeps the branch. GitHub has no
+  conditional ref delete, so the moment between the last read and the delete is a documented window.
 - **Dependents:** re-read the snapshotted dependent pull requests, and report each one's old and new
   base, and that it needs revalidating.
 - **Result:** `{ status: merged | merged_cleanup_incomplete, repo, number, sha, merge: { sha, method },
@@ -200,13 +211,15 @@ before merging. The result carries the skip, and the merge report repeats it.
   - the command is split into segments at `;`, `&&`, `||`, `|`, `&`, newlines, and inside `$(…)` and
     backticks;
   - each segment is tokenised with single and double quotes and backslash escapes, and leading
-    `NAME=value` assignments and the wrappers `env`, `command` and `time` are dropped;
+    `NAME=value` assignments and the wrappers are read past with their options: `env` (`-i`, `-`,
+    `-0`, `-v`, `-u NAME`, `--unset=NAME`, `-C DIR`, `--chdir=DIR`, `NAME=value`), `time` (`-p`, `-a`,
+    `-l`, `-v`, `-o FILE`, `-f FMT`, `--output=`, `--format=`) and `command` (`-p`);
   - a segment is a raw merge when its program is `gh` (or a path ending in `/gh`) and either:
     - its subcommand is `pr merge`, global flags such as `-R owner/name` allowed before it; or
     - its subcommand is `api`, with an endpoint `[/]repos/<o>/<r>/pulls/<n>/merge`, and the method PUT,
       given as `-X PUT`, `-XPUT`, `--method PUT` or `--method=PUT`, in any case and flag order.
-  - Out of scope, and named in the docs as residual bypasses: `sh -c` or `eval` strings, aliases,
-    scripts, and other clients such as `curl`.
+  - Out of scope, and named in the docs as residual bypasses: `sh -c`, `eval` or `env -S` strings,
+    aliases, scripts, and other clients such as `curl`.
 - **Denying:** it prints Claude Code's PreToolUse decision on stdout,
   `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"…"}}`,
   and exits 0. Any other command produces no output and exits 0. An unreadable payload fails open
@@ -216,17 +229,21 @@ before merging. The result carries the skip, and the merge report repeats it.
   project's `.claude/settings.local.json`, so it never reaches other projects. Codex is reported
   `unsupported`.
 - **Lifecycle:**
-  - The managed entry is one `hooks.PreToolUse` item, matcher `Bash`, with one command hook:
-    `node "<absolute path of this workspace's bin/merge-guard.mjs>"`. A `guard` record in
-    `.state/agents.json` stores the agent, scope, settings path, project and that exact entry.
-  - **Ownership:** an entry belongs to this workspace when one of its command hooks contains this
-    workspace's absolute `merge-guard.mjs` path. That path is the only selector; array position is
-    never used. Entries are classified as:
+  - The managed entry is one `hooks.PreToolUse` item, matcher `Bash`, with one command hook: the
+    shell-quoted `process.execPath` and the shell-quoted absolute path of the core's
+    `bin/merge-guard.mjs` (`'<node>' '<core>/bin/merge-guard.mjs'`), so it runs without `node` on PATH,
+    as the MCP registration does. A `guard` record in `.state/agents.json` stores the agent, scope,
+    settings path, project, that exact entry, and which of the file, `hooks` and `hooks.PreToolUse`
+    the install created.
+  - **Ownership:** an entry belongs to this workspace when one of its command hooks contains the
+    absolute `merge-guard.mjs` path of the core the workspace runs. That path is the only selector;
+    array position is never used. Entries are classified as:
     - `installed`: an entry identical to the recorded one;
     - `edited`: no identical entry, but one or more entries this workspace owns;
     - `missing`: no entry this workspace owns. That includes an edit that removed the path, which can't
       be told apart from a foreign hook, so it is left alone.
-  - **Install:** writes are atomic (temporary file, then rename) and keep every other key and hook. An
+  - **Install:** writes are atomic (temporary file, then rename), keep the file's mode (a new file is
+    0600) and keep every other key and hook; a failed write is reported and leaves the file intact. An
     identical entry is `unchanged`; a repeated install adds nothing. A missing settings file is
     created. Malformed settings JSON refuses for that runtime and writes nothing
     (`SETTINGS_MALFORMED`).
@@ -234,10 +251,13 @@ before merging. The result carries the skip, and the merge report repeats it.
     workspace owns with the recorded one. Every entry it can't identify, including foreign hooks and
     other workspaces' guards, stays as it is. A `missing` guard is added afresh, with or without
     `--force`.
-  - **Several workspaces** each own their own entry, by their own path; one never touches another's.
+  - **Several workspaces** pinned to their own cores each own their own entry, by their own path; one
+    never touches another's. Workspaces run from the same core share one entry, so uninstalling either
+    removes it, and the other then reports it `missing`.
   - **Status:** `agents status` reports each guard as `installed`, `missing` or `edited`.
   - **Uninstall** removes exactly the recorded entry if it's still as written, keeps an edited one and
-    reports it, and leaves the rest of the file as it was.
+    reports it, and leaves the rest of the file as it was: it removes only the containers (and the
+    file) the install created, so a pre-existing `hooks: {}` or empty `PreToolUse` comes back.
 
 ## Testing
 

@@ -612,6 +612,17 @@ test('a shared, forked or moved head branch is kept and the cleanup is incomplet
   json = landed(await land(refusedDelete, LAND));
   assert.equal(json.status, 'merged');
   assert.deepEqual(json.branch, { ref: 'feature', deleted: false, alreadyDeleted: true });
+  // Only a 404 establishes absence: a malformed answer after a refused delete keeps it.
+  refusedDelete[`GET ${R}/git/ref/heads/feature`] = [{ body: ref('feature', A) }, { body: ref('feature', A) }, { body: {} }];
+  json = landed(await land(refusedDelete, LAND));
+  assert.equal(json.status, 'merged_cleanup_incomplete');
+  assert.match(json.branch.kept, /malformed/);
+  // So does a malformed first read, with no delete.
+  const malformedRef = routes();
+  malformedRef[`GET ${R}/git/ref/heads/feature`] = [{ body: {} }];
+  json = noDelete(await land(malformedRef, LAND));
+  assert.equal(json.status, 'merged_cleanup_incomplete');
+  assert.equal(json.branch.alreadyDeleted, undefined);
 
   // Already deleted (repository auto-deletion) is noted, and the landing is complete.
   const gone = routes();
@@ -676,7 +687,28 @@ test('malformed evidence refuses instead of being classified or matched', async 
     const { [field]: dropped, ...partial } = checkRun(140, 'test', 900, 'failure');
     refused(await land(routes({ runs: [checkRun(101, 'test', 900), partial] }), LAND), 'EVIDENCE_INCOMPLETE');
   }
-  // A newer failed Actions check whose workflow run lacks its path or event.
+  // A falsy element in a listing is malformed too, not skipped.
+  for (const junk of [false, 0, '', null]) {
+    refused(await land(routes({ files: [file('docs/a.md'), junk] }), LAND), 'EVIDENCE_INCOMPLETE');
+    refused(await land(routes({ runs: [checkRun(101, 'test', 900), junk] }), LAND), 'EVIDENCE_INCOMPLETE');
+  }
+  refused(await land(routes({ files: [file('docs/a.md'), file('')] }), LAND), 'EVIDENCE_INCOMPLETE');
+  // A newer failed run with an empty name or app would otherwise be ignored, and the older success pass.
+  for (const extra of [{ name: '' }, { app: { slug: '' } }, { status: '' }]) {
+    result = await land(routes({ runs: [checkRun(101, 'test', 900), checkRun(140, 'test', 900, 'failure', extra)] }), LAND);
+    refused(result, 'EVIDENCE_INCOMPLETE');
+  }
+  const statusPolicy = { ...POLICY, expectedChecks: [{ kind: 'status', context: 'ci/legacy' }] };
+  const emptyContext = routes({ policy: statusPolicy });
+  emptyContext[`GET ${R}/commits/${A}/status?per_page=100`] = [{ pages: [{ state: 'success', total_count: 2, statuses: [
+    { id: 9, context: 'ci/legacy', state: 'success', creator: { login: 'bot' } }, { id: 10, context: '', state: 'failure', creator: { login: 'bot' } }] }] }];
+  refused(await land(emptyContext, LAND), 'EVIDENCE_INCOMPLETE');
+  // A newer failed Actions check whose workflow run lacks its path or event, or has them empty.
+  for (const [field, value] of [['path', ''], ['event', '']]) {
+    result = await land(routes({ runs: [checkRun(101, 'test', 900), checkRun(140, 'test', 910, 'failure')],
+      workflows: [workflowRun(50, 900, '.github/workflows/checks.yml'), { ...workflowRun(60, 910, '.github/workflows/checks.yml'), [field]: value }] }), LAND);
+    refused(result, 'EVIDENCE_INCOMPLETE');
+  }
   for (const field of ['path', 'event']) {
     const { [field]: dropped, ...partial } = workflowRun(60, 910, '.github/workflows/checks.yml');
     result = await land(routes({ runs: [checkRun(101, 'test', 900), checkRun(140, 'test', 910, 'failure')],
@@ -694,10 +726,14 @@ test('a merge queue from classic branch protection refuses, and an unreadable an
   const result = await land(classic, LAND);
   refused(result, 'MERGE_QUEUE_UNSUPPORTED');
   assert.match(result.error.message, /has a merge queue/);
+  // Any GraphQL error fails closed, whatever it says; so does an answer carrying errors.
   const unavailable = routes();
   unavailable['POST graphql'] = [{ status: 200, message: 'Merge queue is not available for this repository',
     body: { data: { repository: { mergeQueue: null } }, errors: [{ type: 'FORBIDDEN', message: 'Merge queue is not available for this repository' }] } }];
-  landed(await land(unavailable, LAND));
+  refused(await land(unavailable, LAND), 'EVIDENCE_INCOMPLETE');
+  const withErrors = routes();
+  withErrors['POST graphql'] = [{ body: { data: { repository: { mergeQueue: null } }, errors: [{ message: 'Something partial' }] } }];
+  refused(await land(withErrors, LAND), 'EVIDENCE_INCOMPLETE');
   const failing = routes();
   failing['POST graphql'] = [{ status: 502, message: 'Bad Gateway' }];
   refused(await land(failing, LAND), 'EVIDENCE_INCOMPLETE');
