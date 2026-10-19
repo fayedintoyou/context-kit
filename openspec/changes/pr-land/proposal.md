@@ -32,9 +32,10 @@ and a reviewer the merging agent can't impersonate.
   merges pinned to the SHA. Afterwards it reports what happened to dependent pull requests, deletes the
   head branch only when that's safe, and reports a clear outcome even when cleanup fails or the merge's
   result is unknown.
-- **A landing policy per repository,** `.context-kit/landing.json`, owned by the repository: its
-  expected checks, checks that may be skipped (with why), and its routine exemptions. The toolkit
-  ships the mechanism, not Faye's policy.
+- **A landing policy per repository,** `.context-kit/landing.json`, owned by the repository and read
+  from its default branch, so a pull request can't loosen its own gate: its expected checks (each
+  named by its exact producer, and whether it may be skipped and why) and its routine path
+  exemptions. The toolkit ships the mechanism, not Faye's policy.
 - **A review record format,** posted as a pull request comment, that the independent-review skill
   tells reviewers (or the agent relaying their result) to post.
 - **A tripwire.** `agents install` adds a pre-command hook to Claude Code that refuses raw `gh` merge
@@ -50,8 +51,9 @@ and a reviewer the merging agent can't impersonate.
 
 ### Modified Capabilities
 
-- `agent-installation`: installs and removes the merge tripwire for runtimes that support pre-command
-  hooks, and reports runtimes that don't.
+- `agent-installation`: installs the merge tripwire into Claude Code in the install's own scope (user
+  settings, or the project's local settings), reports it in status, removes only its own entry, and
+  reports Codex as unsupported.
 
 ## Impact
 
