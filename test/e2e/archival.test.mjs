@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { Evaluator, Lexer, Parser, data } from '@actions/expressions';
 import { readFileSync } from 'node:fs';
 import { rehearseArchive } from '../../lib/specs/archival.mjs';
 import { openSpec } from '../../lib/specs/openspec.mjs';
@@ -505,11 +506,16 @@ test('rehearse --store reads and rehearses a store\'s changes, in the store and 
   assert.deepEqual(await readdir(join(base, 'tmp')), []);
 });
 
-// What a job's `runs-on` asks for, given the caller's `runs-on` input, worked out as GitHub works out
-// the expression the workflow uses: a JSON list when the input starts with `[`, the label itself otherwise.
+// What a job's `runs-on` asks for, given the caller's `runs-on` input, worked out by GitHub's own
+// expression evaluator (@actions/expressions): a list of labels, or one label.
 const runnerFor = (expression, input) => {
-  assert.equal(expression, "${{ startsWith(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}");
-  return input.startsWith('[') ? JSON.parse(input) : input;
+  const code = expression.match(/^\$\{\{(.*)\}\}$/s)[1];
+  const parser = new Parser(new Lexer(code).lex().tokens, ['inputs'], []);
+  const inputs = new data.Dictionary(), context = new data.Dictionary();
+  inputs.add('runs-on', new data.StringData(input));
+  context.add('inputs', inputs);
+  const result = new Evaluator(parser.parse(), context).evaluate();
+  return result instanceof data.Array ? result.values().map(value => value.coerceString()) : result.coerceString();
 };
 
 // spec: change-archival / A caller's own runner
@@ -523,6 +529,9 @@ test('every job of the openspec workflow runs on the runner its caller names, an
   assert.deepEqual(jobs.map(([name]) => name).sort(), ['archive', 'archive-rehearsal', 'canonical-guard']);
   for (const [name, job] of jobs) {
     assert.deepEqual(runnerFor(job['runs-on'], '["self-hosted", "my-mac"]'), ['self-hosted', 'my-mac'], name);
+    // A list with space or a line break around it, as YAML can leave one, is still a list.
+    assert.deepEqual(runnerFor(job['runs-on'], ' ["self-hosted", "my-mac"]'), ['self-hosted', 'my-mac'], name);
+    assert.deepEqual(runnerFor(job['runs-on'], '\n["self-hosted", "my-mac"]\n'), ['self-hosted', 'my-mac'], name);
     assert.equal(runnerFor(job['runs-on'], 'my-runner'), 'my-runner', name);
     assert.equal(runnerFor(job['runs-on'], input.default), 'ubuntu-latest', name);
   }
