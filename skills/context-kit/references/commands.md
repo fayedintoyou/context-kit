@@ -108,12 +108,13 @@ plan-phase records and ones missing a field (malformed) are reported, not counte
 **The gates**, in order: `NOT_OPEN`, `NOT_DEFAULT_BASE`, `MERGE_QUEUE_UNSUPPORTED`
 (a ruleset requires a merge queue), `HEAD_MISMATCH`, `CONFLICTING`,
 `EVIDENCE_INCOMPLETE` (any read failed, a response didn't match its endpoint's
-strict schema, a listing came up short of the pull
+strict schema or listed the same item twice, a listing came up short of the pull
 request's own count or over GitHub's 3,000-file cap, or a newer same-named check run
 can't be traced to its workflow), the checks, then `REVIEW_MISSING`. A failed post
-is `POST_FAILED`. Immediately before merging it re-reads the pull request, the
-default branch and the checks: movement refuses with `HEAD_MOVED`, `BASE_MOVED` or
-`CHECKS_CHANGED`. None of these makes a merge call.
+is `POST_FAILED`. Immediately before merging it runs every gate again on fresh reads
+of the pull request, the default branch, the checks and the review records: movement
+refuses with `HEAD_MOVED`, `BASE_MOVED` or `CHECKS_CHANGED`, and anything else with its
+gate's code. None of these makes a merge call.
 
 It merges with `sha` pinned, using the method given or the first the repository
 allows (squash, rebase, merge). GitHub rejecting it, such as a head that moved after

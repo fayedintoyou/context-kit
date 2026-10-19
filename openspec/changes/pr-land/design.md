@@ -82,6 +82,8 @@ The schema is validated strictly; unknown keys or a malformed file refuse (`INVA
   endpoint (pull request, files, check runs, workflow runs, statuses, comments, reviews, GraphQL,
   refs, compare, rulesets, contents): required fields present with the right type, identity fields
   non-empty, ids positive integers, states from GitHub's enums, dates ISO, `total_count` required.
+  Duplicates and conflicts refuse too: a filename, check run id, status id, comment id or review id
+  listed twice, or two workflow runs claiming one check suite with a different path or event.
   Any failure refuses `EVIDENCE_INCOMPLETE` before anything is classified, matched or merged; after
   the merge, a malformed answer keeps the branch. Review records are ordered by parsed date, then id.
 - **Completeness:** the changed files must equal the pull request's `changed_files`. Over GitHub's
@@ -173,10 +175,12 @@ before merging. The result carries the skip, and the merge report repeats it.
    6. `EVIDENCE_INCOMPLETE`
    7. the checks codes
    8. `REVIEW_MISSING`
-3. **Refresh immediately before merging:** open state, base, head, the checks on the head, and the
-   labels, comments and reviews. Movement here refuses with no merge call (`HEAD_MOVED`, `BASE_MOVED`,
-   `CHECKS_CHANGED`), and substantiality and the review gate are decided again from the fresh labels
-   and records (`REVIEW_MISSING`).
+3. **Refresh immediately before merging:** every gate on the pull request, its labels, checks and
+   review lives in one function, which runs in full on the initial evidence and again in full on
+   fresh reads (pull request with its mergeability retry, default branch tip, merge queue, checks,
+   comments and reviews; the file list is the pinned head's, read once). Movement refuses with no
+   merge call (`HEAD_MOVED`, `BASE_MOVED`, `CHECKS_CHANGED`), as does a fresh read that is
+   conflicting or of unknown mergeability, or a review decision that no longer holds.
 4. **Merge:** `PUT …/merge` with `sha` pinned, and the method allowed by the repository (squash, then
    rebase, then merge, unless `--method` is given). If the head moved after the refresh, GitHub rejects
    with 409, reported as `MERGE_REJECTED`; this attempt is the atomic guarantee. Check and base

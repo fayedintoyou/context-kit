@@ -118,8 +118,8 @@ function routes({ policy = POLICY, files = [file('docs/guide.md')], runs = [chec
     [`GET ${R}/git/ref/heads/main`]: [{ body: ref('main', TIP) }, { body: ref('main', TIP) }],
     [`GET ${R}/contents/.context-kit/landing.json?ref=${TIP}`]: [policy === null ? notFound : { body: content(policy) }],
     [`GET ${R}/pulls/7`]: [{ body: head }, { body: head }],
-    [`GET ${R}/rules/branches/main?per_page=100`]: [{ pages: [[]] }],
-    ['POST graphql']: [{ body: { data: { repository: { mergeQueue: null } } } }],
+    [`GET ${R}/rules/branches/main?per_page=100`]: [{ pages: [[]] }, { pages: [[]] }],
+    ['POST graphql']: [{ body: { data: { repository: { mergeQueue: null } } } }, { body: { data: { repository: { mergeQueue: null } } } }],
     [`GET ${R}/pulls/7/files?per_page=100`]: [{ pages: chunk(files, 100) }],
     [`GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`]: [checkPages(runs), checkPages(runs)],
     [`GET ${R}/actions/runs?head_sha=${A}&per_page=100`]: [workflowPages(workflows), workflowPages(workflows)],
@@ -252,7 +252,8 @@ test('a ruleset requiring a merge queue refuses', async t => {
   refused(await land(queued, LAND), 'MERGE_QUEUE_UNSUPPORTED');
   // A private repository without a paid plan can't have rulesets, as GitHub's 403 says.
   const free = routes();
-  free[`GET ${R}/rules/branches/main?per_page=100`] = [{ status: 403, message: 'Upgrade to GitHub Pro or make this repository public to enable this feature.' }];
+  const upgrade = { status: 403, message: 'Upgrade to GitHub Pro or make this repository public to enable this feature.' };
+  free[`GET ${R}/rules/branches/main?per_page=100`] = [upgrade, upgrade];
   landed(await land(free, LAND));
   const unreadable = routes();
   unreadable[`GET ${R}/rules/branches/main?per_page=100`] = [{ status: 500, message: 'Server Error' }];
@@ -271,9 +272,20 @@ test('movement found by the refresh refuses with no merge call', async t => {
   const checks = routes();
   checks[`GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`] = [checkPages([checkRun(101, 'test', 900)]),
     checkPages([checkRun(101, 'test', 900), checkRun(102, 'test', 900, null)])];
-  const result = await land(checks, LAND);
+  let result = await land(checks, LAND);
   refused(result, 'CHECKS_CHANGED');
   assert.deepEqual(result.error.details.after.map(check => check.state), ['pending']);
+  // Mergeability is gated on the fresh read too: conflicting, or still unknown after its re-reads.
+  const dirty = routes();
+  dirty[`GET ${R}/pulls/7`] = [{ body: pull() }, { body: pull({ mergeable: false, mergeable_state: 'dirty' }) }];
+  refused(await land(dirty, LAND), 'CONFLICTING');
+  const unknown = pull({ mergeable: null, mergeable_state: 'unknown' });
+  const undecided = routes();
+  undecided[`GET ${R}/pulls/7`] = [{ body: pull() }, { body: unknown }, { body: unknown }, { body: unknown }];
+  result = await land(undecided, LAND);
+  refused(result, 'EVIDENCE_INCOMPLETE');
+  assert.match(result.error.message, /not computed whether #7 can merge/);
+  assert.equal(result.keys.filter(key => key === `GET ${R}/pulls/7`).length, 4, 'the fresh read is retried twice');
 });
 
 // spec: pull-request-landing / GitHub rejects the pinned merge
@@ -705,7 +717,7 @@ test('every GitHub response is parsed strictly: a corrupted field refuses with n
   const withDependent = routes();
   withDependent[`GET ${R}/pulls?state=open&base=feature&per_page=100`] = [{ pages: [[{ number: 8, base: { ref: 'feature' } }]] }];
   const withRule = routes();
-  withRule[`GET ${R}/rules/branches/main?per_page=100`] = [{ pages: [[{ type: 'deletion' }]] }];
+  withRule[`GET ${R}/rules/branches/main?per_page=100`] = [{ pages: [[{ type: 'deletion' }]] }, { pages: [[{ type: 'deletion' }]] }];
   const review = { id: 5, body: record(), submitted_at: '2026-10-19T11:00:00Z', html_url: 'https://github.com/acme/widgets/pull/7#pullrequestreview-5', user: { login: 'faye' } };
   const table = [
     [routes(), `GET ${R}`, ['body'], ['default_branch', 'allow_squash_merge', 'allow_rebase_merge', 'allow_merge_commit']],
@@ -751,6 +763,21 @@ test('every GitHub response is parsed strictly: a corrupted field refuses with n
   const errorsObject = routes();
   errorsObject['POST graphql'] = [{ body: { data: { repository: { mergeQueue: null } }, errors: { message: 'Something went wrong' } } }];
   cases.push({ label: 'GraphQL errors that are not an array', fixtures: errorsObject });
+  // Duplicates and conflicts: a second copy never satisfies a count or hides another answer.
+  const doubled = routes({ files: [file('docs/a.md'), file('docs/a.md')] });
+  cases.push({ label: 'the same file listed twice', fixtures: doubled });
+  cases.push({ label: 'one check run id, success then failure', fixtures: routes({ runs: [checkRun(101, 'test', 900), checkRun(101, 'test', 900, 'failure')] }) });
+  const twoStatuses = routes({ policy: statusPolicy });
+  const dupStatus = { pages: [{ state: 'failure', total_count: 2, statuses: [statusPage.pages[0].statuses[0], { ...statusPage.pages[0].statuses[0], state: 'failure' }] }] };
+  twoStatuses[`GET ${R}/commits/${A}/status?per_page=100`] = [dupStatus, dupStatus];
+  cases.push({ label: 'one status id twice', fixtures: twoStatuses });
+  cases.push({ label: 'one comment id twice', fixtures: routes({ files: [file('lib/x.mjs')], comments: [comment(1, record()), comment(1, record({ Outcome: 'changes-requested' }))] }) });
+  cases.push({ label: 'one review id twice', fixtures: routes({ files: [file('lib/x.mjs')], reviews: [review, { ...review, body: record({ Outcome: 'changes-requested' }) }] }) });
+  // A later claim for the failing run's suite would otherwise relabel it and hide the failure.
+  cases.push({ label: 'two workflow runs claiming one check suite', fixtures: routes({ runs: [checkRun(101, 'test', 900), checkRun(140, 'test', 901, 'failure')],
+    workflows: [workflowRun(50, 900, '.github/workflows/checks.yml'), workflowRun(60, 901, '.github/workflows/checks.yml'), workflowRun(61, 901, '.github/workflows/deploy.yml')] }) });
+  cases.push({ label: 'two workflow runs claiming one check suite with different events', fixtures: routes({
+    workflows: [workflowRun(50, 900, '.github/workflows/checks.yml'), workflowRun(51, 900, '.github/workflows/checks.yml', 'push')] }) });
   // Falsy elements and empty identity fields too.
   for (const junk of [false, 0, '', null]) {
     cases.push({ label: `a file listing holding ${JSON.stringify(junk)}`, fixtures: routes({ files: [file('docs/a.md'), junk] }) });
