@@ -86,12 +86,17 @@ The schema is validated strictly; unknown keys or a malformed file refuse (`INVA
 
 - **How workflow identity is known:** a check run carries `app.slug` and `check_suite.id`. For
   `github-actions`, it is joined to the workflow run (`/actions/runs?head_sha=<sha>`) with the same
-  `check_suite_id`, which gives `path`, `event` and `run_attempt`. A check run that can't be joined
+  `check_suite_id`, which gives `path` and `event`. The join is used only for identity, which doesn't
+  change between attempts; nothing is ordered by `run_attempt`, which restarts at 1 for every new
+  workflow run. GitHub may report `path` with a ref suffix (`.github/workflows/deploy.yml@main`): the
+  suffix is dropped before comparing with the policy's bare path. A check run that can't be joined
   doesn't count for any Actions entry. Same-named checks from other workflows, events or apps never
   match.
-- **Current means latest:** among the matches for one entry, the latest wins: the highest
-  `run_attempt`, then the newest check run (`started_at`, then `id`). A superseded failure doesn't
-  block, and a superseded success doesn't pass. Commit statuses use GitHub's latest state per context.
+- **Current means latest:** among the check runs matching one entry, the one created last wins, by
+  check run `id` (GitHub assigns ids in creation order; a queued run has no `started_at`, so time isn't
+  used). A re-run attempt and a new workflow run both create new check runs, so either supersedes what
+  came before: an older run's success on its third attempt doesn't outweigh a newer run that failed or
+  is pending. A superseded failure doesn't block, and a superseded success doesn't pass. Commit statuses use GitHub's latest state per context.
 - **Only success passes:** check runs need status `completed` with conclusion `success`, and commit
   statuses need state `success`. `skipped` or `neutral` passes only for an entry with `skippable`, and
   its reason appears in the result. `failure`, `cancelled`, `timed_out`, `action_required`, `error`,
@@ -209,15 +214,24 @@ before merging. The result carries the skip, and the merge report repeats it.
   project's `.claude/settings.local.json`, so it never reaches other projects. Codex is reported
   `unsupported`.
 - **Lifecycle:**
-  - The managed entry is one `hooks.PreToolUse` item, matcher `Bash`, whose command is the absolute
-    path of this workspace's `merge-guard.mjs`. A `guard` record in `.state/agents.json` stores the
-    agent, scope, settings path, project and that exact entry.
+  - The managed entry is one `hooks.PreToolUse` item, matcher `Bash`, with one command hook:
+    `node "<absolute path of this workspace's bin/merge-guard.mjs>"`. A `guard` record in
+    `.state/agents.json` stores the agent, scope, settings path, project and that exact entry.
+  - **Ownership:** an entry belongs to this workspace when one of its command hooks contains this
+    workspace's absolute `merge-guard.mjs` path. That path is the only selector; array position is
+    never used. Entries are classified as:
+    - `installed`: an entry identical to the recorded one;
+    - `edited`: no identical entry, but one or more entries this workspace owns;
+    - `missing`: no entry this workspace owns. That includes an edit that removed the path, which can't
+      be told apart from a foreign hook, so it is left alone.
   - **Install:** writes are atomic (temporary file, then rename) and keep every other key and hook. An
     identical entry is `unchanged`; a repeated install adds nothing. A missing settings file is
     created. Malformed settings JSON refuses for that runtime and writes nothing
     (`SETTINGS_MALFORMED`).
-  - **An edited entry** (the record's entry no longer present as written) is left alone and reported
-    `edited`, unless `--force` replaces it.
+  - **An edited entry** is left alone and reported `edited`. `--force` replaces exactly the entries this
+    workspace owns with the recorded one. Every entry it can't identify, including foreign hooks and
+    other workspaces' guards, stays as it is. A `missing` guard is added afresh, with or without
+    `--force`.
   - **Several workspaces** each own their own entry, by their own path; one never touches another's.
   - **Status:** `agents status` reports each guard as `installed`, `missing` or `edited`.
   - **Uninstall** removes exactly the recorded entry if it's still as written, keeps an edited one and
@@ -227,8 +241,11 @@ before merging. The result carries the skip, and the merge report repeats it.
 
 - **`test/e2e/landing.test.mjs`** runs the real CLI (`bin/hub.mjs pr land`) as a subprocess, with
   `PATH` led by a strict fake `gh`.
-  - **The fake:** it serves fixture JSON keyed by method, endpoint and page, records every call, and
-    fails on anything unexpected. `GH_TOKEN` and `HOME` are isolated, so it can never fall back to the
+  - **The fake:** it serves fixtures keyed by method, endpoint and page. A key can hold an ordered
+    sequence of responses, so state can change between calls: a head that moves at the refresh, a check
+    that goes from pending to success, or a pull request that is open and then merged. A response can
+    also be a nonzero exit or a dropped connection (the lost merge response). The fake records every
+    call, and fails on any call it doesn't expect, or that runs past the end of a sequence. `GH_TOKEN` and `HOME` are isolated, so it can never fall back to the
     real `gh` or real credentials.
   - **Response shapes:** trimmed from real room and context-kit responses.
   - **Scenarios:**
@@ -237,7 +254,9 @@ before merging. The result carries the skip, and the merge report repeats it.
     - expected checks missing, duplicated across workflows, superseded, skipped (listed or not), or
       pending with `--wait` and a timeout;
     - check identity: a same-named check from another workflow, event or app; a check run that can't be
-      joined to a workflow run; a re-run attempt superseding a failure; a skippable entry that's
+      joined to a workflow run; a workflow path with an `@ref` suffix; a re-run attempt superseding a
+      failure; an older run's success on attempt 3 followed by a newer run that failed, and one that's
+      pending; a skippable entry that's
       skipped, and a non-skippable one that is;
     - no expected checks, with and without `--no-checks`; `--no-checks` with checks expected;
     - repository and policy: `--repo`, the origin remote, a conflicting `GH_REPO`, running from another
@@ -267,5 +286,7 @@ before merging. The result carries the skip, and the merge report repeats it.
 - **The guard's install lifecycle,** through the real `agents install`, `status` and `uninstall` with
   an isolated `HOME`/`CLAUDE_CONFIG_DIR`: user and project scope writing the right file, foreign keys
   and hooks preserved, repeated installs unchanged, malformed settings refused untouched, an edited
-  entry kept (and replaced with `--force`), two workspaces' entries independent, and Codex reported
+  entry kept and reported (and with `--force`, an edited command among reordered foreign hooks and a
+  second workspace's guard: only this workspace's entry is replaced), two workspaces' entries
+  independent, and Codex reported
   unsupported.

@@ -15,6 +15,10 @@
 - **WHEN** the settings file isn't valid JSON, or the tripwire entry was edited after install
 - **THEN** a malformed file is refused and left untouched, and an edited entry is kept and reported `edited` by install, status and uninstall
 
+#### Scenario: Forcing past an edit
+- **WHEN** the tripwire's command was edited, the hooks were reordered, and another workspace's tripwire and a foreign hook are present, and agents are installed with `--force`
+- **THEN** only this workspace's entry is replaced, and the other hooks are unchanged
+
 #### Scenario: Codex
 - **WHEN** agents are installed for Codex
 - **THEN** the tripwire is reported unsupported

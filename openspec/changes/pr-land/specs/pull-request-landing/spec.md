@@ -57,6 +57,10 @@ Each check the policy expects SHALL have a successful latest run on the head SHA
 - **WHEN** an expected check failed on its first attempt and succeeded on a re-run
 - **THEN** the check passes; and when the order is reversed, the command refuses with `CHECKS_FAILED`
 
+#### Scenario: A newer run outweighs an older one's attempts
+- **WHEN** an older workflow run's expected check succeeded on its third attempt, and a newer run of the same workflow failed or is still pending
+- **THEN** the command refuses with `CHECKS_FAILED` or `CHECKS_PENDING`
+
 #### Scenario: A skipped check
 - **WHEN** an expected check was skipped, once where the policy gives it a skip reason and once where it doesn't
 - **THEN** the first passes with its reason in the result, and the second refuses
@@ -108,7 +112,7 @@ After a merge the command SHALL confirm it, delete the head branch only when it 
 - **THEN** the first is reported merged, and the others `MERGE_UNKNOWN` with what was seen, with no second merge call
 
 ### Requirement: A tripwire on raw merges
-For Claude Code, installing agents SHALL add a PreToolUse hook that denies a shell command containing a raw `gh pr merge`, or a `gh api` PUT to a pull request's merge endpoint, in any segment, flag order or quoting, pointing to `context-kit pr land`. Other commands SHALL run untouched.
+For Claude Code, installing agents SHALL add a PreToolUse hook that denies a shell command with a raw `gh pr merge`, or a `gh api` PUT to a pull request's merge endpoint, in any segment, flag order or ordinary quoting, as the token and segment contract defines (not inside `sh -c` or `eval` strings), pointing to `context-kit pr land`. Other commands SHALL run untouched.
 
 #### Scenario: A raw merge is caught
 - **WHEN** an agent in Claude Code runs `gh pr merge 5`, `gh api -X PUT repos/o/r/pulls/5/merge`, or `GH_DEBUG=1 gh api --method=put "/repos/o/r/pulls/5/merge"` chained after `context-kit pr land`
