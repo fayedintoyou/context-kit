@@ -113,6 +113,53 @@ carries the evidence itself.
 Context Kit dogfoods this: `openspec/changes/change-progress/slices.yaml`
 planned the change that added it.
 
+## Landing a pull request
+
+Merge with `context-kit pr land <n> --sha <tested-sha>` rather than a raw `gh` merge.
+It lands the pull request only when it is open, targets the default branch, isn't
+conflicting or behind a required merge queue, and its head is the SHA you tested;
+the repository's expected checks all passed on that head; and, for substantial work,
+an output review record approves that head, or you pass `--skip-review "<reason>"`,
+which is posted on the pull request. It re-reads the head, base and checks just
+before merging, merges pinned to the SHA, then deletes the branch only when that's
+safe and reports the pull requests that were based on it. The `commands` help topic
+has every flag and refusal code.
+
+Each repository owns its gate in `.context-kit/landing.json` on its default branch:
+the checks it expects, each named by its exact producer (app, and for Actions the
+workflow file and event) with an optional skip reason, and the paths that count as
+routine. Everything else is substantial. The pull request that adds the first policy
+lands with `--bootstrap-policy`. The toolkit ships the mechanism; which checks matter
+and which paths are routine is each repository's decision.
+
+The review record is a comment the reviewer, or the agent relaying their result,
+posts on the pull request (the `independent-review` skill gives the block):
+`Reviewed-SHA`, `Phase: output`, `Reviewer`, `Outcome`, `Findings` and `Evidence`.
+The newest record for the head decides.
+
+**Trust model.** Agents are assumed to act in good faith and to forget under
+momentum. `pr land` makes the gated path the easy one, and `agents install` adds a
+Claude Code `PreToolUse` hook that denies raw `gh pr merge` and `gh api … PUT
+…/pulls/<n>/merge` commands. That tripwire follows a bounded contract: it reads
+segments and ordinary quoting, and reads past `env`, `time` and `command` with their
+usual options, but not `sh -c`, `eval` or `env -S` strings, aliases or scripts.
+None of this stops an agent determined to bypass it, because the merge credentials
+stay with the agent. The residual bypasses are:
+
+- disabling the hook, or merging another way: `curl`, a script, another client;
+- runtimes without pre-command hooks (Codex today, reported `unsupported`);
+- a skip reason the agent writes itself (it is posted publicly on the pull request);
+- a review record the agent posts itself: `gh` comments carry the merging user's
+  identity, so authorship can't prove independence, and a record is audit evidence;
+- the short window between the final re-read of checks, base, labels and review
+  records and the merge (the head itself is pinned by GitHub);
+- a sub-second window in cleanup: the head branch is re-read immediately before it
+  is deleted, but GitHub's REST API has no conditional ref delete, so a push landing
+  between that read and the delete would be deleted with the branch.
+
+Closing them needs server-side enforcement: rulesets plus a required review check
+from a producer the merging agent can't impersonate. That is out of scope here.
+
 ## A change across repositories
 
 A shared store (`specs stores`) holds specs several repositories agree on, such as

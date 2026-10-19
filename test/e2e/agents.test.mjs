@@ -75,7 +75,7 @@ test('install puts enabled skills and the MCP server into both agents', async t 
     ['claude', ['mcp', 'add', '-s', 'user', 'context-workspace', '--', ...server]],
     ['codex', ['mcp', 'add', 'context-workspace', '--', ...server]]]);
   const status = await agents('status');
-  assert.equal(status.json.items.length, 16);
+  assert.equal(status.json.items.length, 17);
   assert.ok(status.json.items.every(item => item.state === 'installed'), JSON.stringify(status.json.items));
 
   const again = await agents('install');
@@ -218,7 +218,7 @@ test('setup creates a pinned instance and installs it into agents', async t => {
   assert.deepEqual(JSON.parse(await readFile(join(target, 'context-kit.json'), 'utf8')).addons, ['reflect']);
   assert.deepEqual((await readdir(join(base, 'claude/skills'))).sort(), ['context-kit', 'reflect']);
   assert.deepEqual(result.json.agents.results.map(item => `${item.kind}:${item.name}:${item.action}`), ['skill:context-kit:installed', 'skill:reflect:installed', 'mcp:my-context:installed',
-    'hook:post-merge:skipped', 'hook:post-rewrite:skipped']);
+    'guard:merge-guard:installed', 'hook:post-merge:skipped', 'hook:post-rewrite:skipped']);
   const add = (await calls()).find(call => call.args.includes('add') && call.args.includes('my-context'));
   assert.ok(add.args.includes(join(target, 'node_modules/context-kit/bin/mcp.mjs')) || add.args.includes(join(kit, 'bin/mcp.mjs')));
 });

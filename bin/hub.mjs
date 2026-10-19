@@ -25,9 +25,12 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   specs parties --store <id>
   specs status <change> | specs next <change> | specs slice <change> <slice> | specs reconcile <change>   [--store <id>]
   specs archivable | specs archive --ready | specs archive --rehearse   [--store <id>]
+  pr land <number> --sha <tested-sha> [--repo owner/name] [--wait] [--timeout <minutes>] [--method squash/rebase/merge]
+      [--skip-review "<reason>"] [--no-checks "<reason>"] [--bootstrap-policy]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
-  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--allow-write', '--global-mcp', '--name', '--help', '--path', '--alias', '--title', '--concept', '--description', '--ready', '--rehearse']);
+  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--allow-write', '--global-mcp', '--name', '--help', '--path', '--alias', '--title', '--concept', '--description', '--ready', '--rehearse',
+    '--sha', '--repo', '--wait', '--timeout', '--method', '--skip-review', '--no-checks', '--bootstrap-policy']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
     const [command, ...args] = positional;
@@ -59,6 +62,8 @@ try {
       if ((options['--ready'] || options['--rehearse']) && !(command === 'specs' && args[0] === 'archive')) fail('INVALID_INPUT', '--ready and --rehearse apply only to specs archive');
       if (options['--ready'] && options['--rehearse']) fail('INVALID_INPUT', 'Pass --ready or --rehearse to specs archive, not both');
       if (options['--file'] && command !== 'read-skill') fail('INVALID_INPUT', '--file applies only to read-skill');
+      const landFlags = ['--sha', '--repo', '--wait', '--timeout', '--method', '--skip-review', '--no-checks', '--bootstrap-policy'];
+      if (landFlags.some(flag => options[flag] !== undefined) && !(command === 'pr' && args[0] === 'land')) fail('INVALID_INPUT', `${landFlags.join(', ')} apply only to pr land`);
       const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', actor: options['--by'] || KIT_ACTOR, allowWrite: true };
       const count = { help: [0, 1], addons: [0], skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [2], search: [1], 'read-skill': [2], capture: [2] };
       if (options['--inbox'] && !['context', 'search', 'browse', 'read'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context, search, browse and read');
@@ -95,6 +100,16 @@ try {
         }
         else if (args[0] === 'reconcile' && args.length === 2) result = await execute(selection, 'reconcile_change', { change: args[1], ...store });
         else fail('INVALID_INPUT', help);
+      } else if (command === 'pr') {
+        if (!(args[0] === 'land' && args.length === 2 && /^[1-9][0-9]*$/.test(args[1]))) fail('INVALID_INPUT', help);
+        if (!options['--sha']) fail('INVALID_INPUT', 'pr land needs --sha <the tested head SHA>');
+        const timeout = options['--timeout'] === undefined ? undefined : Number(options['--timeout']);
+        if (timeout !== undefined && !options['--wait']) fail('INVALID_INPUT', '--timeout applies only with --wait');
+        result = await execute(selection, 'land_pull_request', { number: Number(args[1]), sha: options['--sha'], wait: Boolean(options['--wait']),
+          bootstrapPolicy: Boolean(options['--bootstrap-policy']),
+          ...Object.fromEntries([['repo', '--repo'], ['method', '--method'], ['skipReview', '--skip-review'], ['noChecks', '--no-checks']]
+            .filter(([, flag]) => options[flag] !== undefined).map(([key, flag]) => [key, options[flag]])),
+          ...(timeout === undefined ? {} : { timeout }) });
       } else {
         if (!Object.hasOwn(count, command) || !count[command].includes(args.length)) fail('INVALID_INPUT', help);
         const includeInbox = Boolean(options['--inbox']);
