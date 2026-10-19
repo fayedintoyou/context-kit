@@ -432,7 +432,7 @@ test('a skipped check passes only where the policy gives a reason', async t => {
 test('commit statuses match by context and creator', async t => {
   const { land } = await machine(t);
   const policy = { ...POLICY, expectedChecks: [{ kind: 'status', context: 'ci/legacy', creator: 'legacy-bot' }] };
-  const status = (state, login = 'legacy-bot') => ({ pages: [{ state, total_count: 1, statuses: [{ id: 9, context: 'ci/legacy', state, creator: { login }, target_url: 'https://ci.example/9' }] }] });
+  const status = (state, login = 'legacy-bot') => ({ pages: [{ state, total_count: 1, statuses: [{ id: 9, context: 'ci/legacy', state, created_at: '2026-10-19T10:00:00Z', creator: { login }, target_url: 'https://ci.example/9' }] }] });
   const ok = routes({ policy });
   ok[`GET ${R}/commits/${A}/status?per_page=100`] = [status('success'), status('success')];
   assert.equal(landed(await land(ok, LAND)).checks[0].state, 'passed');
@@ -616,7 +616,7 @@ test('a shared, forked or moved head branch is kept and the cleanup is incomplet
   refusedDelete[`GET ${R}/git/ref/heads/feature`] = [{ body: ref('feature', A) }, { body: ref('feature', A) }, { body: {} }];
   json = landed(await land(refusedDelete, LAND));
   assert.equal(json.status, 'merged_cleanup_incomplete');
-  assert.match(json.branch.kept, /malformed/);
+  assert.match(json.branch.kept, /Unexpected response/);
   // So does a malformed first read, with no delete.
   const malformedRef = routes();
   malformedRef[`GET ${R}/git/ref/heads/feature`] = [{ body: {} }];
@@ -668,54 +668,110 @@ test('a lost merge response counts only if merged at the requested head, and is 
   for (const result of [notMerged, elsewhere]) assert.equal(result.calls.filter(call => call.method === 'PUT').length, 1);
 });
 
-test('malformed evidence refuses instead of being classified or matched', async t => {
-  const { land } = await machine(t);
-  // A docs path beside an entry with no filename would otherwise look routine.
-  let result = await land(routes({ files: [file('docs/a.md'), { status: 'modified' }] }), LAND);
-  refused(result, 'EVIDENCE_INCOMPLETE');
-  assert.match(result.error.message, /missing its filename/);
-  // A rename that doesn't say what it was renamed from hides the old path.
-  result = await land(routes({ files: [file('docs/new.md', 'renamed')] }), LAND);
-  refused(result, 'EVIDENCE_INCOMPLETE');
-  assert.match(result.error.message, /previous filename/);
-  // A newer failed check run with no app would otherwise sit unseen behind an older success.
-  const { app, ...appless } = checkRun(140, 'test', 900, 'failure');
-  result = await land(routes({ runs: [checkRun(101, 'test', 900), appless] }), LAND);
-  refused(result, 'EVIDENCE_INCOMPLETE');
-  assert.match(result.error.message, /missing its id, name, app, status or check suite/);
-  for (const field of ['id', 'status', 'check_suite']) {
-    const { [field]: dropped, ...partial } = checkRun(140, 'test', 900, 'failure');
-    refused(await land(routes({ runs: [checkRun(101, 'test', 900), partial] }), LAND), 'EVIDENCE_INCOMPLETE');
-  }
-  // A falsy element in a listing is malformed too, not skipped.
+// Every response the command relies on is parsed by one schema per endpoint: from a valid
+// fixture, each required field in turn is removed, given the wrong type, emptied or made
+// negative, and each refuses EVIDENCE_INCOMPLETE with no merge call.
+const clone = value => JSON.parse(JSON.stringify(value));
+const VARIANTS = {
+  string: [['missing'], ['type', 42], ['empty', '']],
+  number: [['missing'], ['type', '7'], ['negative', -1]],
+  boolean: [['missing'], ['type', 'true']],
+  array: [['missing'], ['type', {}]],
+  object: [['missing'], ['type', 'x']],
+  null: [['missing'], ['type', 42]],
+};
+const kindOf = value => value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+function corrupted(fixtures, key, at, field, kinds) {
+  const path = [...at, ...field.split('.').map(part => /^\d+$/.test(part) ? Number(part) : part)];
+  const valid = path.reduce((value, part) => value?.[part], fixtures[key][0]);
+  assert.notEqual(valid, undefined, `${key} ${field} exists in the valid fixture`);
+  return VARIANTS[kindOf(valid)].filter(([kind]) => !kinds || kinds.includes(kind)).map(([kind, value]) => {
+    const copy = clone(fixtures);
+    const parent = path.slice(0, -1).reduce((item, part) => item[part], copy[key][0]);
+    if (kind === 'missing') delete parent[path.at(-1)]; else parent[path.at(-1)] = value;
+    return { label: `${key.split('?')[0]} ${field} ${kind}`, fixtures: copy };
+  });
+}
+async function pool(items, size, run) {
+  const queue = [...items];
+  await Promise.all(Array.from({ length: size }, async () => { while (queue.length) await run(queue.shift()); }));
+}
+
+test('every GitHub response is parsed strictly: a corrupted field refuses with no merge call', async t => {
+  const statusPolicy = { ...POLICY, expectedChecks: [TEST, { kind: 'status', context: 'ci/legacy' }] };
+  const statusPage = { pages: [{ state: 'success', total_count: 1, statuses: [{ id: 9, context: 'ci/legacy', state: 'success', created_at: '2026-10-19T10:00:00Z' }] }] };
+  const withStatus = routes({ policy: statusPolicy });
+  withStatus[`GET ${R}/commits/${A}/status?per_page=100`] = [statusPage, statusPage];
+  const withDependent = routes();
+  withDependent[`GET ${R}/pulls?state=open&base=feature&per_page=100`] = [{ pages: [[{ number: 8, base: { ref: 'feature' } }]] }];
+  const withRule = routes();
+  withRule[`GET ${R}/rules/branches/main?per_page=100`] = [{ pages: [[{ type: 'deletion' }]] }];
+  const review = { id: 5, body: record(), submitted_at: '2026-10-19T11:00:00Z', html_url: 'https://github.com/acme/widgets/pull/7#pullrequestreview-5', user: { login: 'faye' } };
+  const table = [
+    [routes(), `GET ${R}`, ['body'], ['default_branch', 'allow_squash_merge', 'allow_rebase_merge', 'allow_merge_commit']],
+    [routes(), `GET ${R}/git/ref/heads/main`, ['body'], ['object', 'object.sha']],
+    [routes(), `GET ${R}/contents/.context-kit/landing.json?ref=${TIP}`, ['body'], ['type', 'encoding', ['content', ['missing', 'type']]]],
+    [routes({ pr: { labels: [{ name: 'docs' }] } }), `GET ${R}/pulls/7`, ['body'], ['number', 'state', 'merged', 'draft', 'mergeable', 'mergeable_state',
+      'merge_commit_sha', 'changed_files', 'labels', 'labels.0.name', 'base', 'base.ref', 'base.sha', 'head', 'head.ref', 'head.sha', 'head.repo', 'head.repo.full_name']],
+    [withRule, `GET ${R}/rules/branches/main?per_page=100`, ['pages', 0, 0], ['type']],
+    [routes(), 'POST graphql', ['body'], ['data', 'data.repository', 'data.repository.mergeQueue']],
+    [routes({ files: [file('docs/new.md', 'renamed', 'docs/old.md')] }), `GET ${R}/pulls/7/files?per_page=100`, ['pages', 0, 0], ['filename', 'status', 'previous_filename']],
+    [routes(), `GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`, ['pages', 0], ['total_count', 'check_runs']],
+    [routes(), `GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`, ['pages', 0, 'check_runs', 0],
+      ['id', 'name', 'status', 'conclusion', 'app', 'app.slug', 'check_suite', 'check_suite.id']],
+    [routes(), `GET ${R}/actions/runs?head_sha=${A}&per_page=100`, ['pages', 0], ['total_count', 'workflow_runs']],
+    [routes(), `GET ${R}/actions/runs?head_sha=${A}&per_page=100`, ['pages', 0, 'workflow_runs', 0], ['id', 'check_suite_id', 'path', 'event', 'run_attempt']],
+    [withStatus, `GET ${R}/commits/${A}/status?per_page=100`, ['pages', 0], ['total_count', 'statuses']],
+    [withStatus, `GET ${R}/commits/${A}/status?per_page=100`, ['pages', 0, 'statuses', 0], ['id', 'context', 'state', 'created_at']],
+    [routes({ comments: [comment(1, record())] }), `GET ${R}/issues/7/comments?per_page=100`, ['pages', 0, 0], ['id', ['body', ['missing', 'type']], 'created_at']],
+    [routes({ reviews: [review] }), `GET ${R}/pulls/7/reviews?per_page=100`, ['pages', 0, 0], ['id', ['body', ['missing', 'type']], 'submitted_at']],
+    [withDependent, `GET ${R}/pulls?state=open&base=feature&per_page=100`, ['pages', 0, 0], ['number', 'base', 'base.ref']],
+  ];
+  const cases = table.flatMap(([fixtures, key, at, fields]) => fields.flatMap(field =>
+    Array.isArray(field) ? corrupted(fixtures, key, at, field[0], field[1]) : corrupted(fixtures, key, at, field)));
+
+  // The review's five cases, explicitly.
+  const undated = routes({ files: [file('lib/x.mjs')] });
+  const approval = comment(1, record());
+  delete approval.created_at;
+  const undatedPage = { pages: [[approval, comment(2, record({ Outcome: 'changes-requested' }))]] };
+  undated[`GET ${R}/issues/7/comments?per_page=100`] = [undatedPage, undatedPage];
+  cases.push({ label: 'an approval without created_at beside a later changes-requested', fixtures: undated });
+  const statusless = routes({ files: [{ filename: 'docs/new.md' }] });
+  cases.push({ label: 'a file without a status', fixtures: statusless });
+  const unlabelled = routes({ files: [file('docs/a.md')] });
+  const { labels, ...noLabels } = pull({ changed_files: 1 });
+  unlabelled[`GET ${R}/pulls/7`] = [{ body: noLabels }, { body: noLabels }];
+  cases.push({ label: 'a pull request without labels', fixtures: unlabelled });
+  const uncounted = routes();
+  const uncountedPage = { pages: [{ check_runs: [checkRun(101, 'test', 900)] }] };
+  uncounted[`GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`] = [uncountedPage, uncountedPage];
+  cases.push({ label: 'check runs without total_count', fixtures: uncounted });
+  cases.push({ label: 'a failed check run with id -1', fixtures: routes({ runs: [checkRun(101, 'test', 900), checkRun(-1, 'test', 900, 'failure')] }) });
+  const errorsObject = routes();
+  errorsObject['POST graphql'] = [{ body: { data: { repository: { mergeQueue: null } }, errors: { message: 'Something went wrong' } } }];
+  cases.push({ label: 'GraphQL errors that are not an array', fixtures: errorsObject });
+  // Falsy elements and empty identity fields too.
   for (const junk of [false, 0, '', null]) {
-    refused(await land(routes({ files: [file('docs/a.md'), junk] }), LAND), 'EVIDENCE_INCOMPLETE');
-    refused(await land(routes({ runs: [checkRun(101, 'test', 900), junk] }), LAND), 'EVIDENCE_INCOMPLETE');
+    cases.push({ label: `a file listing holding ${JSON.stringify(junk)}`, fixtures: routes({ files: [file('docs/a.md'), junk] }) });
+    cases.push({ label: `a check-run listing holding ${JSON.stringify(junk)}`, fixtures: routes({ runs: [checkRun(101, 'test', 900), junk] }) });
   }
-  refused(await land(routes({ files: [file('docs/a.md'), file('')] }), LAND), 'EVIDENCE_INCOMPLETE');
-  // A newer failed run with an empty name or app would otherwise be ignored, and the older success pass.
-  for (const extra of [{ name: '' }, { app: { slug: '' } }, { status: '' }]) {
-    result = await land(routes({ runs: [checkRun(101, 'test', 900), checkRun(140, 'test', 900, 'failure', extra)] }), LAND);
-    refused(result, 'EVIDENCE_INCOMPLETE');
-  }
-  const statusPolicy = { ...POLICY, expectedChecks: [{ kind: 'status', context: 'ci/legacy' }] };
-  const emptyContext = routes({ policy: statusPolicy });
-  emptyContext[`GET ${R}/commits/${A}/status?per_page=100`] = [{ pages: [{ state: 'success', total_count: 2, statuses: [
-    { id: 9, context: 'ci/legacy', state: 'success', creator: { login: 'bot' } }, { id: 10, context: '', state: 'failure', creator: { login: 'bot' } }] }] }];
-  refused(await land(emptyContext, LAND), 'EVIDENCE_INCOMPLETE');
-  // A newer failed Actions check whose workflow run lacks its path or event, or has them empty.
-  for (const [field, value] of [['path', ''], ['event', '']]) {
-    result = await land(routes({ runs: [checkRun(101, 'test', 900), checkRun(140, 'test', 910, 'failure')],
-      workflows: [workflowRun(50, 900, '.github/workflows/checks.yml'), { ...workflowRun(60, 910, '.github/workflows/checks.yml'), [field]: value }] }), LAND);
-    refused(result, 'EVIDENCE_INCOMPLETE');
-  }
-  for (const field of ['path', 'event']) {
-    const { [field]: dropped, ...partial } = workflowRun(60, 910, '.github/workflows/checks.yml');
-    result = await land(routes({ runs: [checkRun(101, 'test', 900), checkRun(140, 'test', 910, 'failure')],
-      workflows: [workflowRun(50, 900, '.github/workflows/checks.yml'), partial] }), LAND);
-    refused(result, 'EVIDENCE_INCOMPLETE');
-    assert.match(result.error.message, /missing its path or event/);
-  }
+
+  assert.ok(cases.length > 120, `${cases.length} cases`);
+  await pool(cases, 6, async ({ label, fixtures }) => {
+    const { land } = await machine(t);
+    const result = await land(fixtures, LAND);
+    assert.equal(result.error?.code, 'EVIDENCE_INCOMPLETE', `${label}: ${JSON.stringify(result.error ?? result.json?.status)}`);
+    assert.equal(result.merged, false, `${label}: no merge call`);
+  });
+
+  // After the merge nothing can be refused, so a malformed answer keeps the branch.
+  const { land } = await machine(t);
+  const unconfirmed = routes();
+  unconfirmed[`GET ${R}/compare/main...${M}`] = [{ body: { status: 'bogus' } }];
+  const result = await land(unconfirmed, LAND);
+  assert.equal(landed(result).status, 'merged_cleanup_incomplete');
+  assert.ok(!result.keys.some(key => key.startsWith('DELETE')));
 });
 
 // spec: pull-request-landing / A required merge queue

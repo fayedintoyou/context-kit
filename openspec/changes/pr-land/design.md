@@ -78,6 +78,12 @@ The schema is validated strictly; unknown keys or a malformed file refuse (`INVA
   statuses for the head SHA, the Actions workflow runs for the head SHA, issue comments, reviews,
   labels, the repository's default branch and merge settings, and open pull requests whose base is the
   head ref.
+- **Strict parsing:** every response the command relies on is parsed through one strict schema per
+  endpoint (pull request, files, check runs, workflow runs, statuses, comments, reviews, GraphQL,
+  refs, compare, rulesets, contents): required fields present with the right type, identity fields
+  non-empty, ids positive integers, states from GitHub's enums, dates ISO, `total_count` required.
+  Any failure refuses `EVIDENCE_INCOMPLETE` before anything is classified, matched or merged; after
+  the merge, a malformed answer keeps the branch. Review records are ordered by parsed date, then id.
 - **Completeness:** the changed files must equal the pull request's `changed_files`. Over GitHub's
   3,000-file listing cap, or on any mismatch, read error or malformed response, it refuses
   (`EVIDENCE_INCOMPLETE`). Missing data never means routine or passing.
