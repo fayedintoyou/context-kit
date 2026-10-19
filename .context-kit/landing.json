@@ -1,0 +1,9 @@
+{
+  "expectedChecks": [
+    { "name": "structural (22)", "app": "github-actions", "workflow": ".github/workflows/checks.yml", "event": "pull_request" },
+    { "name": "structural (24)", "app": "github-actions", "workflow": ".github/workflows/checks.yml", "event": "pull_request" },
+    { "name": "openspec / canonical-guard", "app": "github-actions", "workflow": ".github/workflows/archive.yml", "event": "pull_request" },
+    { "name": "openspec / archive-rehearsal", "app": "github-actions", "workflow": ".github/workflows/archive.yml", "event": "pull_request" }
+  ],
+  "routine": { "paths": ["docs/**", "README.md"], "excludePaths": ["openspec/**"] }
+}
