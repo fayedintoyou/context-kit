@@ -60,6 +60,30 @@ Pending gates are not a finished handoff. Passing review or CI is not merge
 authorization; reuse existing scoped authorization and ask only for missing
 authorization or changed scope.
 
+## Post a review record
+
+When an output review of a pull request finishes, the reviewer, or the agent
+relaying the reviewer's result, posts this block as a pull request comment (or in a
+review body), so `context-kit pr land` can find it:
+
+```
+<!-- context-kit:review -->
+Reviewed-SHA: <40-hex sha>
+Phase: output
+Reviewer: <model or person, and run id>
+Outcome: approved | approved-with-deferrals | changes-requested
+Findings: <material found / resolved / deferred, one line>
+Evidence: <link to the review run or transcript>
+```
+
+`Reviewed-SHA` is the exact head that was reviewed; a record for any other SHA is
+stale, so post a new one after fixes change the head. Use `approved-with-deferrals`
+only when no material blocker is unresolved and only non-blocking findings are
+deferred. Post `changes-requested` when material findings remain; the newest record
+for a head decides. Record a plan review with `Phase: plan` if you like; it never
+approves a landing. Every field is required. The record is audit evidence, not proof
+of independence: the comment carries whoever posted it.
+
 ## Report
 
 Name the reviewers, the important findings, what changed, what was verified,

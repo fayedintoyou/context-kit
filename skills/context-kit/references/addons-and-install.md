@@ -45,7 +45,16 @@ npm run agents -- uninstall [--agent claude,codex]
   fail it. An existing hook that Context Kit didn't write is kept and reported as a
   conflict; add `npm run -s hub -- repos sync` to it yourself, or `--force`.
   Uninstall removes the hooks once no agent items remain.
+- Claude Code gets the merge tripwire: a `PreToolUse` hook on Bash running the
+  core's `bin/merge-guard.mjs`, which denies raw `gh pr merge` and `gh api` PUTs to
+  a pull request's merge endpoint and points to `pr land` (see `commands`). User
+  scope writes `$CLAUDE_CONFIG_DIR/settings.json` (default
+  `~/.claude/settings.json`); project scope writes `<project>/.claude/settings.local.json`.
+  Other keys and hooks are kept; malformed settings are refused untouched
+  (`SETTINGS_MALFORMED`); an entry you edited is kept and reported `edited` unless
+  `--force`. Codex has no such hook and is reported `unsupported`.
 - `status` reports each item `installed`, `changed`, `stale` (source changed;
-  reinstall) or `missing`, and `broken` if the Node path moved.
+  reinstall) or `missing`, and `broken` if the Node path moved; the tripwire is
+  `installed`, `edited` or `missing`.
 
 Restart the agent after installing or changing addons.

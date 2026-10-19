@@ -25,7 +25,7 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   specs parties --store <id>
   specs status <change> | specs next <change> | specs slice <change> <slice> | specs reconcile <change>   [--store <id>]
   specs archivable | specs archive --ready | specs archive --rehearse   [--store <id>]
-  pr land <number> --sha <tested-sha> [--repo owner/name] [--wait] [--timeout <minutes>] [--method squash|rebase|merge]
+  pr land <number> --sha <tested-sha> [--repo owner/name] [--wait] [--timeout <minutes>] [--method squash/rebase/merge]
       [--skip-review "<reason>"] [--no-checks "<reason>"] [--bootstrap-policy]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
