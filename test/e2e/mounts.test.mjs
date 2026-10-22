@@ -144,8 +144,13 @@ test('a source answering 401 fails fast with FETCH_FAILED and changes nothing', 
 
 // spec: hub-federation / Mount a hub from another repository
 test('mounts add pins a hub from another repository and fetches it outside hubs/', async t => {
-  const { workspace, cli, config, repository } = await fixture(t);
-  const source = await repository('shared-context', under('hubs/data', hub('team/data', { 'README.md': 'human-reviewed', 'tables/orders.md': 'unverified' })));
+  const { base, workspace, cli, config, repository } = await fixture(t);
+  // A symlinked directory in the mounted tree is never walked: its concepts are not counted.
+  const outside = join(base, 'outside');
+  await mkdir(outside);
+  await writeFile(join(outside, 'secret.md'), '---\ntype: Guide\n---\n# Outside\n');
+  const source = await repository('shared-context', { ...under('hubs/data', hub('team/data', { 'README.md': 'human-reviewed', 'tables/orders.md': 'unverified' })),
+    'hubs/data/elsewhere': { symlink: outside } });
   const hubsBefore = await listing(join(workspace, 'hubs'));
   const added = await cli('mounts', 'add', 'shared', source.url, '--path', 'hubs/data');
   assert.equal(added.code, 0, added.output);
@@ -157,7 +162,7 @@ test('mounts add pins a hub from another repository and fetches it outside hubs/
   assert.deepEqual(await listing(join(workspace, 'hubs')), hubsBefore);
   // The export is read-only and lives in untracked state.
   const [key] = (await readdir(join(workspace, '.state/mounts/shared')));
-  await assert.rejects(writeFile(join(workspace, '.state/mounts/shared', key, 'README.md'), 'changed'), { code: 'EACCES' });
+  if (process.getuid?.() !== 0) await assert.rejects(writeFile(join(workspace, '.state/mounts/shared', key, 'README.md'), 'changed'), { code: 'EACCES' });
 });
 
 // spec: hub-federation / Source is not a hub
