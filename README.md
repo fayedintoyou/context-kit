@@ -50,9 +50,20 @@ npx -y github:fayedintoyou/context-kit setup ~/context --addons reflect,review -
 ```
 
 `setup` creates the workspace pinned to a core commit, runs `npm install`, and
-installs it into Claude Code and Codex: the enabled addons' skills go into each
-agent's skill directory, and one MCP server for the workspace is registered
+installs it into Claude Code and Codex: the enabled addons' skills are installed
+where those agents read them, and one MCP server for the workspace is registered
 through each agent's own CLI.
+
+Skills go to the fewest locations that cover the agents you select: Claude Code's
+`~/.claude/skills` (or `$CLAUDE_CONFIG_DIR/skills`) when Claude Code is selected,
+and one shared copy in `~/.agents/skills`, which Codex, Gemini CLI (`gemini`) and
+Cursor (`cursor`) read, when any of them is. Cursor also reads `~/.claude/skills`,
+so with Claude Code it needs no second copy. Shared copies keep only the Agent
+Skills standard frontmatter keys, and uninstalling one agent keeps them while
+another still uses them. Gemini CLI and Cursor get skills only for now; their MCP
+registration is reported `unsupported`. Reinstalling for Codex moves the copies an
+older core put in `$CODEX_HOME/skills` to `~/.agents/skills`, removing each only
+after its replacement is in place and matches; one you edited is kept and reported.
 
 | Addon | Gives you |
 |---|---|

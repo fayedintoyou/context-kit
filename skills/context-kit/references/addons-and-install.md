@@ -28,14 +28,55 @@ npm run agents -- status
 npm run agents -- uninstall [--agent claude,codex]
 ```
 
-- Skills go to Claude Code (`~/.claude/skills`, or `<project>/.claude/skills`) and
-  Codex (`$CODEX_HOME/skills`, or `<project>/.agents/skills`).
+- `--agent` takes `claude`, `codex`, `gemini` (Gemini CLI) and `cursor`; the
+  default is `claude,codex`. Gemini CLI and Cursor get skills only for now: their
+  MCP registration and the merge tripwire are reported `unsupported`.
+- Skills go to the fewest locations that cover the selection, one copy each:
+
+  | Location | User scope | Project scope | Read by |
+  |---|---|---|---|
+  | Claude Code's | `$CLAUDE_CONFIG_DIR/skills` (default `~/.claude/skills`) | `<project>/.claude/skills` | Claude Code; Cursor (`~/.claude/skills` only) |
+  | Shared | `~/.agents/skills` | `<project>/.agents/skills` | Codex, Gemini CLI, Cursor |
+
+  Claude Code's directory is used when Claude Code is selected, the shared one when
+  Codex or Gemini CLI is, or when Cursor isn't already covered. Shared copies keep
+  only the Agent Skills standard keys (`name`, `description`, `license`,
+  `compatibility`, `metadata`, `allowed-tools`); Claude Code's keep every key.
+  Nothing is written to `$CODEX_HOME/skills` or `~/.gemini/skills`.
+- A shared copy's record lists every agent it serves. `uninstall --agent codex`
+  keeps a copy Gemini CLI still uses (reported `kept`, `STILL_USED`) and status
+  then reports it for Gemini CLI only; the last agent's uninstall removes it.
+- **Codex's old copies move.** An older core installed Codex skills in
+  `$CODEX_HOME/skills`. A user-scope install for Codex installs each into
+  `~/.agents/skills`, checks the copy matches its source, and only then removes the
+  old copy from the directory its record names (not today's `$CODEX_HOME`),
+  reporting it `moved`. The old copy and its record stay, reported `kept` with a
+  code, when the old copy was edited (`SKILL_EDITED`, until `--force`) or its
+  replacement wasn't installed: a skill of that name Context Kit didn't write
+  (`SKILL_FOREIGN`), a shared copy edited since install (`SKILL_EDITED`), a
+  directory that isn't writable (`NOT_WRITABLE`), or a symbolic link in the path to
+  `~/.agents/skills` (`SYMLINKED_PATH`; Context Kit writes and deletes there only
+  through real directories). The rest still move; rerun install once it's fixed.
 - One MCP server named after the workspace is registered through each agent's CLI.
 - `install` is a sync: rerun it after changing addons or upgrading the core.
 - It never overwrites or removes a skill it did not create or that you edited;
-  `--force` overrides.
-- `--link` symlinks skills so edits apply immediately (not possible for Codex when
-  a skill needs adapted frontmatter).
+  `--force` overrides. A copy is built beside its destination and swapped in by
+  rename, so a failure leaves the previous copy in place; leftovers older than an
+  hour from an interrupted install are swept on the next one. A skill, hook or
+  settings file that can't be written is reported `failed` with a code
+  (`NOT_WRITABLE`, `WRITE_FAILED`, `NOT_READABLE`, `READ_FAILED`) rather than
+  stopping the install, and what was already done stays recorded. A hook that
+  can't be read is never replaced. The records (`.state/agents.json`) are written
+  by temporary file and rename, and `install`, `uninstall` and `repos sync` first
+  check they can be written: if not, they fail with `RECORDS_UNWRITABLE` before
+  changing anything. An invalid `--name` fails before anything is written. Before
+  swapping a copy in, install records it as `pending`: its new mode, source, content
+  hash and the built copy's device and inode. An install interrupted after the swap
+  is completed by the next one (`unchanged`, `recovered: true`) only when that very
+  file is in place. A copy with no record, or one an equal hash alone would match,
+  is never claimed: it stays `SKILL_FOREIGN`.
+- `--link` symlinks skills so edits apply immediately (not possible in the shared
+  location when a skill needs adapted frontmatter).
 - Project scope keeps Claude Code's server private to the project; Codex needs
   `--global-mcp`.
 - When repositories are registered, the generated `my-repos` skill is installed

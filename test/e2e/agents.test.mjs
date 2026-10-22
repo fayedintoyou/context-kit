@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, chmod, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, rm, realpath, symlink } from 'node:fs/promises';
+import { access, chmod, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, link, rename, rm, realpath, symlink, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +54,9 @@ async function fixture(t, { agents = ['claude', 'codex'], addons } = {}) {
   const calls = async () => (await readFile(join(base, 'calls.jsonl'), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(JSON.parse);
   return { base, env, workspace, run, calls, agents: (...args) => run(['--root', workspace, 'agents', ...args]) };
 }
+// Where each harness's user skills are in the fixture: Claude Code's own directory, and the
+// shared ~/.agents/skills for the others.
+const skillsOf = (base, agent) => agent === 'claude' ? join(base, 'claude/skills') : join(base, 'home/.agents/skills');
 const byAction = results => Object.fromEntries(results.map(item => [`${item.agent}:${item.kind}:${item.name}`, item.action]));
 
 // spec: agent-installation / Install for Claude Code and Codex
@@ -61,14 +64,15 @@ test('install puts enabled skills and the MCP server into both agents', async t 
   const { base, workspace, calls, agents } = await fixture(t);
   const installed = await agents('install');
   assert.equal(installed.code, 0, JSON.stringify(installed.error));
-  for (const [dir, agent] of [[join(base, 'claude/skills'), 'claude'], [join(base, 'codex/skills'), 'codex']]) {
+  for (const [dir, agent] of [[join(base, 'claude/skills'), 'claude'], [join(base, 'home/.agents/skills'), 'codex']]) {
     assert.deepEqual((await readdir(dir)).sort(), ['audit-canonical-specs', 'context-kit', 'garden-canonical-specs', 'independent-review', 'reconcile-change', 'reflect', 'slice-change'], agent);
   }
+  assert.equal(await exists(join(base, 'codex/skills')), false, 'nothing under $CODEX_HOME/skills');
   assert.match(await readFile(join(base, 'claude/skills/reflect/SKILL.md'), 'utf8'), /^disable-model-invocation: true$/m);
-  const codexReflect = await readFile(join(base, 'codex/skills/reflect/SKILL.md'), 'utf8');
+  const codexReflect = await readFile(join(base, 'home/.agents/skills/reflect/SKILL.md'), 'utf8');
   assert.doesNotMatch(codexReflect, /disable-model-invocation/);
   assert.match(codexReflect, /^name: reflect$/m);
-  assert.match(await readFile(join(base, 'codex/skills/reflect/references/synthesizer.md'), 'utf8'), /^# Reflect: synthesizer/);
+  assert.match(await readFile(join(base, 'home/.agents/skills/reflect/references/synthesizer.md'), 'utf8'), /^# Reflect: synthesizer/);
 
   const adds = (await calls()).filter(call => call.args.includes('add'));
   const server = [process.execPath, join(kit, 'bin/mcp.mjs'), '--root', workspace, '--no-skill-prompts'];
@@ -164,9 +168,9 @@ test('linked skills follow their source', async t => {
   const source = await workspaceAddon(workspace);
   const result = await agents('install', '--link');
   assert.equal(result.code, 0, JSON.stringify(result.error));
-  for (const agent of ['claude', 'codex']) assert.ok((await lstat(join(base, agent, 'skills/house-style'))).isSymbolicLink());
+  for (const agent of ['claude', 'codex']) assert.ok((await lstat(join(skillsOf(base, agent), 'house-style'))).isSymbolicLink());
   await writeFile(join(source, 'SKILL.md'), '---\nname: house-style\ndescription: How I write.\n---\n\nIterated wording.\n');
-  assert.match(await readFile(join(base, 'codex/skills/house-style/SKILL.md'), 'utf8'), /Iterated wording/);
+  assert.match(await readFile(join(base, 'home/.agents/skills/house-style/SKILL.md'), 'utf8'), /Iterated wording/);
   // Reflect needs adapted frontmatter for Codex, so it cannot be linked there.
   const codexReflect = result.json.results.find(item => item.agent === 'codex' && item.name === 'reflect');
   assert.equal(codexReflect.action, 'conflict');
@@ -185,15 +189,15 @@ test('install and uninstall never touch skills they did not create or that were 
   assert.match(conflict.reason, new RegExp(`${join(base, 'claude/skills/reflect')} exists .* --force`));
   assert.equal(await readFile(join(base, 'claude/skills/reflect/SKILL.md'), 'utf8'), 'mine');
 
-  await writeFile(join(base, 'codex/skills/independent-review/SKILL.md'), 'edited by hand');
+  await writeFile(join(base, 'home/.agents/skills/independent-review/SKILL.md'), 'edited by hand');
   const removed = await agents('uninstall');
   const actions = byAction(removed.json.results);
   assert.equal(actions['codex:skill:independent-review'], 'kept');
   assert.equal(actions['claude:skill:audit-canonical-specs'], 'removed');
   assert.equal(actions['claude:mcp:context-workspace'], 'removed');
-  assert.equal(await readFile(join(base, 'codex/skills/independent-review/SKILL.md'), 'utf8'), 'edited by hand');
+  assert.equal(await readFile(join(base, 'home/.agents/skills/independent-review/SKILL.md'), 'utf8'), 'edited by hand');
   assert.equal(await readFile(join(base, 'claude/skills/reflect/SKILL.md'), 'utf8'), 'mine');
-  assert.equal(await exists(join(base, 'codex/skills/reflect')), false);
+  assert.equal(await exists(join(base, 'home/.agents/skills/reflect')), false);
   assert.ok((await calls()).some(call => call.agent === 'codex' && call.args.join(' ') === 'mcp remove context-workspace'));
   assert.deepEqual((await agents('status')).json.items.map(item => [item.agent, item.name, item.state]), [['codex', 'independent-review', 'changed']]);
 });
@@ -205,7 +209,7 @@ test('a missing agent CLI skips MCP registration but installs skills', async t =
   assert.equal(result.code, 0, JSON.stringify(result.error));
   const codex = result.json.results.find(item => item.agent === 'codex' && item.kind === 'mcp');
   assert.deepEqual([codex.action, codex.reason], ['skipped', 'codex CLI not found on PATH']);
-  assert.ok(await exists(join(base, 'codex/skills/reflect/SKILL.md')));
+  assert.ok(await exists(join(base, 'home/.agents/skills/reflect/SKILL.md')));
   assert.equal(result.json.results.find(item => item.agent === 'claude' && item.kind === 'mcp').action, 'installed');
 });
 
@@ -240,7 +244,7 @@ test('install copies the generated my-repos skill into both agents, even with --
   const installed = await agents('install', '--link');
   assert.equal(installed.code, 0, JSON.stringify(installed.error));
   for (const agent of ['claude', 'codex']) {
-    const path = join(base, agent, 'skills/my-repos');
+    const path = join(skillsOf(base, agent), 'my-repos');
     assert.equal((await lstat(path)).isSymbolicLink(), false, agent);
     assert.match(await readFile(join(path, 'SKILL.md'), 'utf8'), /^name: my-repos$/m);
   }
@@ -259,7 +263,7 @@ test('reinstalling after the last repository is gone removes my-repos', async t 
   const again = await agents('install');
   assert.equal(byAction(again.json.results)['claude:skill:my-repos'], 'removed');
   assert.equal(await exists(join(base, 'claude/skills/my-repos')), false);
-  assert.equal(await exists(join(base, 'codex/skills/my-repos')), false);
+  assert.equal(await exists(join(base, 'home/.agents/skills/my-repos')), false);
 });
 
 // spec: agent-installation / Pulled hub changes
@@ -271,7 +275,7 @@ test('status reports my-repos stale after a new repository arrives, and install 
   const stale = await agents('status');
   assert.deepEqual(stale.json.items.filter(item => item.name === 'my-repos').map(item => item.state), ['stale', 'stale']);
   await agents('install');
-  assert.match(await readFile(join(base, 'codex/skills/my-repos/SKILL.md'), 'utf8'), /the garden/);
+  assert.match(await readFile(join(base, 'home/.agents/skills/my-repos/SKILL.md'), 'utf8'), /the garden/);
   assert.ok((await agents('status')).json.items.every(item => item.state === 'installed'));
 });
 
@@ -281,14 +285,14 @@ test('locating a repository updates installed copies without reinstalling', asyn
   await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
   await agents('install');
   // An edited copy is left alone and reported.
-  await writeFile(join(base, 'codex/skills/my-repos/SKILL.md'), 'mine\n');
+  await writeFile(join(base, 'home/.agents/skills/my-repos/SKILL.md'), 'mine\n');
   const before = (await calls()).length;
   const path = await gitCheckout(join(base, 'room'), 'https://github.com/me/room');
   const located = await run(['--root', workspace, 'repos', 'locate', 'room', path]);
   assert.equal(located.code, 0, JSON.stringify(located.error));
   assert.deepEqual(byAction(located.json.skills), { 'claude:skill:my-repos': 'updated', 'codex:skill:my-repos': 'conflict' });
   assert.ok((await readFile(join(base, 'claude/skills/my-repos/SKILL.md'), 'utf8')).includes(`https://github.com/me/room at ${path}`));
-  assert.equal(await readFile(join(base, 'codex/skills/my-repos/SKILL.md'), 'utf8'), 'mine\n');
+  assert.equal(await readFile(join(base, 'home/.agents/skills/my-repos/SKILL.md'), 'utf8'), 'mine\n');
   assert.equal((await calls()).length, before, 'no agent CLI calls');
 });
 
@@ -303,7 +307,7 @@ test('repos sync rebuilds my-repos from the Repository concepts without touching
   assert.equal(synced.code, 0, JSON.stringify(synced.error));
   assert.deepEqual(byAction(synced.json.results), { 'claude:skill:my-repos': 'updated', 'codex:skill:my-repos': 'updated' });
   for (const agent of ['claude', 'codex']) {
-    assert.match((await readFile(join(base, agent, 'skills/my-repos/SKILL.md'), 'utf8')).split('\n---')[0], /^description: .*fayelore\.com/m, agent);
+    assert.match((await readFile(join(skillsOf(base, agent), 'my-repos/SKILL.md'), 'utf8')).split('\n---')[0], /^description: .*fayelore\.com/m, agent);
   }
   assert.equal((await calls()).length, before, 'no agent CLI calls');
   assert.ok((await agents('status')).json.items.every(item => item.state === 'installed'));
@@ -351,7 +355,7 @@ test('a pull that brings a new repository rebuilds the installed my-repos skill'
   await git(other, 'commit', '-qm', 'garden');
   await git(other, 'push', '-q');
   await git(workspace, 'pull', '-q', '--no-rebase');
-  for (const agent of ['claude', 'codex']) assert.match(await readFile(join(base, agent, 'skills/my-repos/SKILL.md'), 'utf8'), /the garden/, agent);
+  for (const agent of ['claude', 'codex']) assert.match(await readFile(join(skillsOf(base, agent), 'my-repos/SKILL.md'), 'utf8'), /the garden/, agent);
   const status = await agents('status');
   assert.ok(status.json.items.every(item => item.state === 'installed'), JSON.stringify(status.json.items));
   assert.deepEqual(status.json.items.filter(item => item.kind === 'hook').map(item => item.name), ['post-merge', 'post-rewrite']);
@@ -390,11 +394,11 @@ test('repositories whose minimal entries overflow one description shard evenly i
   assert.equal(installed.code, 0, JSON.stringify(installed.error));
   assert.deepEqual(installed.json.skipped, {});
   for (const agent of ['claude', 'codex']) {
-    const skills = (await readdir(join(base, agent, 'skills'))).filter(name => name.startsWith('my-repos'));
+    const skills = (await readdir(skillsOf(base, agent))).filter(name => name.startsWith('my-repos'));
     assert.deepEqual(skills.sort(), ['my-repos', 'my-repos-2'], agent);
     const named = [];
     for (const skill of skills) {
-      const front = await frontmatter(join(base, agent, 'skills', skill));
+      const front = await frontmatter(join(skillsOf(base, agent), skill));
       assert.equal(front.name, skill);
       assert.ok(points(front.description) <= 1024, `${skill} is ${points(front.description)} code points`);
       const here = ids.filter(id => front.description.includes(`repo ${id} (${id}-nickname-`));
@@ -412,8 +416,8 @@ test('repositories whose minimal entries overflow one description shard evenly i
   assert.equal(synced.code, 0, JSON.stringify(synced.error));
   assert.deepEqual(byAction(synced.json.results.filter(item => item.name === 'my-repos-2')), { 'claude:skill:my-repos-2': 'removed', 'codex:skill:my-repos-2': 'removed' });
   for (const agent of ['claude', 'codex']) {
-    assert.equal(await exists(join(base, agent, 'skills/my-repos-2')), false, agent);
-    const front = await frontmatter(join(base, agent, 'skills/my-repos'));
+    assert.equal(await exists(join(skillsOf(base, agent), 'my-repos-2')), false, agent);
+    const front = await frontmatter(join(skillsOf(base, agent), 'my-repos'));
     for (const id of ids.slice(0, 10)) assert.ok(front.description.includes(`repo ${id}`), `${agent} names ${id}`);
   }
   assert.equal(synced.json.skills.length, 1);
@@ -435,4 +439,439 @@ test('a repository with the longest allowed title and twenty longest aliases fit
   assert.ok(skipped.length > 0);
   assert.deepEqual(aliases.filter(alias => !front.description.includes(alias)), skipped);
   assert.equal(await exists(join(base, 'claude/skills/my-repos-2')), false);
+});
+
+const BUNDLED = ['audit-canonical-specs', 'context-kit', 'garden-canonical-specs', 'independent-review', 'reconcile-change', 'reflect', 'slice-change'];
+const STANDARD_KEYS = ['name', 'description', 'license', 'compatibility', 'metadata', 'allowed-tools'];
+const skillResults = (results, name) => results.filter(item => item.kind === 'skill' && item.name === name);
+
+// spec: agent-installation / Claude Code with harnesses that share
+test('Claude Code, Codex and Gemini CLI get Claude Code\'s directory and one shared copy', async t => {
+  const { base, env, agents } = await fixture(t);
+  const installed = await agents('install', '--agent', 'claude,codex,gemini');
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  const shared = join(env.HOME, '.agents/skills');
+  assert.deepEqual((await readdir(join(base, 'claude/skills'))).sort(), BUNDLED);
+  assert.deepEqual((await readdir(shared)).sort(), BUNDLED);
+  assert.equal(await exists(join(base, 'codex/skills')), false);
+  assert.equal(await exists(join(env.HOME, '.gemini')), false);
+  // One copy each place: the shared result names both harnesses it serves.
+  assert.deepEqual(skillResults(installed.json.results, 'reflect').map(item => [item.path, item.agents, item.action]),
+    [[join(base, 'claude/skills/reflect'), ['claude'], 'installed'], [join(shared, 'reflect'), ['codex', 'gemini'], 'installed']]);
+  for (const name of BUNDLED) {
+    const keys = Object.keys(await frontmatter(join(shared, name)));
+    assert.ok(keys.every(key => STANDARD_KEYS.includes(key)), `${name}: ${keys}`);
+  }
+  assert.match(await readFile(join(base, 'claude/skills/reflect/SKILL.md'), 'utf8'), /^disable-model-invocation: true$/m);
+  const gemini = installed.json.results.filter(item => item.agent === 'gemini' && item.kind !== 'skill');
+  assert.deepEqual(gemini.map(item => [item.kind, item.action]), [['mcp', 'unsupported'], ['guard', 'unsupported']]);
+  const status = await agents('status');
+  assert.deepEqual(status.json.items.filter(item => item.name === 'reflect').map(item => [item.agent, item.path, item.state]),
+    [['claude', join(base, 'claude/skills/reflect'), 'installed'], ['codex', join(shared, 'reflect'), 'installed'], ['gemini', join(shared, 'reflect'), 'installed']]);
+});
+
+// spec: agent-installation / Cursor with or without Claude Code
+test('Cursor alone gets the shared directory, and with Claude Code reads Claude Code\'s copy', async t => {
+  // Cursor reads ~/.claude/skills, so Claude Code's directory must be the default one here.
+  const alone = await fixture(t);
+  const home = alone.env.HOME;
+  assert.equal((await alone.run(['--root', alone.workspace, 'agents', 'install', '--agent', 'cursor'], { CLAUDE_CONFIG_DIR: '' })).code, 0);
+  assert.deepEqual((await readdir(join(home, '.agents/skills'))).sort(), BUNDLED);
+  assert.equal(await exists(join(home, '.claude')), false);
+
+  const both = await fixture(t);
+  const installed = await both.run(['--root', both.workspace, 'agents', 'install', '--agent', 'claude,cursor'], { CLAUDE_CONFIG_DIR: '' });
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  assert.deepEqual((await readdir(join(both.env.HOME, '.claude/skills'))).sort(), BUNDLED);
+  assert.equal(await exists(join(both.env.HOME, '.agents')), false);
+  assert.deepEqual(skillResults(installed.json.results, 'reflect').map(item => item.agents), [['claude', 'cursor']]);
+
+  // With CLAUDE_CONFIG_DIR elsewhere, Cursor can't see Claude Code's copy, so it gets the shared one.
+  const moved = await fixture(t);
+  assert.equal((await moved.agents('install', '--agent', 'claude,cursor')).code, 0);
+  assert.deepEqual((await readdir(join(moved.base, 'claude/skills'))).sort(), BUNDLED);
+  assert.deepEqual((await readdir(join(moved.env.HOME, '.agents/skills'))).sort(), BUNDLED);
+});
+
+// spec: agent-installation / Selective uninstall of shared copies
+test('uninstalling one harness keeps the shared copies another still uses', async t => {
+  const { env, agents, calls } = await fixture(t);
+  const shared = join(env.HOME, '.agents/skills');
+  assert.equal((await agents('install', '--agent', 'codex,gemini')).code, 0);
+  const first = await agents('uninstall', '--agent', 'codex');
+  assert.equal(first.code, 0, JSON.stringify(first.error));
+  const reflect = skillResults(first.json.results, 'reflect')[0];
+  assert.deepEqual([reflect.action, reflect.code, reflect.reason], ['kept', 'STILL_USED', 'still used by Gemini CLI']);
+  assert.deepEqual((await readdir(shared)).sort(), BUNDLED);
+  assert.ok((await calls()).some(call => call.agent === 'codex' && call.args.join(' ') === 'mcp remove context-workspace'));
+  const status = await agents('status');
+  const skills = status.json.items.filter(item => item.kind === 'skill');
+  assert.equal(skills.length, BUNDLED.length);
+  assert.ok(skills.every(item => item.agent === 'gemini' && item.state === 'installed'), JSON.stringify(skills));
+  const second = await agents('uninstall', '--agent', 'gemini');
+  assert.ok(skillResults(second.json.results, 'reflect').every(item => item.action === 'removed'));
+  assert.deepEqual(await readdir(shared), []);
+  assert.deepEqual((await agents('status')).json.items, []);
+});
+
+// Records as a core from before the shared location wrote them: Codex skills under
+// <codexHome>/skills, each naming one agent and no location.
+// The old core kept Codex's five keys, the standard set less `compatibility`. No bundled skill
+// declares `compatibility`, so its copies were byte-identical to today's shared ones.
+async function legacyCodexInstall({ env, workspace, agents }, codexHome) {
+  for (const name of BUNDLED) assert.doesNotMatch(await readFile(join(kit, 'skills', name, 'SKILL.md'), 'utf8'), /^compatibility:/m, name);
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  const legacy = join(codexHome, 'skills');
+  await mkdir(codexHome, { recursive: true });
+  await rename(join(env.HOME, '.agents/skills'), legacy);
+  const file = join(workspace, '.state/agents.json');
+  const state = JSON.parse(await readFile(file, 'utf8'));
+  state.items = state.items.map(({ agents: _, location, scope, ...item }) => item.kind !== 'skill' ? { ...item, ...(scope ? { scope } : {}) }
+    : { agent: 'codex', ...item, path: join(legacy, item.name) });
+  await writeFile(file, JSON.stringify(state, null, 2));
+  return legacy;
+}
+const records = async workspace => JSON.parse(await readFile(join(workspace, '.state/agents.json'), 'utf8')).items.filter(item => item.kind === 'skill')
+  .map(item => ({ agents: item.agents ?? [item.agent], name: item.name, path: item.path, installedHash: item.installedHash }));
+
+// spec: agent-installation / Upgrade an existing Codex install
+test('reinstalling for Codex moves its unchanged legacy copies to the shared location and keeps an edited one', async t => {
+  const machine = await fixture(t);
+  const { base, env, workspace, agents } = machine;
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const legacy = await legacyCodexInstall(machine, join(base, 'codex'));
+  const all = [...BUNDLED, 'my-repos'].sort();
+  assert.deepEqual((await readdir(legacy)).sort(), all);
+  await writeFile(join(legacy, 'independent-review/SKILL.md'), 'edited by hand');
+  const upgraded = await agents('install', '--agent', 'codex');
+  assert.equal(upgraded.code, 0, JSON.stringify(upgraded.error));
+  const shared = join(env.HOME, '.agents/skills');
+  assert.deepEqual((await readdir(shared)).sort(), all);
+  assert.deepEqual(await readdir(legacy), ['independent-review']);
+  assert.equal(await readFile(join(legacy, 'independent-review/SKILL.md'), 'utf8'), 'edited by hand');
+  const moves = upgraded.json.results.filter(item => item.kind === 'skill' && item.path.startsWith(legacy));
+  assert.deepEqual(moves.map(item => [item.name, item.action, item.code]).sort(),
+    all.map(name => name === 'independent-review' ? [name, 'kept', 'SKILL_EDITED'] : [name, 'moved', undefined]));
+  assert.equal(moves.find(item => item.name === 'my-repos').to, join(shared, 'my-repos'));
+  const kept = moves.find(item => item.name === 'independent-review');
+  assert.match(kept.reason, /edited since install/);
+  assert.equal(kept.replacement, join(shared, 'independent-review'));
+  // The edited copy keeps its record; everything else is recorded once, in the shared location.
+  assert.deepEqual((await records(workspace)).filter(item => item.path.startsWith(legacy)).map(item => item.name), ['independent-review']);
+  const status = await agents('status');
+  assert.deepEqual(status.json.items.filter(item => item.name === 'independent-review').map(item => [item.path, item.state]).sort(),
+    [[join(legacy, 'independent-review'), 'changed'], [join(shared, 'independent-review'), 'installed']]);
+  // Nothing left to move: the next install changes nothing, and uninstall still keeps the edit.
+  const again = await agents('install', '--agent', 'codex');
+  assert.ok(again.json.results.filter(item => item.kind === 'skill').every(item => ['unchanged', 'kept'].includes(item.action)));
+  const removed = await agents('uninstall');
+  assert.deepEqual(byAction(removed.json.results.filter(item => item.path?.startsWith(legacy))), { 'codex:skill:independent-review': 'kept' });
+  assert.deepEqual(await readdir(shared), []);
+});
+
+// spec: agent-installation / Destination blocked
+test('a foreign or edited shared copy keeps that legacy Codex copy, and the rest move', async t => {
+  const machine = await fixture(t);
+  const { base, env, workspace, agents } = machine;
+  const shared = join(env.HOME, '.agents/skills');
+  const legacy = await legacyCodexInstall(machine, join(base, 'codex'));
+  // Gemini CLI installed the shared copies since; one was edited, and one is foreign: its record is gone.
+  assert.equal((await agents('install', '--agent', 'gemini')).code, 0);
+  await writeFile(join(shared, 'slice-change/SKILL.md'), 'edited for Gemini');
+  await writeFile(join(shared, 'reflect/SKILL.md'), 'mine');
+  const file = join(workspace, '.state/agents.json');
+  const state = JSON.parse(await readFile(file, 'utf8'));
+  state.items = state.items.filter(item => item.path !== join(shared, 'reflect'));
+  await writeFile(file, JSON.stringify(state));
+
+  const result = await agents('install', '--agent', 'codex');
+  assert.equal(result.code, 0, JSON.stringify(result.error));
+  const moves = Object.fromEntries(result.json.results.filter(item => item.kind === 'skill' && item.path.startsWith(legacy)).map(item => [item.name, item]));
+  assert.deepEqual([moves.reflect.action, moves.reflect.code], ['kept', 'SKILL_FOREIGN']);
+  assert.match(moves.reflect.reason, /was not installed by Context Kit/);
+  assert.deepEqual([moves['slice-change'].action, moves['slice-change'].code], ['kept', 'SKILL_EDITED']);
+  assert.match(moves['slice-change'].reason, /edited since install/);
+  for (const name of BUNDLED.filter(name => !['reflect', 'slice-change'].includes(name))) assert.equal(moves[name].action, 'moved', name);
+  assert.deepEqual((await readdir(legacy)).sort(), ['reflect', 'slice-change']);
+  assert.equal(await readFile(join(shared, 'reflect/SKILL.md'), 'utf8'), 'mine');
+  assert.equal(await readFile(join(shared, 'slice-change/SKILL.md'), 'utf8'), 'edited for Gemini');
+  assert.deepEqual((await records(workspace)).filter(item => item.path.startsWith(legacy)).map(item => item.name).sort(), ['reflect', 'slice-change']);
+  // The shared copies Gemini CLI already had now serve Codex too.
+  assert.deepEqual((await records(workspace)).find(item => item.path === join(shared, 'context-kit')).agents, ['gemini', 'codex']);
+});
+
+// spec: agent-installation / Destination blocked
+test('an unwritable or symlinked shared directory keeps every legacy Codex copy and its record', async t => {
+  for (const blocked of ['unwritable', 'symlinked']) {
+    if (blocked === 'unwritable' && process.getuid?.() === 0) continue;
+    const machine = await fixture(t);
+    const { base, env, workspace, agents } = machine;
+    const legacy = await legacyCodexInstall(machine, join(base, 'codex'));
+    const before = await records(workspace);
+    const elsewhere = join(base, 'elsewhere');
+    if (blocked === 'unwritable') {
+      await mkdir(join(env.HOME, '.agents/skills'), { recursive: true });
+      await chmod(join(env.HOME, '.agents/skills'), 0o555);
+    } else {
+      await mkdir(elsewhere);
+      await rm(join(env.HOME, '.agents'), { recursive: true });
+      await symlink(elsewhere, join(env.HOME, '.agents'));
+    }
+    const result = await agents('install', '--agent', 'codex');
+    assert.equal(result.code, 0, JSON.stringify(result.error));
+    const code = blocked === 'unwritable' ? 'NOT_WRITABLE' : 'SYMLINKED_PATH';
+    const shared = result.json.results.filter(item => item.kind === 'skill' && !item.path.startsWith(legacy));
+    assert.ok(shared.length && shared.every(item => item.action === 'failed' && item.code === code), JSON.stringify(shared));
+    const kept = result.json.results.filter(item => item.kind === 'skill' && item.path.startsWith(legacy));
+    assert.deepEqual(kept.map(item => item.name).sort(), BUNDLED);
+    assert.ok(kept.every(item => item.action === 'kept' && item.code === code && /was not installed/.test(item.reason)), JSON.stringify(kept));
+    assert.deepEqual((await readdir(legacy)).sort(), BUNDLED);
+    assert.deepEqual(await records(workspace), before);
+    if (blocked === 'symlinked') assert.deepEqual(await readdir(elsewhere), [], 'nothing written through the link');
+    assert.ok((await agents('status')).json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+    if (blocked === 'unwritable') {
+      // Once it is writable again, the move completes.
+      await chmod(join(env.HOME, '.agents/skills'), 0o755);
+      const retried = await agents('install', '--agent', 'codex');
+      assert.ok(retried.json.results.filter(item => item.kind === 'skill' && item.path.startsWith(legacy)).every(item => item.action === 'moved'));
+      assert.deepEqual(await readdir(legacy), []);
+    }
+  }
+});
+
+// spec: agent-installation / Codex home changed since install
+test('legacy Codex copies are moved from the recorded directory, not today\'s $CODEX_HOME', async t => {
+  const machine = await fixture(t);
+  const { base, env, workspace, run } = machine;
+  const legacy = await legacyCodexInstall(machine, join(base, 'old-codex-home'));
+  // Today's default Codex home holds a skill of the same name that Context Kit never wrote.
+  await mkdir(join(env.HOME, '.codex/skills/reflect'), { recursive: true });
+  await writeFile(join(env.HOME, '.codex/skills/reflect/SKILL.md'), 'mine');
+  const result = await run(['--root', workspace, 'agents', 'install', '--agent', 'codex'], { CODEX_HOME: '' });
+  assert.equal(result.code, 0, JSON.stringify(result.error));
+  assert.deepEqual(await readdir(legacy), []);
+  assert.ok(result.json.results.filter(item => item.kind === 'skill' && item.path.startsWith(legacy)).every(item => item.action === 'moved'));
+  assert.deepEqual(await readdir(join(env.HOME, '.codex/skills')), ['reflect']);
+  assert.equal(await readFile(join(env.HOME, '.codex/skills/reflect/SKILL.md'), 'utf8'), 'mine');
+  assert.deepEqual((await readdir(join(env.HOME, '.agents/skills'))).sort(), BUNDLED);
+});
+
+// spec: agent-installation / Upgrade an existing Codex install
+test('a hook that cannot be written still leaves the move recorded, so the next install is clean', async t => {
+  if (process.getuid?.() === 0) return t.skip('permissions do not bind root');
+  const machine = await fixture(t);
+  const { base, env, workspace, agents } = machine;
+  const legacy = await legacyCodexInstall(machine, join(base, 'codex'));
+  await promisify(execFile)('git', ['init', '-q'], { cwd: workspace });
+  const hooks = join(workspace, '.git/hooks');
+  await mkdir(hooks, { recursive: true });
+  await chmod(hooks, 0o555);
+  const upgraded = await agents('install', '--agent', 'codex');
+  await chmod(hooks, 0o755);
+  assert.equal(upgraded.code, 0, JSON.stringify(upgraded.error));
+  assert.deepEqual(upgraded.json.results.filter(item => item.kind === 'hook').map(item => [item.name, item.action, item.code]),
+    [['post-merge', 'failed', 'NOT_WRITABLE'], ['post-rewrite', 'failed', 'NOT_WRITABLE']]);
+  assert.deepEqual(await readdir(legacy), []);
+  const shared = join(env.HOME, '.agents/skills');
+  assert.deepEqual((await records(workspace)).map(item => item.path).sort(), BUNDLED.map(name => join(shared, name)));
+  const again = await agents('install', '--agent', 'codex');
+  assert.ok(again.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'unchanged'), JSON.stringify(again.json.results));
+  assert.deepEqual(again.json.results.filter(item => item.kind === 'hook').map(item => item.action), ['installed', 'installed']);
+  const removed = await agents('uninstall');
+  assert.ok(removed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'removed'));
+  assert.deepEqual(await readdir(shared), []);
+});
+
+test('install sweeps copies an interrupted install left behind, but not recent ones', async t => {
+  const { env, agents } = await fixture(t);
+  const shared = join(env.HOME, '.agents/skills');
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  // Age comes from the creation time in the name: a set-aside copy keeps its old mtime.
+  const stale = join(shared, `.context-kit-reflect-123-${Date.now() - 2 * 3600000}-old`);
+  const recent = join(shared, `.context-kit-reflect-456-${Date.now()}-old`);
+  for (const path of [stale, recent]) { await mkdir(path); await writeFile(join(path, 'SKILL.md'), 'left over'); }
+  const yearAgo = new Date(Date.now() - 365 * 24 * 3600000);
+  await utimes(recent, yearAgo, yearAgo);
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  assert.equal(await exists(stale), false);
+  assert.ok(await exists(recent));
+});
+
+// spec: agent-installation / Upgrade an existing Codex install
+test('records that cannot be written stop the install before any legacy copy is deleted', async t => {
+  if (process.getuid?.() === 0) return t.skip('permissions do not bind root');
+  const machine = await fixture(t);
+  const { base, env, workspace, agents } = machine;
+  const legacy = await legacyCodexInstall(machine, join(base, 'codex'));
+  const file = join(workspace, '.state/agents.json');
+  const before = await readFile(file, 'utf8');
+  await chmod(file, 0o444);
+  const refused = await agents('install', '--agent', 'codex');
+  await chmod(file, 0o644);
+  assert.notEqual(refused.code, 0);
+  assert.equal(refused.error.code, 'RECORDS_UNWRITABLE');
+  assert.match(refused.error.message, /nothing was changed/);
+  assert.deepEqual((await readdir(legacy)).sort(), BUNDLED);
+  assert.equal(await exists(join(env.HOME, '.agents/skills')), false);
+  assert.equal(await readFile(file, 'utf8'), before);
+  const upgraded = await agents('install', '--agent', 'codex');
+  assert.ok(upgraded.json.results.filter(item => item.kind === 'skill' && item.path.startsWith(legacy)).every(item => item.action === 'moved'));
+  assert.deepEqual(await readdir(legacy), []);
+});
+
+test('records are replaced by rename, never rewritten in place', async t => {
+  const { workspace, agents } = await fixture(t);
+  assert.equal((await agents('install', '--agent', 'claude')).code, 0);
+  const file = join(workspace, '.state/agents.json');
+  // A hard link keeps the old file: a rename leaves it whole, an in-place write would change it.
+  const probe = join(workspace, '.state/probe.json');
+  await link(file, probe);
+  const before = await readFile(probe, 'utf8');
+  await workspaceAddon(workspace);
+  assert.equal((await agents('install', '--agent', 'claude')).code, 0);
+  assert.equal(await readFile(probe, 'utf8'), before);
+  assert.notEqual(await readFile(file, 'utf8'), before);
+  assert.ok(JSON.parse(await readFile(file, 'utf8')).items.some(item => item.name === 'house-style'));
+  assert.deepEqual((await readdir(join(workspace, '.state'))).filter(name => name.startsWith('agents.json.')), []);
+});
+
+// spec: agent-installation / Existing hooks are kept
+test('a hook that cannot be read is reported and never replaced', async t => {
+  if (process.getuid?.() === 0) return t.skip('permissions do not bind root');
+  const { base, workspace, agents } = await fixture(t);
+  await gitWorkspace(base, workspace);
+  const hook = join(workspace, '.git/hooks/post-merge');
+  await writeFile(hook, '#!/bin/sh\necho mine\n');
+  await chmod(hook, 0o000);
+  const installed = await agents('install', '--agent', 'claude');
+  await chmod(hook, 0o755);
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  const hooks = Object.fromEntries(installed.json.results.filter(item => item.kind === 'hook').map(item => [item.name, item]));
+  assert.deepEqual([hooks['post-merge'].action, hooks['post-merge'].code], ['failed', 'NOT_READABLE']);
+  assert.equal(hooks['post-rewrite'].action, 'installed');
+  assert.equal(await readFile(hook, 'utf8'), '#!/bin/sh\necho mine\n');
+});
+
+test('an invalid server name fails before anything is written', async t => {
+  const { base, env, workspace, agents } = await fixture(t);
+  const result = await agents('install', '--name', 'Not Kebab');
+  assert.equal(result.error.code, 'INVALID_INPUT');
+  assert.equal(await exists(join(base, 'claude/skills')), false);
+  assert.equal(await exists(join(env.HOME, '.agents')), false);
+  assert.equal(await exists(join(workspace, '.state/agents.json')), false);
+});
+
+// Runs the CLI with a preload that SIGKILLs it at the first skill swap into a directory under
+// `inside`, just before or just after the rename: before its records are saved, as a power cut
+// would. The workspace defaults to the fixture's.
+async function killedAtFirstSwap(machine, args, { inside = '/.agents/skills/', when = 'after', root = machine.workspace } = {}) {
+  const preload = join(machine.base, 'kill-at-swap.mjs');
+  await writeFile(preload, `import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+import { basename } from 'node:path';
+const rename = fs.rename;
+fs.rename = async (from, to) => {
+  const swap = String(to).includes(process.env.KILL_INSIDE) && !basename(String(to)).startsWith('.');
+  if (swap && process.env.KILL_WHEN === 'before') process.kill(process.pid, 'SIGKILL');
+  const result = await rename(from, to);
+  if (swap && process.env.KILL_WHEN === 'after') process.kill(process.pid, 'SIGKILL');
+  return result;
+};
+syncBuiltinESMExports();
+`);
+  return promisify(execFile)(process.execPath, ['--import', preload, join(kit, 'bin/hub.mjs'), '--root', root, ...args], { env: { ...machine.env, KILL_INSIDE: inside, KILL_WHEN: when } })
+    .then(() => 'finished', error => error.signal);
+}
+const killedAfterFirstSwap = (machine, args) => killedAtFirstSwap(machine, args);
+
+// spec: agent-installation / Upgrade an existing Codex install
+test('an install killed right after a swap is completed by the next, without --force', async t => {
+  const machine = await fixture(t);
+  const { base, env, workspace, agents } = machine;
+  const legacy = await legacyCodexInstall(machine, join(base, 'codex'));
+  assert.equal(await killedAfterFirstSwap(machine, ['agents', 'install', '--agent', 'codex']), 'SIGKILL');
+  const shared = join(env.HOME, '.agents/skills');
+  const placed = (await readdir(shared)).filter(name => !name.startsWith('.'));
+  assert.equal(placed.length, 1);
+  assert.equal((await agents('status')).json.items.find(item => item.path === join(shared, placed[0])).state, 'installed');
+  const recovered = await agents('install', '--agent', 'codex');
+  assert.equal(recovered.code, 0, JSON.stringify(recovered.error));
+  const first = recovered.json.results.find(item => item.path === join(shared, placed[0]));
+  assert.deepEqual([first.action, first.recovered], ['unchanged', true]);
+  assert.ok(recovered.json.results.filter(item => item.kind === 'skill').every(item => !item.code), JSON.stringify(recovered.json.results));
+  assert.deepEqual(await readdir(legacy), []);
+  assert.deepEqual((await records(workspace)).map(item => item.path).sort(), BUNDLED.map(name => join(shared, name)));
+  assert.ok((await agents('status')).json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+});
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('an identical copy Context Kit never placed is not claimed, and survives install and uninstall', async t => {
+  const { env, agents } = await fixture(t);
+  const shared = join(env.HOME, '.agents/skills');
+  await mkdir(shared, { recursive: true });
+  await promisify(execFile)('cp', ['-R', join(kit, 'skills/independent-review'), join(shared, 'independent-review')]);
+  const installed = await agents('install', '--agent', 'codex');
+  const mine = skillResults(installed.json.results, 'independent-review')[0];
+  assert.deepEqual([mine.action, mine.code], ['conflict', 'SKILL_FOREIGN']);
+  const removed = await agents('uninstall');
+  assert.equal(skillResults(removed.json.results, 'independent-review').length, 0);
+  assert.deepEqual(await readdir(shared), ['independent-review']);
+});
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('a second workspace does not claim the first one\'s shared copies', async t => {
+  const machine = await fixture(t);
+  const { base, env, run, agents } = machine;
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  const second = join(base, 'second');
+  await run(['init', second]);
+  const theirs = await run(['--root', second, 'agents', 'install', '--agent', 'codex']);
+  assert.ok(theirs.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'conflict' && item.code === 'SKILL_FOREIGN'));
+  await run(['--root', second, 'agents', 'uninstall']);
+  assert.deepEqual((await readdir(join(env.HOME, '.agents/skills'))).sort(), BUNDLED);
+  assert.ok((await agents('status')).json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+});
+
+// spec: agent-installation / Iterate on a linked skill
+test('a kill right after a swap between --link and copy is completed by the next install, both ways', async t => {
+  for (const [from, to] of [[[], ['--link']], [['--link'], []]]) {
+    const machine = await fixture(t);
+    const { base, agents } = machine;
+    const skills = join(base, 'claude/skills');
+    assert.equal((await agents('install', '--agent', 'claude', ...from)).code, 0);
+    assert.equal(await killedAtFirstSwap(machine, ['agents', 'install', '--agent', 'claude', ...to], { inside: '/claude/skills/' }), 'SIGKILL', `${from} -> ${to}`);
+    const status = await agents('status');
+    assert.ok(status.json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'), JSON.stringify(status.json.items));
+    const recovered = await agents('install', '--agent', 'claude', ...to);
+    const skillsOut = recovered.json.results.filter(item => item.kind === 'skill');
+    assert.ok(skillsOut.every(item => !item.code), JSON.stringify(skillsOut));
+    assert.equal(skillsOut.filter(item => item.recovered).length, 1, `${from} -> ${to}`);
+    const linked = to.includes('--link');
+    for (const name of BUNDLED) assert.equal((await lstat(join(skills, name))).isSymbolicLink(), linked, `${name} ${from} -> ${to}`);
+    const removed = await agents('uninstall');
+    assert.ok(removed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'removed'));
+    assert.deepEqual((await readdir(skills)).filter(name => !name.startsWith('.')), []);
+  }
+});
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('a workspace killed before its swap does not claim the copy another workspace put there', async t => {
+  const machine = await fixture(t);
+  const { base, env, run, workspace } = machine;
+  const shared = join(env.HOME, '.agents/skills');
+  assert.equal(await killedAtFirstSwap(machine, ['agents', 'install', '--agent', 'codex'], { when: 'before' }), 'SIGKILL');
+  const pending = JSON.parse(await readFile(join(workspace, '.state/agents.json'), 'utf8')).items.find(item => item.pending);
+  assert.ok(pending, 'a pending record was saved before the swap');
+  const second = join(base, 'second');
+  await run(['init', second]);
+  assert.equal((await run(['--root', second, 'agents', 'install', '--agent', 'codex'])).code, 0);
+  // Same version, so the same bytes: only the inode tells the copies apart.
+  const again = await run(['--root', workspace, 'agents', 'install', '--agent', 'codex']);
+  const theirs = again.json.results.find(item => item.path === pending.path);
+  assert.deepEqual([theirs.action, theirs.code], ['conflict', 'SKILL_FOREIGN']);
+  await run(['--root', workspace, 'agents', 'uninstall']);
+  assert.ok(await exists(pending.path));
+  const status = await run(['--root', second, 'agents', 'status']);
+  assert.ok(status.json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+  assert.deepEqual((await readdir(shared)).filter(name => !name.startsWith('.')).sort(), BUNDLED);
 });

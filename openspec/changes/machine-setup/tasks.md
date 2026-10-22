@@ -11,9 +11,9 @@
 
 ## 2. Shared skills location (slice `shared-skills`)
 
-- [ ] 2.1 Add per-location installs to `lib/install.mjs`: `~/.agents/skills` with the six standard keys, Claude Code's directory, fewest locations, and records shared by several harnesses (`agents: [...]`); verify `test/e2e/agents.test.mjs` linked to `agent-installation / Install for Claude Code and Codex` (Codex now under `~/.agents/skills`), `Claude Code with harnesses that share` and `Selective uninstall of shared copies`
-- [ ] 2.2 Move Codex's recorded copies from their recorded legacy directory, removing each only after its replacement is installed and its hash verified; keep the legacy copy and record on conflict or failure; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Upgrade an existing Codex install`, `Destination blocked` and `Codex home changed since install`
-- [ ] 2.3 Update README Install and `skills/context-kit/references/addons-and-install.md` with the locations; verify `node bin/hub.mjs validate`
+- [x] 2.1 Add per-location installs to `lib/install.mjs`: `~/.agents/skills` with the six standard keys, Claude Code's directory, fewest locations, and records shared by several harnesses (`agents: [...]`); verify `test/e2e/agents.test.mjs` linked to `agent-installation / Install for Claude Code and Codex` (Codex now under `~/.agents/skills`), `Claude Code with harnesses that share` and `Selective uninstall of shared copies`
+- [x] 2.2 Move Codex's recorded copies from their recorded legacy directory, removing each only after its replacement is installed and its hash verified; keep the legacy copy and record on conflict or failure; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Upgrade an existing Codex install`, `Destination blocked` and `Codex home changed since install`
+- [x] 2.3 Update README Install and `skills/context-kit/references/addons-and-install.md` with the locations; verify `node bin/hub.mjs validate`
 
 ## 3. More harnesses (slice `harnesses`)
 
