@@ -64,7 +64,7 @@ untracked `.state/checkouts.json`:
 - `repos scan <directory> [--depth <n>]` records every matching checkout of a
   repository with no recorded path, in the directory and its subdirectories down to
   `<n>` levels (default 1, at most 6; 0 is the directory alone). It never enters
-  hidden directories, `node_modules` or a checkout below the directory, and never
+  hidden directories, `node_modules`, a symlink or a checkout below the directory, and never
   replaces a recorded path that still exists.
 - `repos setup` sets up a new machine, below.
 
