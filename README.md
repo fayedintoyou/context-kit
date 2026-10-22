@@ -77,13 +77,15 @@ after its replacement is in place and matches; one you edited is kept and report
 |---|---|
 | `core` (always) | OKF hubs, progressive `browse`/`read`, `search`, `capture`, skills |
 | `specs` | OpenSpec specs from repositories and shared stores, structural audits, gardening signals, change progress and review skills |
+| `maps` (opt-in) | Behavior maps: journeys of what a person sees, citing specs, checked and rendered as Mermaid |
 | `reflect` | Turn a conversation's learnings into reviewed edits on skills and hubs |
 | `review` | Independent plan and output review |
 
 Your own skills are addons too: put `addons/<name>/addon.json` (`name`,
 `description`, `skills`) and `addons/<name>/skills/<skill>/SKILL.md` in your
 workspace and enable it. Enabled addons live in `context-kit.json`; `--addons
-none` gives just the core.
+none` gives just the core, and opt-in addons such as `maps` are enabled only when
+named (`--addons maps,specs`).
 
 From inside a workspace:
 
@@ -179,6 +181,19 @@ on every push to the default branch, tests the result and pushes the archive, an
 fails pull requests that edit `openspec/specs/` directly or whose changes would not
 archive into valid canonical specs (`specs archive --rehearse`).
 
+## Maps
+
+A behavior map (statechart-like) shows a journey the way the person living it
+experiences it, *A teammate posts → What kind of post is it? → The room shows a
+number badge*, with every state citing the spec behaviors behind it. An agent
+drafts `maps/<name>.md` with the [behavior-map](skills/behavior-map/SKILL.md)
+skill; Context Kit checks it deterministically. `maps behaviors --source openspec`
+lists what a map can cite, with fingerprints. `maps check` reports structure,
+citation, coverage and plain-language label problems (`--strict` for CI), and
+`maps render` draws it as Mermaid or JSON, byte-identical for the same inputs;
+`--write` puts the diagram in the map file so GitHub shows it. Nothing is executed
+and MCP never writes maps. See [docs/maps.md](docs/maps.md).
+
 ## Contribute
 
 Update the relevant hub when work changes its understanding. Keep source links
@@ -199,7 +214,7 @@ can invoke it directly; Claude Code shows them as `/mcp__<server>__<skill>`.
 Bundled skills: `context-kit` (help for using Context Kit, always installed), `independent-review` (plan and output review),
 `audit-canonical-specs` (evidence-based spec audits), `garden-canonical-specs`
 (spec maintenance proposals), `slice-change` and `reconcile-change` (delivering a
-change in slices) and `reflect` (three
+change in slices), `behavior-map` (drafting behavior maps) and `reflect` (three
 parallel reviewers turn a conversation's learnings into proposed edits on skills
 and hub knowledge, applied only after approval). Improve them with `reflect`
 itself.

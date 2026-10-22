@@ -8,7 +8,7 @@
 | `INVALID_CONFIG` | `context-kit.json` (including its `mounts`), an `addon.json`, install records, `openspec/taxonomy.yaml`, a store's `openspec/parties.yaml` or a change's `slices.yaml` are invalid, or a plan's base branch is missing |
 | `INVALID_INBOX` | An unexpected file sits in a hub's `inbox/` |
 | `INVALID_PATH`, `PATH_ESCAPE` | A path uses `..`, a dot directory, or a symlink leaving its root |
-| `NOT_FOUND`, `UNKNOWN_HUB`, `UNKNOWN_CONCEPT`, `UNKNOWN_PATH`, `UNKNOWN_SKILL`, `UNKNOWN_SPEC`, `UNKNOWN_STORE`, `UNKNOWN_OPERATION`, `UNKNOWN_TOPIC` | Nothing by that name; list first |
+| `NOT_FOUND`, `UNKNOWN_HUB`, `UNKNOWN_CONCEPT`, `UNKNOWN_PATH`, `UNKNOWN_SKILL`, `UNKNOWN_SPEC`, `UNKNOWN_STORE`, `UNKNOWN_MAP`, `UNKNOWN_OPERATION`, `UNKNOWN_TOPIC` | Nothing by that name; list first |
 | `NOT_A_CONCEPT` | A reserved or nonconformant file was read as a concept |
 | `NO_HUBS` | The root has no `hubs/` or `examples/`; check `--root` |
 | `NOT_A_GIT_REPOSITORY` | Change progress is derived from git; run `specs status` in a git checkout |
@@ -20,7 +20,7 @@
 | `WORKSPACE_EXISTS` | `init`/`setup` only create new directories |
 | `TOO_LARGE` | A file or result exceeds its limit; split it |
 | `WRONG_SPEC_ROOT`, `ADAPTER_FAILED`, `ADAPTER_FORMAT` | OpenSpec resolved another root or failed; check the repository and stores |
-| `SNAPSHOT_CHANGED` | Files changed during an audit; rerun on a stable tree |
+| `SNAPSHOT_CHANGED` | Files changed during an audit, or a map file while `maps render --write` ran; rerun on a stable tree |
 | `DUPLICATE_REQUIREMENT` | A spec repeats a requirement name |
 | `INVALID_REPOSITORY` | A Repository concept lacks a git `resource`, has bad `aliases`, or shares an alias (see `repositories`) |
 | `UNKNOWN_REPOSITORY`, `AMBIGUOUS_REPOSITORY` | No repository, or more than one, has that name; use `repos` and the id |

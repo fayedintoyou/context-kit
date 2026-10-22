@@ -6,6 +6,7 @@
 |---|---|
 | `core` (always) | Hubs, browse, read, search, capture, skills, help, and this skill |
 | `specs` | OpenSpec specs and audits, and the `audit-canonical-specs` skill |
+| `maps` (opt-in) | Behavior maps checked and rendered from specs, and the `behavior-map` skill |
 | `reflect` | The `reflect` skill |
 | `review` | The `independent-review` skill |
 
@@ -13,6 +14,9 @@ The workspace's `context-kit.json` lists enabled addons:
 `{"version": 1, "addons": ["reflect", "specs"]}`. `addons` shows what is
 available and enabled. Disabled addons' tools disappear and their CLI commands
 return `ADDON_DISABLED`. Choose at creation with `--addons a,b` or `--addons none`.
+Without `--addons`, a new workspace gets every kit addon except opt-in ones
+(`maps`): name them, as in `--addons maps,specs`, or add them to
+`context-kit.json` later.
 
 **Your own skills** become an addon: create `addons/<name>/addon.json`
 (`{"name", "description", "skills": ["my-skill"]}`) and

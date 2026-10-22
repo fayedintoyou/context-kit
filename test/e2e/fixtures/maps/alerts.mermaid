@@ -1,0 +1,11 @@
+flowchart TD
+  n_posted(("A teammate posts"))
+  n_what_kind{"What kind of post is it?"}
+  n_dot("A quiet dot appears next to the room")
+  n_badge("The room shows a number badge")
+  n_seen(["You've seen it"])
+  n_posted --> n_what_kind
+  n_what_kind -->|"A post in a room, no @mention"| n_dot
+  n_what_kind -->|"A DM or an @mention"| n_badge
+  n_dot --> n_seen
+  n_badge --> n_seen

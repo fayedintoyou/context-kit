@@ -1,0 +1,11 @@
+flowchart TD
+  n_bell(("You #99;lick the bell at 3#58;00 pm"))
+  n_price{"Is it 50#37; off, or full price?"}
+  n_sale("A sign says #quot;Sale#quot; #38; #35;1 deal")
+  n_pick("Pick a #115;tyle#58; the #101;nd of the list")
+  n_done(["Done#59; that's the #101;nd"])
+  n_bell --> n_price
+  n_price -->|"50#37; or more"| n_sale
+  n_price -->|"Full price#59; #99;lass is over"| n_pick
+  n_sale --> n_done
+  n_pick --> n_done

@@ -48,6 +48,11 @@ repos` works anywhere (see `repositories`).
 | `specs archivable` | `archivable_changes` | Which active changes are ready to archive, or their blockers (`--store`) |
 | `specs archive --ready` | — | Archive ready changes and validate (CLI only, no commit; `--store`) |
 | `specs archive --rehearse` | — | Archive every active change into a scratch copy and report what would fail validation (CLI only, changes nothing, non-zero on an issue; `--store`) |
+| `maps behaviors --source openspec` | `list_behaviors` | Behaviors a map can cite, with fingerprints (`--store`; maps addon, see `maps`) |
+| `maps list` | `list_maps` | The repository's behavior maps |
+| `maps check [<map>]` | `check_map` | Checks maps: errors and warnings (`--strict` also fails on warnings) |
+| `maps render <map>` | `render_map` | Mermaid diagram or, with `--format json`, the resolved model |
+| `maps render <map> --write` | — | Writes the generated diagram into the map file (CLI only; `write_map_diagram`) |
 | `pr land <n> --sha <sha>` | — | Lands a pull request through its gates, merging pinned to the tested SHA (CLI only, never over MCP; `land_pull_request`) |
 
 ## Landing a pull request

@@ -63,6 +63,11 @@ title with another, with a title over 80 characters or an alias or keyword over
 or alias. `repos add` refuses names over these bounds. Local checkout paths are never stored in hubs (see the `repositories`
 help topic).
 
+A concept with `type: BehaviorMap` is a behavior map: one fenced `yaml map` block
+with a source, a scope, nodes and transitions, and optionally a generated Mermaid
+diagram between `context-kit:diagram` markers. A repository keeps its maps in
+`maps/<name>.md`; `maps check` validates them (see [maps](maps.md)).
+
 `index.md` files carry no frontmatter, except `okf_version` in the hub-root index.
 Every `##` heading in a `log.md` is a `YYYY-MM-DD` date.
 

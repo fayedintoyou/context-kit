@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, readFile, readdir, rm, realpath, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,6 +60,24 @@ test('default server is read-only and no tool accepts a root', async t => {
   assert.equal(rooted.isError, true);
   assert.equal(parse(rooted).error.code, 'INVALID_INPUT');
   assert.equal(parse(await client.callTool({ name: 'nope', arguments: {} })).error.code, 'UNKNOWN_OPERATION');
+});
+
+// spec: behavior-maps / No write tools over MCP
+test('map tools over MCP are read-only, even with writes allowed', async t => {
+  const { connect, workspace } = await fixture(t);
+  await writeFile(join(workspace, 'context-kit.json'), JSON.stringify({ version: 1, addons: ['maps', 'reflect', 'review', 'specs'] }));
+  const client = await connect('--allow-write');
+  const { tools } = await client.listTools();
+  const names = tools.map(tool => tool.name);
+  assert.ok(names.includes('capture_note'));
+  for (const name of ['list_behaviors', 'list_maps', 'check_map', 'render_map']) {
+    const tool = tools.find(item => item.name === name);
+    assert.ok(tool, name);
+    assert.equal(tool.annotations.readOnlyHint, true, name);
+  }
+  assert.ok(!names.some(name => /map/.test(name) && !['list_maps', 'check_map', 'render_map'].includes(name)), names.join(', '));
+  const write = await client.callTool({ name: 'write_map_diagram', arguments: { map: 'alerts' } });
+  assert.equal(parse(write).error.code, 'UNKNOWN_OPERATION');
 });
 
 // spec: context-workspaces / Captured note records its author
