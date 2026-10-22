@@ -1257,7 +1257,7 @@ test('a workspace whose copies were deleted does not remove the identical ones a
   assert.ok(status.json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
 });
 
-// spec: agent-installation / Codex skills move to the shared location
+// spec: agent-installation / Upgrade an existing Codex install
 test('a legacy Codex copy replaced since install is left in place and its record dropped', async t => {
   const machine = await fixture(t);
   const { base, env, workspace, agents } = machine;
