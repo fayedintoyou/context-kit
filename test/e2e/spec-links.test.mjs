@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, writeFile, rm, realpath, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, realpath, symlink, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,14 +23,22 @@ async function put(root, path, content) {
 }
 // A repository whose canonical `Use Search` is linked, with change `deliver` planned in slices
 // `storage` (Radius) and `api` (Ordering); `unplanned` adds a requirement no slice names and
-// `plain` a change without a plan. PATH holds only git, so no real gh is asked about pull requests.
-async function fixture(t, { unplanned = false, plain = false } = {}) {
+// `plain` a change without a plan. PATH holds only git, so no real gh is asked about pull requests;
+// with `gh`, a fake gh answers every call with the pull requests last given to `pulls`.
+async function fixture(t, { unplanned = false, plain = false, gh = false } = {}) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'context-kit-links-')));
   t.after(() => rm(base, { recursive: true, force: true }));
   const root = join(base, 'repo');
   const bin = join(base, 'bin');
   await mkdir(bin);
   await symlink((await exec('sh', ['-c', 'command -v git'])).stdout.trim(), join(bin, 'git'));
+  const pullsFile = join(base, 'pulls.json');
+  const pulls = list => writeFile(pullsFile, JSON.stringify(list));
+  if (gh) {
+    await pulls([]);
+    await writeFile(join(bin, 'gh'), `#!/bin/sh\nexec /bin/cat '${pullsFile}'\n`);
+    await chmod(join(bin, 'gh'), 0o755);
+  }
   const env = { ...process.env, PATH: bin, HOME: base, XDG_DATA_HOME: join(base, 'data'), XDG_CONFIG_HOME: join(base, 'config'),
     OPENSPEC_TELEMETRY: '0', DO_NOT_TRACK: '1', OPENSPEC_NO_UPDATE_CHECK: '1', GIT_CONFIG_NOSYSTEM: '1' };
   delete env.CONTEXT_KIT_ROOT;
@@ -78,9 +86,12 @@ async function fixture(t, { unplanned = false, plain = false } = {}) {
     try { return JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', root, ...args], { env })).stdout); }
     catch (error) { return JSON.parse(error.stderr || error.stdout); }
   };
-  return { base, root, env, git, gitIn, link, land, detachedClone, check, cli };
+  return { base, root, env, git, gitIn, link, land, detachedClone, check, cli, pulls };
 }
 const missing = (stderr, name) => stderr.includes(`scenario "locations / Use ${name}" has no linked test`);
+const unrecorded = 'slice storage has landed on main, but this tree has no record of that landing; if the branch is behind main, update it (rebase/merge main) and re-run; otherwise link the test';
+const behind = (stderr, name) => stderr.includes(`scenario "locations / Use ${name}" has no linked test — ${unrecorded}`);
+const commitAll = async (git, message) => { await git('add', '.'); await git('commit', '-qm', message); };
 
 // spec: change-progress / Unstarted slices are pending
 test('scenarios of unstarted slices are pending and do not fail the link check', async t => {
@@ -144,6 +155,79 @@ test('a landed slice must link its scenarios', async t => {
   await git('commit', '-qm', 'Link radius');
   result = await check();
   assert.equal(result.code, 0, result.stderr);
+});
+
+// spec: change-progress / Branch behind a landed slice
+test('a branch behind a landed slice still fails, saying the tree has no record of the landing', async t => {
+  const { root, git, gitIn, link, land, detachedClone, check } = await fixture(t);
+  await git('checkout', '-qb', 'work');
+  await put(root, 'docs/work.md', 'Unrelated work.\n');
+  await commitAll(git, 'Unrelated work');
+  const before = (await git('rev-parse', 'main')).stdout.trim();
+  await git('checkout', '-q', 'main');
+  await land('storage');
+  await git('checkout', '-q', 'work');
+  let result = await check();
+  assert.equal(result.code, 1, result.stdout);
+  assert.ok(behind(result.stderr, 'Radius'), result.stderr);
+  assert.ok(!missing(result.stderr, 'Ordering'), result.stderr);
+  assert.match(result.stdout, /^✖ locations \/ Use Radius {2}no landing record: deliver slice storage landed on main; if the branch is behind, update it$/m);
+  // A re-run of a pull request's merge ref made before storage landed.
+  const ci = await detachedClone(before);
+  await gitIn(ci, 'merge', '-q', '--no-ff', '-m', 'Merge work into main', 'origin/work');
+  await assert.rejects(gitIn(ci, 'merge-base', '--is-ancestor', 'origin/main', 'HEAD'));
+  result = await check(ci);
+  assert.equal(result.code, 1, result.stdout);
+  assert.ok(behind(result.stderr, 'Radius'), result.stderr);
+  // Updated, the branch contains the landing: the plain failure, which a linked test fixes.
+  await git('rebase', '-q', 'main');
+  result = await check();
+  assert.equal(result.code, 1, result.stdout);
+  assert.ok(missing(result.stderr, 'Radius') && !result.stderr.includes('no record of that landing'), result.stderr);
+  await git('checkout', '-q', '-b', 'fresh', 'main');
+  await link('Radius');
+  await commitAll(git, 'Link radius');
+  result = await check();
+  assert.equal(result.code, 0, result.stderr);
+});
+
+// spec: change-progress / Landing rewritten out of a branch
+test('a branch that rewrites a landed slice without trailers and drops its test fails', async t => {
+  const { root, git, link, land, check } = await fixture(t);
+  await link('Radius');
+  await land('storage');
+  assert.equal((await check()).code, 0);
+  await git('checkout', '-qb', 'rewrite');
+  await git('reset', '-q', '--soft', 'HEAD~1');
+  await link();
+  await commitAll(git, 'Build storage');
+  await assert.rejects(git('merge-base', '--is-ancestor', 'main', 'HEAD'));
+  let result = await check();
+  assert.equal(result.code, 1, result.stdout);
+  // The tree has the code, so the report states only what it knows, and says to link the test.
+  assert.ok(behind(result.stderr, 'Radius'), result.stderr);
+  // The same with the code cherry-picked, without trailers, onto a branch from before the landing.
+  await git('checkout', '-q', '-b', 'picked', 'main~1');
+  await git('cherry-pick', '-n', 'main');
+  await link();
+  await commitAll(git, 'Storage, picked');
+  result = await check();
+  assert.equal(result.code, 1, result.stdout);
+  assert.ok(missing(result.stderr, 'Radius'), result.stderr);
+});
+
+// spec: change-progress / Squashed landing without a merge commit
+test('a squashed landing gh gives no merge commit for still fails, without the missing-record hint', async t => {
+  const { root, git, check, pulls } = await fixture(t, { gh: true });
+  await put(root, 'src/storage.mjs', 'export const storage = true;\n');
+  await commitAll(git, 'Build storage (#7)');
+  await pulls([{ number: 7, state: 'MERGED', headRefName: 'storage-work', baseRefName: 'main', url: 'https://example.test/pull/7',
+    body: 'Radius search.\n\nOpenSpec-Change: deliver\nOpenSpec-Slice: storage\n', mergeCommit: null }]);
+  const result = await check();
+  assert.equal(result.code, 1, result.stdout);
+  assert.ok(missing(result.stderr, 'Radius'), result.stderr);
+  assert.ok(!result.stderr.includes('no record of that landing'), result.stderr);
+  assert.ok(!missing(result.stderr, 'Ordering'), result.stderr);
 });
 
 // spec: change-progress / Requirement no slice implements

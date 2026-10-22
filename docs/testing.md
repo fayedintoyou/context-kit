@@ -9,8 +9,11 @@ A change delivered in slices (`slices.yaml`, see [delivery](delivery.md)) is
 checked a slice at a time: a scenario needs its test once a slice implementing
 its requirement has landed, or has an `OpenSpec-Slice` trailer commit on the
 current branch that isn't on the plan's base. Until then it is listed as pending
-(`○`) and doesn't fail. A requirement no slice names is always required, and so
-is every scenario of a sliced change whose progress can't be read, as in a
+(`○`) and doesn't fail. When a scenario is required only because its slice
+landed on the base, and HEAD has no record of that landing (no trailer or
+merge commit), the failure says so: if the branch is behind the base, update it
+and re-run; otherwise link the test.
+A requirement no slice names is always required, and so is every scenario of a sliced change whose progress can't be read, as in a
 shallow clone; the output says why. Archive still needs every scenario linked.
 
 ## End-to-end first
