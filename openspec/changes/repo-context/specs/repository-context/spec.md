@@ -86,13 +86,6 @@ Context Kit SHALL read the checkout through git only from the index and HEAD, ne
 - **WHEN** an MCP client lists tools on the HTTP server and calls `open_repo`
 - **THEN** neither `open_repo` nor `context_pack` is listed and the call fails with `UNKNOWN_OPERATION`, while a stdio client lists both
 
-### Requirement: Context comes from the canonical concept
-When several concepts register one upstream and are one repository (`hub-federation`'s one-repository-per-upstream rule), `context` SHALL come only from the canonical concept, with unqualified references resolved in that concept's hub. Every alternate's `context` SHALL be ignored with a warning naming it.
-
-#### Scenario: Workspace context wins over a mount's
-- **WHEN** a workspace hub and mount `shared` both register `https://github.com/example/orders`, each with `context` referencing `/guides/orders`, and a caller opens `orders`
-- **THEN** the pointers come from the workspace concept, `/guides/orders` resolves in the workspace hub, and a warning names `shared:/repos/orders` as ignored context
-
 ### Requirement: Context schema
 A Repository concept MAY carry `context` with optional keys `verify`, `concepts`, `skills`, `mcp`, `areas`, `roles` and `packs`. An area has `path`, `concepts`, `skills`, `mcp`. A role has `exclude`, `omit`, `concepts`, `skills`, `mcp`. A pack has `description`, `files`, `exclude`, `concepts`, `skills`, `mcp`, `limits` (`files`, `bytes`). `validate` SHALL fail on any other key at any level.
 

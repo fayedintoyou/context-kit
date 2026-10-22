@@ -24,7 +24,6 @@ slices:
       - repository-context / Context schema
       - repository-context / Context bounds
       - repository-context / Canonical verification commands
-      - repository-context / Context comes from the canonical concept
       - repository-context / Concept references
       - repository-context / Readable skill pointers
       - repository-context / MCP server names

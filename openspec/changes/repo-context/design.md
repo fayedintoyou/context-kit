@@ -122,16 +122,13 @@
    on. That's why MCP entries are names only (a capability to look up) while
    `verify` is text (an instruction). Packs don't include `verify`.
 
-1b. **Context comes from the canonical concept.** `hub-federation` (#48)
-   makes concepts sharing an upstream one repository, with a canonical id
-   (workspace hubs first) and `alternateIds`. This change never assumes a single
-   registering concept. `context` is read only from the canonical concept, and
-   unqualified references resolve in that concept's hub, as they would for a
-   lone concept. Each alternate's `context` is ignored with a warning. Merging
-   contexts was rejected, because a mounted team hub could otherwise add
-   pointers, packs or roles to a repository the workspace already describes.
-   Until #48 lands, every upstream has one concept and the rule is trivially
-   met.
+1b. **Several concepts, one repository.** Resolution never assumes a single
+   registering concept: it reports the canonical concept and any alternate ids.
+   Which concept's `context` applies when `hub-federation` (#48) merges
+   concepts sharing an upstream is specified and tested only there (#48's
+   *Context from the canonical concept*, landing after this change's `fields`
+   slice). This change defines `context` for one concept and depends on no #48
+   slice.
 
 2. **Concept references are `[<hub-id>:]/<concept-id>`.** The leading `/` reads
    as hub-root-relative. One resolver handles the qualifier, and in this

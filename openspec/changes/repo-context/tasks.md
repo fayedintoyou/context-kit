@@ -20,8 +20,7 @@
 - [ ] 3.2 Validate skill references against hub manifests and enabled addons, and emit skill pointers with the declaring `hub` and `reference`; verify with `test/e2e/repo-context.test.mjs` linked to `Every emitted skill pointer reads` (calling `read-skill` and `read_skill` for each pointer) and `Unreadable skill references`
 - [ ] 3.3 Move `lib/landing.mjs`'s glob matcher unchanged into `lib/globs.mjs` and import it from landing, leaving `lib/specs/progress.mjs`'s matcher as is; verify `test/e2e/landing.test.mjs` passes unchanged
 - [ ] 3.4 Return `verify` (never executed), declared pointers, area, role and pack summaries, the outermost-first area merge with the tree rooted at the subpath, `missing` pointers with warnings and `INVALID_CONTEXT` from `repos open`; verify with `test/e2e/repo-context.test.mjs` linked to `Declared checks are returned, not run`, `Pointers without bodies`, `Summarized declarations`, `Nested areas`, `Subpath outside every area` and `Deleted concept after validation`
-- [ ] 3.5 Read `context` only from the canonical concept of a repository with `alternateIds`, resolving unqualified references in its hub and warning about each alternate's ignored `context`; once `hub-federation`'s one-repository-per-upstream slice has landed (check with `specs status hub-federation`), verify with `test/e2e/repo-context.test.mjs` linked to `Workspace context wins over a mount's`
-- [ ] 3.6 Document the `context` schema and bounds in `docs/format.md` and `INVALID_CONTEXT` in the help references, and verify the help completeness test and `node bin/hub.mjs validate` pass
+- [ ] 3.5 Document the `context` schema and bounds in `docs/format.md` and `INVALID_CONTEXT` in the help references, and verify the help completeness test and `node bin/hub.mjs validate` pass
 
 ## 4. Packs and roles (slice `packs`)
 
