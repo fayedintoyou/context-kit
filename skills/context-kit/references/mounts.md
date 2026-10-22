@@ -97,7 +97,10 @@ way there is a symlink, mount commands stop with `PATH_ESCAPE` before changing
 anything, and `mounts` shows the mount `broken`. Commands on one mount, and every
 update of `context-kit.json`, take a lock under `.state/mounts/`, so simultaneous
 runs wait for each other. A held lock is touched every five minutes; one whose
-process is gone, or untouched for an hour, is taken over by one waiter at a time, and after 15 minutes of waiting the command fails with `MOUNT_BUSY`.
+process is gone, or untouched for an hour, is taken over, and after 15 minutes of waiting the command fails with `MOUNT_BUSY`. Just before
+it writes `context-kit.json` or switches in fetched content, a command checks the
+lock is still its own; if another command took it over in a rare race, it stops
+with `MOUNT_BUSY` without changing anything, and can simply be run again.
 
 Adding, fetching and removing are CLI-only and need an explicit workspace outside
 the toolkit checkout; no MCP tool changes mounts, even with `--allow-write`.

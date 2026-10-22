@@ -28,7 +28,7 @@
 | `REPOSITORY_EXISTS`, `CONCEPT_EXISTS` | `repos add` found the upstream, an alias or the concept already in use |
 | `DESTINATION_EXISTS`, `CLONE_FAILED` | `repos clone` needs a new path and a reachable upstream |
 | `MOUNT_EXISTS` | A mount or workspace hub already has that name; pick another mount name |
-| `MOUNT_BUSY` | Another command is changing that mount or `context-kit.json`; wait for it, or remove its `.state/mounts/.lock-*` file if no such command is running |
+| `MOUNT_BUSY` | Another command is changing that mount or `context-kit.json`, or took over its lock (nothing was changed); run it again, or remove its `.state/mounts/.lock-*` file if no such command is running |
 | `UNKNOWN_MOUNT` | No mount has that name; run `mounts` |
 | `NOT_A_HUB` | The mounted `--path` has no `hub.json`, or its curated documents are not OKF concepts |
 | `FETCH_FAILED` | A mount's source, ref or pinned commit could not be fetched; for "authentication failed", set up a git credential helper or SSH key (see `mounts`) |

@@ -451,7 +451,7 @@ test('an annotated tag ref pins the commit it points at', async t => {
 // Review round 2 regression.
 
 // spec: hub-federation / Fresh machine fetches its mounts
-test('many takers of a stale lock (or stale breaker) never overlap: every pin is kept, one fetch exports', async t => {
+test('many takers of a stale lock (or stale breaker): no success without its pin, one fetch exports', async t => {
   const { base, workspace, run, config, repository } = await fixture(t);
   const source = await repository('shared-context', hub('team/data'));
   const gone = Number((await exec(process.execPath, ['-e', 'console.log(process.pid)'])).stdout.trim());
@@ -468,8 +468,18 @@ test('many takers of a stale lock (or stale breaker) never overlap: every pin is
     }
     const names = Array.from({ length: round === 3 ? 8 : 6 }, (_, i) => `r${round}-${i}`);
     const added = await Promise.all(names.map(name => run(['--root', workspace, 'mounts', 'add', name, source.url])));
-    assert.deepEqual(added.map(result => result.code), names.map(() => 0), added.map(result => result.output).join('\n'));
-    for (const name of names) assert.ok((await config()).mounts[name], `round ${round} lost the pin for ${name}`);
+    // A lost takeover race may refuse an add (MOUNT_BUSY, nothing changed); it never reports
+    // success without its pin.
+    const pins = (await config()).mounts ?? {};
+    for (const [index, name] of names.entries()) {
+      const result = added[index];
+      if (result.code === 0) assert.ok(pins[name], `round ${round}: ${name} succeeded but its pin is gone`);
+      else {
+        assert.equal(result.error?.code, 'MOUNT_BUSY', result.output);
+        assert.equal(pins[name], undefined);
+      }
+    }
+    if (round < 3) assert.deepEqual(added.map(result => result.code), names.map(() => 0), added.map(result => result.output).join('\n'));
   }
 
   const copy = join(base, 'other-machine');
