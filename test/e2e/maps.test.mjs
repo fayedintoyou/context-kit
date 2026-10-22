@@ -622,6 +622,30 @@ test('code blocks opened on a list line, indented at the top level or in a block
   assert.deepEqual((await lidListing(cli, mcp)).json.skipped.map(({ id }) => id), ['ＡＵＴＨ-００２']);
 });
 
+test('only top-level headings title entries, and an entry underlined into a heading is still an entry', async t => {
+  const { root, cli, mcp } = await fixture(t, 'lid');
+  await writeFile(join(root, 'docs/specs/headings-specs.md'), [
+    '## Real', '',
+    '- [x] **A-001**: Underlined by a rule.',
+    '  ---',
+    '- [ ] **A-002**: Underlined twice.',
+    '  ===',
+    '- [x] **A-003**: After the underlines.', '',
+    '> ## Quoted',
+    '- **A-004**: After a quoted heading.', '',
+    '- ## Inside an item',
+    '- [D] **A-005**: After a heading inside an item.', ''].join('\n'));
+  const listed = await lidListing(cli, mcp);
+  const added = listed.json.behaviors.filter(behavior => behavior.file === 'docs/specs/headings-specs.md');
+  assert.deepEqual(added.map(({ id, marker, title, text }) => [id, marker, title, text]), [
+    ['A-001', 'implemented', 'Real / A-001', 'Underlined by a rule.'],
+    ['A-002', 'gap', 'Real / A-002', 'Underlined twice.'],
+    ['A-003', 'implemented', 'Real / A-003', 'After the underlines.'],
+    ['A-004', 'none', 'Real / A-004', 'After a quoted heading.'],
+    ['A-005', 'deferred', 'Real / A-005', 'After a heading inside an item.']]);
+  assert.deepEqual(listed.json.skipped, []);
+});
+
 test('the lid source never follows a symlink and takes no store', async t => {
   const { base, root, cli, mcp, checkBoth } = await fixture(t, 'lid');
   const outside = join(base, 'outside');
