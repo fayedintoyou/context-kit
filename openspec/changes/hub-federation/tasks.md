@@ -15,16 +15,16 @@ topics, so `help / Help covers the tool` keeps passing.
 
 ## 2. Reading mounted hubs (slice `mounted-reads`)
 
-- [ ] 2.1 Load fetched mounts leniently after workspace hubs, under their mount name, with `mount` provenance and the mount's freshness policy; link `test/e2e/mounts.test.mjs` to "Read a mounted concept" (CLI and MCP SDK client)
-- [ ] 2.1a Mounted freshness and offline reads; link `test/e2e/mounts.test.mjs` to "Mount's own freshness policy" and "Source gone after fetch"
-- [ ] 2.1b Mounted content over the remote HTTP server; link `test/e2e/remote.test.mjs` to "Remote client reads a mount"
-- [ ] 2.2 `ref` on every concept result; `read <ref>` and `read_concept` with `concept` as a reference and `id` optional; link `test/e2e/mounts.test.mjs` to "Read by reference"
-- [ ] 2.3 Keep bundles separate (own index, log, `okf_version`, IDs); link `test/e2e/mounts.test.mjs` to "Same paths in two bundles"
-- [ ] 2.3a Never follow symlinks in exported trees; link `test/e2e/mounts.test.mjs` to "Escaping symlinks in a mount"
-- [ ] 2.3b Scope strict bundle validation to workspace hubs and report mounted problems as warnings; link `test/e2e/mounts.test.mjs` to "Nonconformant mount", and keep the knowledge-format links for "Concept without a type", "Reserved file structure" and "Permissive consumption"
-- [ ] 2.4 Mounted manifests: `manifestId`, warnings for unknown `links`, `skills`, `specStores`, none offered; link `test/e2e/mounts.test.mjs` to "Manifest fields that point elsewhere"
-- [ ] 2.5 `READ_ONLY_MOUNT` guard in capture and repository adds (CLI and MCP); link `test/e2e/mounts.test.mjs` to "Writes against a mount"
-- [ ] 2.6 Unfetched and broken mounts: `MOUNT_NOT_FETCHED`/`MOUNT_BROKEN` when addressed, warnings in list, search, repos and validate, mounted problems never failing validate; link `test/e2e/mounts.test.mjs` to "Mount not fetched yet" and "Broken mount" (CLI and MCP SDK client)
+- [x] 2.1 Load fetched mounts leniently after workspace hubs, under their mount name, with `mount` provenance and the mount's freshness policy; link `test/e2e/mounts.test.mjs` to "Read a mounted concept" (CLI and MCP SDK client)
+- [x] 2.1a Mounted freshness and offline reads; link `test/e2e/mounts.test.mjs` to "Mount's own freshness policy" and "Source gone after fetch"
+- [x] 2.1b Mounted content over the remote HTTP server; link `test/e2e/remote.test.mjs` to "Remote client reads a mount"
+- [x] 2.2 `ref` on every concept result; `read <ref>` and `read_concept` with `concept` as a reference and `id` optional; link `test/e2e/mounts.test.mjs` to "Read by reference"
+- [x] 2.3 Keep bundles separate (own index, log, `okf_version`, IDs); link `test/e2e/mounts.test.mjs` to "Same paths in two bundles"
+- [x] 2.3a Never follow symlinks in exported trees; link `test/e2e/mounts.test.mjs` to "Escaping symlinks in a mount"
+- [x] 2.3b Scope strict bundle validation to workspace hubs and report mounted problems as warnings; link `test/e2e/mounts.test.mjs` to "Nonconformant mount", and keep the knowledge-format links for "Concept without a type", "Reserved file structure" and "Permissive consumption"
+- [x] 2.4 Mounted manifests: `manifestId`, warnings for unknown `links`, `skills`, `specStores`, none offered; link `test/e2e/mounts.test.mjs` to "Manifest fields that point elsewhere"
+- [x] 2.5 `READ_ONLY_MOUNT` guard in capture and repository adds (CLI and MCP); link `test/e2e/mounts.test.mjs` to "Writes against a mount"
+- [x] 2.6 Unfetched and broken mounts: `MOUNT_NOT_FETCHED`/`MOUNT_BROKEN` when addressed, warnings in list, search, repos and validate, mounted problems never failing validate; link `test/e2e/mounts.test.mjs` to "Mount not fetched yet" and "Broken mount" (CLI and MCP SDK client)
 
 ## 3. Upgrades (slice `mount-upgrade`)
 

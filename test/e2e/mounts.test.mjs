@@ -22,10 +22,12 @@ async function fixture(t) {
     GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   for (const name of ['CONTEXT_KIT_ROOT', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_CONFIG_COUNT']) delete env[name];
   await mkdir(env.HOME);
-  const run = async (args, extraEnv = {}) => {
+  const run = async (args, extraEnv = {}, input) => {
     const started = Date.now();
     try {
-      const { stdout, stderr } = await exec(process.execPath, [join(kit, 'bin/hub.mjs'), ...args], { env: { ...env, ...extraEnv } });
+      const running = exec(process.execPath, [join(kit, 'bin/hub.mjs'), ...args], { env: { ...env, ...extraEnv } });
+      if (input !== undefined) running.child.stdin.end(input);
+      const { stdout, stderr } = await running;
       return { code: 0, json: JSON.parse(stdout), output: stdout + stderr, ms: Date.now() - started };
     } catch (error) {
       return { code: error.code, json: error.stdout ? JSON.parse(error.stdout) : undefined, error: error.stderr ? JSON.parse(error.stderr).error : undefined,
@@ -57,7 +59,18 @@ async function fixture(t) {
   };
   const config = async () => JSON.parse(await readFile(join(workspace, 'context-kit.json'), 'utf8'));
   const writeConfig = data => writeFile(join(workspace, 'context-kit.json'), JSON.stringify(data, null, 2) + '\n');
-  return { base, env, workspace, run, cli, git, repository, config, writeConfig };
+  // An MCP SDK client over stdio for the workspace.
+  const mcp = async (...flags) => {
+    const client = new Client({ name: 'mounts-test', version: '1.0.0' });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', workspace, ...flags], env, stderr: 'pipe' }));
+    t.after(() => client.close());
+    const call = async (name, args = {}) => {
+      const result = await client.callTool({ name, arguments: args });
+      return result.isError ? { error: JSON.parse(result.content[0].text).error } : { json: result.structuredContent };
+    };
+    return { client, call };
+  };
+  return { base, env, workspace, run, cli, git, repository, config, writeConfig, mcp };
 }
 const hub = (id, concepts = { 'README.md': 'unverified' }) => ({
   'hub.json': JSON.stringify({ version: 1, id, description: `${id} hub.`, documents: ['README.md'], skills: [], links: [] }),
@@ -231,7 +244,6 @@ test('one unreachable source fails alone and the command exits nonzero', async t
 });
 
 // spec: hub-federation / Declaration changes under a fetched mount
-// Reads of mounted hubs arrive with the mounted-reads slice; here the listing is the read.
 test('a changed path or source is unfetched until fetched again, never the old tree', async t => {
   const { base, cli, config, writeConfig, repository, git } = await fixture(t);
   const source = await repository('shared-context', { ...under('hubs/data', hub('team/data')), ...under('hubs/platform', hub('team/platform', { 'README.md': 'human-reviewed' })) });
@@ -241,10 +253,18 @@ test('a changed path or source is unfetched until fetched again, never the old t
   let [mount] = (await cli('mounts')).json.mounts;
   assert.deepEqual({ status: mount.status, manifestId: mount.manifestId, path: mount.path }, { status: 'unfetched', manifestId: null, path: 'hubs/platform' });
   assert.match(mount.reason, /mounts fetch shared/);
+  // The old tree is never read under the new provenance.
+  let read = await cli('read', 'shared:/README');
+  assert.equal(read.error?.code, 'MOUNT_NOT_FETCHED');
+  assert.match(read.error.message, /mounts fetch shared/);
   assert.equal((await cli('mounts', 'fetch', 'shared')).code, 0);
   [mount] = (await cli('mounts')).json.mounts;
   assert.deepEqual({ status: mount.status, manifestId: mount.manifestId, path: mount.path, commit: mount.commit, trust: mount.trust },
     { status: 'fetched', manifestId: 'team/platform', path: 'hubs/platform', commit: source.first, trust: { 'human-reviewed': 1, 'machine-confirmed': 0, unverified: 0 } });
+  read = await cli('read', 'shared:/README');
+  assert.equal(read.code, 0, read.output);
+  assert.match(read.json.content, /^# team\/platform README\.md/);
+  assert.deepEqual(read.json.mount, { name: 'shared', source: source.url, path: 'hubs/platform', commit: source.first });
 
   // Only the source changes, to another repository holding the same commit.
   const mirror = join(base, 'mirror.git');
@@ -253,12 +273,16 @@ test('a changed path or source is unfetched until fetched again, never the old t
   await writeConfig({ ...moved, mounts: { shared: { ...moved.mounts.shared, source: `file://${mirror}` } } });
   [mount] = (await cli('mounts')).json.mounts;
   assert.deepEqual({ status: mount.status, source: mount.source, manifestId: mount.manifestId }, { status: 'unfetched', source: `file://${mirror}`, manifestId: null });
+  assert.equal((await cli('read', 'shared', 'README')).error?.code, 'MOUNT_NOT_FETCHED');
   await rm(source.path, { recursive: true, force: true }); // The new source alone must serve it.
   const fetched = await cli('mounts', 'fetch', 'shared');
   assert.equal(fetched.code, 0, fetched.output);
   [mount] = (await cli('mounts')).json.mounts;
   assert.deepEqual({ status: mount.status, source: mount.source, manifestId: mount.manifestId, commit: mount.commit },
     { status: 'fetched', source: `file://${mirror}`, manifestId: 'team/platform', commit: source.first });
+  read = await cli('read', 'shared', 'README');
+  assert.equal(read.code, 0, read.output);
+  assert.deepEqual(read.json.mount, { name: 'shared', source: `file://${mirror}`, path: 'hubs/platform', commit: source.first });
 });
 
 // spec: hub-federation / Pin from another machine
@@ -274,12 +298,17 @@ test('an older pin from another machine is fetched exactly, not the moved branch
   await writeConfig({ ...current, mounts: { shared: { ...current.mounts.shared, commit: older } } });
   let [mount] = (await cli('mounts')).json.mounts;
   assert.equal(mount.status, 'unfetched'); // A's content is not served under B's pin.
+  assert.equal((await cli('read', 'shared:/two')).error?.code, 'MOUNT_NOT_FETCHED');
   // Protocol v0 refuses an unadvertised SHA, so this also takes the ref-history fallback.
   const fetched = await run(['--root', workspace, 'mounts', 'fetch'], { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'protocol.version', GIT_CONFIG_VALUE_0: '0' });
   assert.equal(fetched.code, 0, fetched.output);
   [mount] = (await cli('mounts')).json.mounts;
   assert.deepEqual({ status: mount.status, commit: mount.commit, concepts: mount.trust.unverified }, { status: 'fetched', commit: older, concepts: 1 });
   assert.equal((await config()).mounts.shared.commit, older);
+  // B's content: neither A's two.md nor C's three.md.
+  assert.equal((await cli('read', 'shared:/README')).json.mount.commit, older);
+  for (const id of ['two', 'three']) assert.equal((await cli('read', 'shared', id)).error?.code, 'UNKNOWN_CONCEPT', id);
+  assert.deepEqual((await cli('browse', 'shared')).json.concepts.map(concept => concept.id), ['README']);
 });
 
 // spec: hub-federation / Remove a mount
@@ -516,4 +545,283 @@ test('remove that has lost its mount lock refuses before touching the declaratio
   assert.ok((await config()).mounts.shared, 'the declaration must survive a refused remove');
   await rm(mountLock);
   assert.equal((await run(['--root', workspace, 'mounts'])).json.mounts[0].status, 'fetched');
+});
+
+// Reading mounted hubs (slice mounted-reads).
+
+const PERSONAL = { id: 'personal/main', description: 'My context, preferences and current projects.' };
+const orders = '---\ntype: Table\ntitle: Orders\ndescription: One row per order.\n---\n\n# Orders\n\nGrain: one row per pelican order.\n';
+// A mounted hub team/data at hubs/data with a human-reviewed README and tables/orders.
+async function sharedMount(fixtureValue, extra = {}) {
+  const { cli, repository } = fixtureValue;
+  const source = await repository('shared-context', under('hubs/data', { ...hub('team/data', { 'README.md': 'human-reviewed' }), 'tables/orders.md': orders, ...extra }));
+  const added = await cli('mounts', 'add', 'shared', source.url, '--path', 'hubs/data');
+  assert.equal(added.code, 0, added.output);
+  return { source, mount: { name: 'shared', source: source.url, path: 'hubs/data', commit: source.first } };
+}
+const iso = time => new Date(time).toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+// spec: hub-federation / Read a mounted concept
+test('a mounted hub reads like a workspace hub under its mount name, over CLI and MCP', async t => {
+  const f = await fixture(t);
+  const { cli, mcp } = f;
+  const { mount } = await sharedMount(f);
+  const list = await cli('list');
+  assert.deepEqual(list.json.hubs, [PERSONAL, { id: 'shared', description: 'team/data hub.', manifestId: 'team/data', mount }]);
+  assert.equal(list.json.warnings, undefined);
+
+  const browse = await cli('browse', 'shared');
+  assert.equal(browse.code, 0, browse.output);
+  assert.deepEqual([browse.json.hub, browse.json.mount], ['shared', mount]);
+  assert.deepEqual(browse.json.concepts.map(({ id, ref, trust }) => ({ id, ref, trust })), [{ id: 'README', ref: 'shared:/README', trust: 'human-reviewed' }]);
+  assert.deepEqual(browse.json.directories.map(directory => directory.id), ['tables']);
+  const tables = await cli('browse', 'shared', 'tables');
+  assert.deepEqual(tables.json.concepts.map(({ id, ref, type, trust }) => ({ id, ref, type, trust })),
+    [{ id: 'tables/orders', ref: 'shared:/tables/orders', type: 'Table', trust: 'unverified' }]);
+
+  const read = await cli('read', 'shared', 'tables/orders');
+  assert.equal(read.code, 0, read.output);
+  assert.deepEqual({ hub: read.json.hub, mount: read.json.mount, id: read.json.id, ref: read.json.ref, trust: read.json.okf.trust },
+    { hub: 'shared', mount, id: 'tables/orders', ref: 'shared:/tables/orders', trust: 'unverified' });
+  assert.match(read.json.content, /pelican order/);
+
+  const found = await cli('search', 'pelican order');
+  assert.deepEqual(found.json.results.map(({ hub: id, mount: provenance, ref, okf }) => ({ hub: id, mount: provenance, ref, trust: okf.trust })),
+    [{ hub: 'shared', mount, ref: 'shared:/tables/orders', trust: 'unverified' }]);
+
+  const context = await cli('context', 'shared');
+  assert.deepEqual({ id: context.json.manifest.id, manifestId: context.json.manifestId, mount: context.json.mount },
+    { id: 'shared', manifestId: 'team/data', mount });
+  assert.deepEqual(context.json.documents.map(({ path, ref, okf }) => ({ path, ref, trust: okf.trust })), [{ path: 'README.md', ref: 'shared:/README', trust: 'human-reviewed' }]);
+
+  // The same results over MCP.
+  const { call } = await mcp();
+  for (const [tool, args, viaCli] of [['list_hubs', {}, list], ['browse_hub', { id: 'shared' }, browse], ['browse_hub', { id: 'shared', path: 'tables' }, tables],
+    ['read_concept', { id: 'shared', concept: 'tables/orders' }, read], ['search_context', { query: 'pelican order' }, found], ['get_context', { id: 'shared' }, context]]) {
+    assert.deepEqual((await call(tool, args)).json, viaCli.json, tool);
+  }
+});
+
+// spec: hub-federation / Mount's own freshness policy
+test('freshness of a mounted concept follows the mounted manifest, not the workspace hub', async t => {
+  const { workspace, cli, repository } = await fixture(t);
+  const metric = `---\ntype: Metric\ntitle: Revenue\nverified: { by: "human:ana", at: ${iso(Date.now() - 2 * 86400000)} }\n---\n\n# Revenue\n`;
+  const source = await repository('metrics', { 'revenue.md': metric, 'hub.json': JSON.stringify({ version: 1, id: 'team/metrics', description: 'Metrics.',
+    documents: ['revenue.md'], skills: [], links: [], freshness: { types: { Metric: 'P1D' } } }) });
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  const manifest = join(workspace, 'hubs/personal/hub.json');
+  const personal = JSON.parse(await readFile(manifest, 'utf8'));
+  await writeFile(manifest, JSON.stringify({ ...personal, documents: [...personal.documents, 'revenue.md'] }));
+  await writeFile(join(workspace, 'hubs/personal/revenue.md'), metric);
+  const action = async id => (await cli('context', id)).json.documents.find(document => document.path === 'revenue.md').freshness.action;
+  assert.equal(await action('shared'), 'verify');
+  assert.equal(await action('personal/main'), 'read');
+  assert.equal((await cli('read', 'shared:/revenue')).json.freshness.action, 'verify');
+});
+
+// spec: hub-federation / Source gone after fetch
+test('a fetched mount reads offline after its source is gone, with no warning', async t => {
+  const f = await fixture(t);
+  const { cli } = f;
+  const { source, mount } = await sharedMount(f);
+  await rm(source.path, { recursive: true, force: true });
+  const list = await cli('list');
+  assert.deepEqual([list.code, list.json.hubs.map(item => item.id), list.json.warnings], [0, ['personal/main', 'shared'], undefined]);
+  const browse = await cli('browse', 'shared', 'tables');
+  assert.deepEqual([browse.code, browse.json.concepts.map(concept => concept.id), browse.json.warnings], [0, ['tables/orders'], []]);
+  const read = await cli('read', 'shared:/tables/orders');
+  assert.deepEqual([read.code, read.json.mount, read.json.warnings], [0, mount, []]);
+  const found = await cli('search', 'pelican');
+  assert.deepEqual([found.code, found.json.results.length, found.json.warnings], [0, 1, undefined]);
+  const repos = await cli('repos');
+  assert.deepEqual([repos.code, repos.json.warnings], [0, []]);
+});
+
+// spec: hub-federation / Read by reference
+test('a result ref reads the concept over CLI and MCP; a disagreeing hub is INVALID_INPUT', async t => {
+  const f = await fixture(t);
+  const { cli, mcp } = f;
+  await sharedMount(f);
+  const [result] = (await cli('search', 'pelican')).json.results;
+  assert.equal(result.ref, 'shared:/tables/orders');
+  const byRef = await cli('read', result.ref);
+  assert.equal(byRef.code, 0, byRef.output);
+  assert.deepEqual([byRef.json.hub, byRef.json.id], ['shared', 'tables/orders']);
+  assert.deepEqual(byRef.json, (await cli('read', 'shared', 'tables/orders')).json);
+  const { call } = await mcp();
+  assert.deepEqual((await call('read_concept', { concept: result.ref })).json, byRef.json);
+  assert.equal((await call('read_concept', { id: 'shared', concept: result.ref })).json.id, 'tables/orders');
+  const mismatch = await call('read_concept', { id: 'personal/main', concept: result.ref });
+  assert.equal(mismatch.error.code, 'INVALID_INPUT');
+  assert.equal((await cli('read', 'personal/main', result.ref)).error.code, 'INVALID_INPUT');
+  assert.equal((await call('read_concept', { concept: 'tables/orders' })).error.code, 'INVALID_INPUT');
+  // Workspace concepts carry refs too.
+  const personal = await cli('context', 'personal/main');
+  assert.equal(personal.json.documents[0].ref, 'personal/main:/README');
+  assert.equal((await cli('read', 'personal/main:/README')).json.id, 'README');
+});
+
+// spec: hub-federation / Same paths in two bundles
+test('a workspace hub and a mount keep their own index, okf_version, log and README', async t => {
+  const { workspace, cli, repository } = await fixture(t);
+  await writeFile(join(workspace, 'hubs/personal/log.md'), '# Log\n\n## 2026-01-01\n\nStarted.\n');
+  const source = await repository('shared-context', { ...hub('team/data'),
+    'README.md': '---\ntype: Guide\ntitle: Shared readme\n---\n\n# Shared readme\n\nThe shared text.\n',
+    'index.md': '---\nokf_version: "0.3"\n---\n\n# Shared index\n', 'log.md': '# Log\n\n## 2026-02-02\n\nShared log.\n' });
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  assert.match((await cli('browse', 'personal/main')).json.index, /^# Personal context/);
+  assert.match((await cli('browse', 'shared')).json.index, /^# Shared index/);
+  const [own, mounted] = [(await cli('context', 'personal/main')).json, (await cli('context', 'shared')).json];
+  assert.deepEqual([own.okfVersion, mounted.okfVersion], ['0.2', '0.3']);
+  assert.ok(mounted.warnings.some(warning => /okf_version 0\.3/.test(warning)));
+  assert.match((await cli('read', 'personal/main', 'README')).json.content, /^# Personal context/);
+  assert.match((await cli('read', 'shared', 'README')).json.content, /The shared text/);
+  // Reserved files stay files of their own bundle, not concepts.
+  assert.equal((await cli('read', 'shared', 'log')).error.code, 'NOT_A_CONCEPT');
+  assert.equal((await cli('read', 'personal/main', 'log')).error.code, 'NOT_A_CONCEPT');
+});
+
+// spec: hub-federation / Escaping symlinks in a mount
+test('symlinks are never followed in a mounted tree or a workspace hub', async t => {
+  const { base, workspace, cli, mcp, repository } = await fixture(t);
+  const outside = join(base, 'outside');
+  await mkdir(join(outside, 'dir'), { recursive: true });
+  await writeFile(join(outside, 'secret.md'), '---\ntype: Guide\n---\n\n# Outside file OUTSIDE-TEXT\n');
+  await writeFile(join(outside, 'dir/x.md'), '---\ntype: Guide\n---\n\n# Outside dir OUTSIDE-TEXT\n');
+  // Committed in the source: the export leaves symlinks out and says so.
+  const source = await repository('shared-context', { ...hub('team/data'), 'secret.md': { symlink: join(outside, 'secret.md') }, 'elsewhere': { symlink: join(outside, 'dir') } });
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  // Neither link is listed, read (UNKNOWN_CONCEPT, no outside text), browsed or found.
+  const unreachable = async (file, directory) => {
+    const browse = await cli('browse', 'shared');
+    assert.deepEqual(browse.json.concepts.map(concept => concept.id), ['README']);
+    assert.deepEqual(browse.json.directories, []);
+    for (const concept of [file, `${directory}/x`]) {
+      const read = await cli('read', 'shared', concept);
+      assert.equal(read.error?.code, 'UNKNOWN_CONCEPT', `${concept}: ${read.output}`);
+      assert.doesNotMatch(read.output, /OUTSIDE-TEXT/);
+    }
+    assert.ok((await cli('browse', 'shared', directory)).error, directory);
+    assert.deepEqual((await cli('search', 'OUTSIDE-TEXT')).json.results, []);
+    assert.ok(browse.json.warnings.some(warning => warning.startsWith(`${file}.md:`)), browse.output);
+  };
+  await unreachable('secret', 'elsewhere');
+
+  // Planted in the export itself: still neither listed, read nor searched.
+  const [key] = await readdir(join(workspace, '.state/mounts/shared'));
+  const tree = join(workspace, '.state/mounts/shared', key);
+  await exec('chmod', ['u+w', tree]);
+  await symlink(join(outside, 'secret.md'), join(tree, 'planted.md'));
+  await symlink(join(outside, 'dir'), join(tree, 'planted'));
+  await exec('chmod', ['u-w', tree]);
+  await unreachable('planted', 'planted');
+  const { call } = await mcp();
+  assert.deepEqual((await call('search_context', { query: 'OUTSIDE-TEXT' })).json.results, []);
+
+  // A workspace hub's symlinked directory is never walked either (OKF traversal uses withFileTypes).
+  await symlink(join(outside, 'dir'), join(workspace, 'hubs/personal/elsewhere'));
+  const own = await cli('browse', 'personal/main');
+  assert.deepEqual(own.json.directories, []);
+  assert.equal((await cli('read', 'personal/main', 'elsewhere/x')).error?.code, 'UNKNOWN_CONCEPT');
+  assert.equal((await cli('browse', 'personal/main', 'elsewhere')).error?.code, 'PATH_ESCAPE');
+  assert.deepEqual((await cli('search', 'OUTSIDE-TEXT')).json.results, []);
+  assert.equal((await cli('validate')).code, 0);
+});
+
+// spec: knowledge-format / Nonconformant mount
+test('validate passes with warnings naming the mount and each nonconformant file', async t => {
+  const { cli, repository } = await fixture(t);
+  const source = await repository('shared-context', { ...hub('team/data'), 'notes.md': '# No frontmatter\n', 'log.md': '# Log\n\n## yesterday\n' });
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  const validated = await cli('validate');
+  assert.equal(validated.code, 0, validated.output);
+  assert.equal(validated.json.valid, true);
+  for (const file of ['notes.md', 'log.md']) assert.ok(validated.json.warnings.some(warning => warning.startsWith(`shared: ${file}:`)), file);
+  assert.equal((await cli('read', 'shared', 'notes')).error.code, 'NOT_A_CONCEPT');
+});
+
+// spec: hub-federation / Manifest fields that point elsewhere
+test('a mounted manifest\'s links, skills and spec stores are warnings and not offered', async t => {
+  const { cli, repository } = await fixture(t);
+  const source = await repository('shared-context', { ...hub('team/data'), 'hub.json': JSON.stringify({ version: 1, id: 'team/data', description: 'Data.',
+    documents: ['README.md'], skills: ['kit:context-kit'], links: ['team/elsewhere'], specStores: ['shared-specs'] }) });
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  const context = await cli('context', 'shared');
+  assert.equal(context.code, 0, context.output);
+  for (const name of ['team/elsewhere', 'kit:context-kit', 'shared-specs']) assert.ok(context.json.warnings.some(warning => warning.includes(name)), name);
+  assert.deepEqual([context.json.manifest.links, context.json.manifest.skills, context.json.manifest.specStores], [[], [], []]);
+  const skills = await cli('skills');
+  assert.ok(skills.json.skills.every(skill => !skill.hubs.includes('shared')));
+  assert.equal((await cli('read-skill', 'shared', 'kit:context-kit')).error.code, 'UNKNOWN_SKILL');
+  assert.ok((await cli('specs', 'stores')).json.stores.every(store => store.storeId !== 'shared-specs'));
+});
+
+// spec: hub-federation / Writes against a mount
+test('capture and repository adds against a mount fail READ_ONLY_MOUNT over CLI and MCP', async t => {
+  const f = await fixture(t);
+  const { workspace, run, cli, mcp } = f;
+  await sharedMount(f);
+  const state = join(workspace, '.state/mounts/shared');
+  const before = await listing(state);
+  const captured = await run(['--root', workspace, 'capture', 'shared', 'A note'], {}, 'Body.\n');
+  assert.equal(captured.error?.code, 'READ_ONLY_MOUNT', captured.output);
+  assert.equal((await cli('repos', 'add', 'shared', 'https://github.com/example/orders')).error?.code, 'READ_ONLY_MOUNT');
+  const { call } = await mcp('--allow-write');
+  assert.equal((await call('capture_note', { id: 'shared', title: 'A note', body: 'Body.' })).error.code, 'READ_ONLY_MOUNT');
+  assert.equal((await call('add_repo', { id: 'shared', upstream: 'https://github.com/example/orders' })).error.code, 'READ_ONLY_MOUNT');
+  assert.deepEqual(await listing(state), before);
+  assert.equal((await cli('read', 'shared', 'README')).code, 0);
+});
+
+// spec: hub-federation / Mount not fetched yet
+test('an unfetched mount warns in list, search, repos and validate, and fails reads with MOUNT_NOT_FETCHED', async t => {
+  const { cli, mcp, config, writeConfig } = await fixture(t);
+  await writeConfig({ ...await config(), mounts: { shared: { source: 'https://github.com/example/shared', ref: 'main', commit: '0123456789abcdef0123456789abcdef01234567' } } });
+  const remedy = /mounts fetch shared/;
+  const list = await cli('list');
+  assert.deepEqual(list.json.hubs, [PERSONAL]);
+  assert.ok(list.json.warnings.some(warning => remedy.test(warning)), list.output);
+  const found = await cli('search', 'Personal context');
+  assert.ok(found.json.results.length && found.json.results.every(result => result.hub === 'personal/main'));
+  assert.ok(found.json.warnings.some(warning => remedy.test(warning)));
+  for (const args of [['read', 'shared:/README'], ['read', 'shared', 'README'], ['context', 'shared'], ['browse', 'shared']]) {
+    const result = await cli(...args);
+    assert.equal(result.error?.code, 'MOUNT_NOT_FETCHED', args.join(' '));
+    assert.match(result.error.message, remedy);
+  }
+  const { call } = await mcp();
+  assert.equal((await call('read_concept', { concept: 'shared:/README' })).error.code, 'MOUNT_NOT_FETCHED');
+  assert.ok((await cli('repos')).json.warnings.some(warning => remedy.test(warning)));
+  const validated = await cli('validate');
+  assert.equal(validated.code, 0, validated.output);
+  assert.ok(validated.json.warnings.some(warning => remedy.test(warning)));
+});
+
+// spec: hub-federation / Broken mount
+test('a broken mount fails when addressed with MOUNT_BROKEN naming the file, and the workspace still works', async t => {
+  const { cli, mcp, config, writeConfig, repository } = await fixture(t);
+  const source = await repository('shared-context', hub('team/data'));
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  const broken = await source.commit({ 'README.md': '# No frontmatter\n' });
+  const current = await config();
+  await writeConfig({ ...current, mounts: { shared: { ...current.mounts.shared, commit: broken } } });
+  assert.equal((await cli('mounts', 'fetch', 'shared')).code, 0);
+  assert.equal((await cli('mounts')).json.mounts[0].status, 'broken');
+  const context = await cli('context', 'shared');
+  assert.equal(context.error?.code, 'MOUNT_BROKEN');
+  assert.match(context.error.message, /README\.md/);
+  const { call } = await mcp();
+  for (const [tool, args] of [['get_context', { id: 'shared' }], ['read_concept', { concept: 'shared:/README' }]]) {
+    const result = await call(tool, args);
+    assert.equal(result.error?.code, 'MOUNT_BROKEN', tool);
+    assert.match(result.error.message, /README\.md/);
+  }
+  const listed = await call('list_hubs');
+  assert.deepEqual(listed.json.hubs, [PERSONAL]);
+  assert.ok(listed.json.warnings.some(warning => /shared is broken/.test(warning)));
+  assert.equal((await cli('context', 'personal/main')).code, 0);
+  assert.equal((await cli('read', 'personal/main:/README')).code, 0);
+  const validated = await cli('validate');
+  assert.equal(validated.code, 0, validated.output);
+  assert.ok(validated.json.warnings.some(warning => /shared is broken/.test(warning)));
 });

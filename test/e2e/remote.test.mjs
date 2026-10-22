@@ -4,7 +4,7 @@ import { execFile, spawn } from 'node:child_process';
 import { request } from 'node:http';
 import { connect } from 'node:net';
 import { promisify } from 'node:util';
-import { mkdtemp, readFile, readdir, rm, realpath } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -30,6 +30,7 @@ async function fixture(t) {
   t.after(async () => {
     for (const child of children) child.kill();
     await Promise.all(children.map(child => child.exitCode === null ? new Promise(resolve => child.once('exit', resolve)) : null));
+    await exec('chmod', ['-R', 'u+w', base]).catch(() => {}); // Fetched mounts are read-only.
     await rm(base, { recursive: true, force: true });
   });
   // Starts bin/mcp.mjs --http and resolves with the URL from its first stderr line (secret null: no token set).
@@ -385,4 +386,33 @@ test('a --public-host is accepted as the Host header', async t => {
   const called = await raw(url, { headers: session, body: toolCall('list_hubs', {}) });
   assert.equal(called.json().result.structuredContent.hubs[0].id, 'personal/main');
   assert.equal((await raw(url, { headers: { ...bearer, Host: 'other.example.com' }, body: initialize() })).status, 403);
+});
+
+// spec: hub-federation / Remote client reads a mount
+test('an authorized HTTP client reads a mounted hub exactly as a stdio client does', async t => {
+  const { base, workspace, env, serve, stdio, remote } = await fixture(t);
+  // A hub in another local git repository, mounted as shared (no network, no user git config).
+  const gitEnv = { ...env, HOME: join(base, 'home'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const source = join(base, 'shared-context');
+  await mkdir(join(source, 'tables'), { recursive: true });
+  await writeFile(join(source, 'hub.json'), JSON.stringify({ version: 1, id: 'team/data', description: 'Data.', documents: ['README.md'], skills: [], links: [] }));
+  await writeFile(join(source, 'README.md'), '---\ntype: Guide\n---\n\n# Data\n');
+  await writeFile(join(source, 'tables/orders.md'), '---\ntype: Table\ntitle: Orders\n---\n\n# Orders\n\nOne row per heron order.\n');
+  for (const args of [['init', '-q', '-b', 'main'], ['add', '-A'], ['commit', '-q', '-m', 'first']]) await exec('git', args, { cwd: source, env: gitEnv });
+  const commit = (await exec('git', ['rev-parse', 'HEAD'], { cwd: source, env: gitEnv })).stdout.trim();
+  await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, 'mounts', 'add', 'shared', `file://${source}`], { env: gitEnv });
+  const mount = { name: 'shared', source: `file://${source}`, path: '', commit };
+
+  const { url } = await serve();
+  const [http, local] = [await remote(url), await stdio()];
+  for (const [name, args] of [['list_hubs', {}], ['read_concept', { concept: 'shared:/tables/orders' }], ['search_context', { query: 'heron order' }]]) {
+    const [overHttp, overStdio] = [await http.callTool({ name, arguments: args }), await local.callTool({ name, arguments: args })];
+    assert.ok(!overHttp.isError, JSON.stringify(overHttp.content));
+    assert.deepEqual(overHttp.structuredContent, overStdio.structuredContent, name);
+    const result = overHttp.structuredContent;
+    if (name === 'list_hubs') assert.deepEqual(result.hubs.find(hub => hub.id === 'shared'), { id: 'shared', description: 'Data.', manifestId: 'team/data', mount });
+    if (name === 'read_concept') assert.deepEqual([result.hub, result.ref, result.mount, result.okf.trust], ['shared', 'shared:/tables/orders', mount, 'unverified']);
+    if (name === 'search_context') assert.deepEqual(result.results.map(({ hub, ref, mount: provenance }) => ({ hub, ref, mount: provenance })), [{ hub: 'shared', ref: 'shared:/tables/orders', mount }]);
+  }
 });
