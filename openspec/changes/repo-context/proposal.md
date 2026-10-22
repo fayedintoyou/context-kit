@@ -110,7 +110,7 @@ the remote-access parity rule (`machine-setup`, #50); federation itself
 
 - **Landing order across changes**, which `slices.yaml` can't express, is
   checked in tasks. The `open` slice starts after `machine-setup`'s
-  `skill-frontmatter`, `portable-entry` and `remote-paths` slices have landed.
+  `skill-frontmatter`, `portable-entry` and `local-only` slices have landed.
   `routing` starts after its `skill-frontmatter` and `portable-entry` slices
   have. The canonical-concept scenario is linked once `hub-federation`'s
   one-repository-per-upstream slice lands.
