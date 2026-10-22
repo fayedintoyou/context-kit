@@ -6,6 +6,7 @@ import { access, chmod, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, rm,
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 
 const exec = promisify(execFile);
 const kit = await realpath(fileURLToPath(new URL('../../', import.meta.url)));
@@ -372,4 +373,66 @@ test('install keeps a post-merge hook it did not write, and uninstall removes on
   assert.deepEqual(removed.json.results.filter(item => item.kind === 'hook').map(item => [item.name, item.action]), [['post-rewrite', 'removed']]);
   assert.equal(await exists(join(workspace, '.git/hooks/post-rewrite')), false);
   assert.equal(await readFile(join(workspace, '.git/hooks/post-merge'), 'utf8'), mine);
+});
+
+const points = text => [...text].length;
+const frontmatter = async path => parseYaml((await readFile(join(path, 'SKILL.md'), 'utf8')).match(/^---\n([\s\S]*?)\n---\n/)[1]);
+const padded = (prefix, length) => prefix + 'x'.repeat(length - points(prefix));
+
+// spec: repository-registry / Too many repositories for one
+// spec: repository-registry / Balanced shards
+// spec: repository-registry / Shards shrink back
+test('repositories whose minimal entries overflow one description shard evenly into my-repos-2, and shrink back', async t => {
+  const { base, workspace, run, agents } = await fixture(t);
+  const ids = Array.from({ length: 20 }, (_, i) => `r${String(i + 1).padStart(2, '0')}`);
+  for (const id of ids) await repository(workspace, id, { title: `repo ${id}`, resource: `https://github.com/me/${id}`, aliases: [padded(`${id}-nickname-`, 40), `${id}-b`], keywords: [`${id} topic`] });
+  const installed = await agents('install');
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  assert.deepEqual(installed.json.skipped, {});
+  for (const agent of ['claude', 'codex']) {
+    const skills = (await readdir(join(base, agent, 'skills'))).filter(name => name.startsWith('my-repos'));
+    assert.deepEqual(skills.sort(), ['my-repos', 'my-repos-2'], agent);
+    const named = [];
+    for (const skill of skills) {
+      const front = await frontmatter(join(base, agent, 'skills', skill));
+      assert.equal(front.name, skill);
+      assert.ok(points(front.description) <= 1024, `${skill} is ${points(front.description)} code points`);
+      const here = ids.filter(id => front.description.includes(`repo ${id} (${id}-nickname-`));
+      // Balanced: ten each, so both shards have room for every second alias and keyword.
+      assert.equal(here.length, 10, `${agent} ${skill}`);
+      for (const id of here) assert.ok(front.description.includes(`${id}-b, ${id} topic)`), `${skill} names all of ${id}`);
+      named.push(...here);
+    }
+    assert.deepEqual(named, ids, `${agent}: each repository once, in id order`);
+  }
+  assert.ok((await agents('status')).json.items.every(item => item.state === 'installed'));
+  // Remove repositories until every minimal entry fits one description again.
+  for (const id of ids.slice(10)) await rm(join(workspace, 'hubs/personal', `${id}.md`));
+  const synced = await run(['--root', workspace, 'repos', 'sync']);
+  assert.equal(synced.code, 0, JSON.stringify(synced.error));
+  assert.deepEqual(byAction(synced.json.results.filter(item => item.name === 'my-repos-2')), { 'claude:skill:my-repos-2': 'removed', 'codex:skill:my-repos-2': 'removed' });
+  for (const agent of ['claude', 'codex']) {
+    assert.equal(await exists(join(base, agent, 'skills/my-repos-2')), false, agent);
+    const front = await frontmatter(join(base, agent, 'skills/my-repos'));
+    for (const id of ids.slice(0, 10)) assert.ok(front.description.includes(`repo ${id}`), `${agent} names ${id}`);
+  }
+  assert.equal(synced.json.skills.length, 1);
+  assert.ok((await agents('status')).json.items.every(item => item.state === 'installed'));
+});
+
+// spec: repository-registry / Longest allowed names
+test('a repository with the longest allowed title and twenty longest aliases fits on its own, reporting the rest', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  const title = padded('the room ', 80);
+  const aliases = Array.from({ length: 20 }, (_, i) => padded(`room-${String(i + 1).padStart(2, '0')} `, 60));
+  await repository(workspace, 'room', { title, resource: 'https://github.com/me/room', aliases });
+  const installed = await agents('install');
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  const front = await frontmatter(join(base, 'claude/skills/my-repos'));
+  assert.ok(points(front.description) <= 1024);
+  assert.ok(front.description.includes(`${title} (${aliases[0]}`), 'minimal entry');
+  const skipped = installed.json.skipped['personal/main/room'];
+  assert.ok(skipped.length > 0);
+  assert.deepEqual(aliases.filter(alias => !front.description.includes(alias)), skipped);
+  assert.equal(await exists(join(base, 'claude/skills/my-repos-2')), false);
 });
