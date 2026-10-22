@@ -14,7 +14,7 @@ Let an agent open one of the user's repositories by name in a single determinist
 - **THEN** both return the same result with the checkout path, the `AGENTS.md` pointer, the repository concept and the default tree
 
 ### Requirement: Layered resolution
-Resolution SHALL be deterministic and done by the CLI: the name is matched against the shared registry (Repository concepts), then the upstream against this machine's recorded checkouts. The result SHALL say how it resolved: the field matched, the registering concept, the upstream and that the path came from this machine's record. It SHALL ignore the caller's working directory and never search the filesystem.
+Resolution SHALL be deterministic and done by the CLI: the name is matched against the shared registry (Repository concepts), then the upstream against this machine's recorded checkouts. The result SHALL say how it resolved: the field matched, the canonical concept and any alternate ids, the upstream and that the path came from this machine's record. It SHALL ignore the caller's working directory and never search the filesystem.
 
 #### Scenario: How it resolved
 - **WHEN** a caller opens a located repository by its title, and then by its id
@@ -85,6 +85,13 @@ Context Kit SHALL read the checkout through git only from the index and HEAD, ne
 #### Scenario: Not offered over HTTP
 - **WHEN** an MCP client lists tools on the HTTP server and calls `open_repo`
 - **THEN** neither `open_repo` nor `context_pack` is listed and the call fails with `UNKNOWN_OPERATION`, while a stdio client lists both
+
+### Requirement: Context comes from the canonical concept
+When several concepts register one upstream and are one repository (`hub-federation`'s one-repository-per-upstream rule), `context` SHALL come only from the canonical concept, with unqualified references resolved in that concept's hub. Every alternate's `context` SHALL be ignored with a warning naming it.
+
+#### Scenario: Workspace context wins over a mount's
+- **WHEN** a workspace hub and mount `shared` both register `https://github.com/example/orders`, each with `context` referencing `/guides/orders`, and a caller opens `orders`
+- **THEN** the pointers come from the workspace concept, `/guides/orders` resolves in the workspace hub, and a warning names `shared:/repos/orders` as ignored context
 
 ### Requirement: Context schema
 A Repository concept MAY carry `context` with optional keys `verify`, `concepts`, `skills`, `mcp`, `areas`, `roles` and `packs`. An area has `path`, `concepts`, `skills`, `mcp`. A role has `exclude`, `omit`, `concepts`, `skills`, `mcp`. A pack has `description`, `files`, `exclude`, `concepts`, `skills`, `mcp`, `limits` (`files`, `bytes`). `validate` SHALL fail on any other key at any level.
@@ -270,9 +277,9 @@ Open and pack results SHALL report each declared MCP name as declared. Only with
 - **WHEN** a caller opens a repository and builds a pack without `--check-mcp`
 - **THEN** the MCP names are reported as declared with no availability, and no agent CLI is called
 
-### Requirement: Routing skill opens repositories
-The routing skill's body SHALL tell agents, when a request names one of the repositories, to first open it with the exact `repos open` command (or MCP `open_repo`) for that repository, passing `--role` when they are reviewing, and work from the result instead of scouting. This change SHALL NOT alter the skill's frontmatter.
+### Requirement: Open is the resolve operation
+`open_repo`, with `repos open` as its CLI form, SHALL be the operation marked as the workspace's resolve operation, replacing `list_repos`. The routing skill's body SHALL therefore tell agents to open a repository first, passing `--role` when reviewing, and work from the result. This change SHALL NOT alter the skill's frontmatter.
 
 #### Scenario: One call to start
 - **WHEN** the routing skill is rendered for two registered repositories, one with `context` and one without
-- **THEN** its body gives the exact `repos open` command for each, and its frontmatter is identical to the one rendered after removing the `context` key
+- **THEN** its body names the MCP tool `open_repo` and, for each repository, the exact launcher command `context-kit repos open <id>`, both for the same repository ids, does not name `list_repos` as the way to resolve, and its frontmatter is identical to the one rendered after removing the `context` key

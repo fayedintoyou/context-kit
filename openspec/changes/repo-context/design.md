@@ -122,6 +122,17 @@
    on. That's why MCP entries are names only (a capability to look up) while
    `verify` is text (an instruction). Packs don't include `verify`.
 
+1b. **Context comes from the canonical concept.** `hub-federation` (#48)
+   makes concepts sharing an upstream one repository, with a canonical id
+   (workspace hubs first) and `alternateIds`. This change never assumes a single
+   registering concept. `context` is read only from the canonical concept, and
+   unqualified references resolve in that concept's hub, as they would for a
+   lone concept. Each alternate's `context` is ignored with a warning. Merging
+   contexts was rejected, because a mounted team hub could otherwise add
+   pointers, packs or roles to a repository the workspace already describes.
+   Until #48 lands, every upstream has one concept and the rule is trivially
+   met.
+
 2. **Concept references are `[<hub-id>:]/<concept-id>`.** The leading `/` reads
    as hub-root-relative. One resolver handles the qualifier, and in this
    change it knows workspace hub IDs. Hub IDs can't contain `:`. `hub-federation`
@@ -256,10 +267,14 @@
     with no `generated` or `verified`. The agent adds `generated` if it writes
     the note.
 
-15. **The routing skill just says "open it".** Its body gains one instruction:
-    when a request names a repository, run the exact `repos open <id>` given
-    for it (`--role <role>` when reviewing), or call `open_repo`, and work from
-    the result. Nothing else is copied into the skill, so it doesn't go stale
+15. **`open_repo` becomes the resolve operation.** `machine-setup`'s renderer
+    (#50, its design §8) names whichever operation the operations table marks
+    `resolve`, which is `list_repos` until this lands. The `open` slice marks
+    `open_repo` (`repos open`, run through #50's `context-kit` launcher)
+    instead, and the `routing` slice updates the one body test so it asserts
+    the MCP tool and launcher command name the same repositories. The body says:
+    when a request names a repository, open it (`--role <role>` when
+    reviewing) and work from the result. Nothing else is copied into the skill, so it doesn't go stale
     when `context` changes, and the frontmatter is left to `machine-setup`.
 
 ## Risks / Trade-offs

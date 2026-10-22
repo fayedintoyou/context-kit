@@ -10,11 +10,12 @@ slices:
       - repository-context / Paths stay inside the checkout
       - repository-context / Git is read without running checkout configuration
       - repository-context / Local-only repository operations
+      - repository-context / Open is the resolve operation
     paths: ["lib/repos.mjs", "lib/repo-context.mjs", "lib/operations.mjs", "lib/mcp/**", "bin/hub.mjs", "test/e2e/repo-context.test.mjs", "skills/context-kit/references/**", "README.md", "openspec/changes/repo-context/tasks.md"]
   - id: routing
     title: my-repos tells agents to open a repository first
     implements:
-      - repository-context / Routing skill opens repositories
+      - repository-context / Open is the resolve operation
     depends_on: [open]
     paths: ["lib/repos.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/repositories.md", "openspec/changes/repo-context/tasks.md"]
   - id: fields
@@ -23,6 +24,7 @@ slices:
       - repository-context / Context schema
       - repository-context / Context bounds
       - repository-context / Canonical verification commands
+      - repository-context / Context comes from the canonical concept
       - repository-context / Concept references
       - repository-context / Readable skill pointers
       - repository-context / MCP server names

@@ -82,8 +82,13 @@ being executed and without expanding the whole wiki.
 - **`--check-mcp`** on open and pack reports, per agent, whether each declared
   MCP server is registered (`available`/`missing`/`unknown`), by asking the
   agent's own CLI. Context Kit never registers or installs one.
-- **The `my-repos` body** tells agents to call `repos open <id>` (or
-  `open_repo`) first and work from its result. Its frontmatter is unchanged.
+- **`open_repo` becomes the workspace's resolve operation**, replacing
+  `list_repos`, so `machine-setup`'s renderer names it (and the launcher command
+  `context-kit repos open <id>`) in the `my-repos` body. Agents call it first
+  and work from its result.
+- **One context per repository.** When `hub-federation` merges concepts that
+  share an upstream, `context` comes from the canonical concept, and the
+  alternates' `context` is ignored with a warning. Its frontmatter is unchanged.
   The sibling change `machine-setup` owns skill frontmatter and installation.
 
 Non-goals: RAG, embeddings or semantic ranking; scripts or executables hosted
@@ -102,6 +107,13 @@ the remote-access parity rule (`machine-setup`, #50); federation itself
   active change, so `npm test` fails on this plan and on each slice until all
   of them land. That change makes the gate slice-aware. This change adds no
   placeholder tests to work around it.
+
+- **Landing order across changes**, which `slices.yaml` can't express, is
+  checked in tasks. The `open` slice starts after `machine-setup`'s
+  `skill-frontmatter`, `portable-entry` and `remote-paths` slices have landed.
+  `routing` starts after its `skill-frontmatter` and `portable-entry` slices
+  have. The canonical-concept scenario is linked once `hub-federation`'s
+  one-repository-per-upstream slice lands.
 
 ## Capabilities
 
