@@ -21,9 +21,12 @@ canonical.
   call to it fails as an unknown tool. This amends `remote-access / HTTP transport`
   parity. `which_repo` is the first such tool; `repo-context`'s open tools follow
   the same rule by declaring the flag.
-- **Serving-machine paths.** Over HTTP, `list_repos` names the serving machine
-  (`--machine-name`, default its host name) and returns `servingMachinePath`
-  instead of `path`. Over stdio nothing changes.
+- **Serving-machine paths.** Over HTTP, no tool result carries an unlabeled local
+  path. Every field holding one (the workspace `root`, checkout paths, file
+  paths) is omitted or renamed with a `servingMachine` prefix, and the result
+  names the serving machine (`--machine-name`, default its host name). For
+  example, `list_repos` returns `servingMachinePath` instead of `path`. Over stdio
+  nothing changes.
 - **`repos which [<path>]`** and stdio `which_repo` map a path to the repository its
   innermost git checkout belongs to. Linked worktrees are resolved through `git
   worktree list --porcelain`. The lookup never falls back to an enclosing checkout,

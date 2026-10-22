@@ -13,7 +13,8 @@
 ## 2. Serving-machine paths (slice `remote-paths`, after `local-only`)
 
 - [ ] 2.1 Over HTTP, return `machine` (`--machine-name`, default the host name) and `servingMachinePath` from `list_repos`, with the HTTP description; verify `test/e2e/remote.test.mjs` linked to `remote-access / Remote client sees whose paths they are` and `test/e2e/repos.test.mjs` linked to `remote-access / Local clients unchanged` and `repository-registry / List over MCP`
-- [ ] 2.2 Document labeled paths in `skills/context-kit/references/remote.md`; verify `node bin/hub.mjs validate`
+- [ ] 2.2 Declare every operation's local-path result fields (workspace `root`, checkout paths, file paths) and have the HTTP adapter omit or rename them with the `servingMachine` prefix and add `machine`; verify `test/e2e/remote.test.mjs` linked to `remote-access / Remote client sees no unlabelled paths`, which calls every tool the HTTP server lists and sweeps each result for the fixture's absolute paths, and fails when a new operation leaks one
+- [ ] 2.3 Document labeled paths in `skills/context-kit/references/remote.md`; verify `node bin/hub.mjs validate`
 
 ## 3. Integration
 

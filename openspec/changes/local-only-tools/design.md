@@ -65,6 +65,22 @@ means a client that reads `path` gets nothing instead of a wrong directory.
 Omitting paths was considered, but the owner on another device sometimes wants to
 know where a checkout lives on the home machine.
 
+**Every path in a result, not just `list_repos` (owner decision, 2026-10-22).** The
+#33 connector check showed ChatGPT the serving machine's workspace `root`, which
+most results carry. So the rule covers every tool result over HTTP. Each operation
+declares the result fields that carry local paths (`root`, `path`, `checkout`,
+`file`, and nested ones such as a repository's `path` in a list) in its
+definition, beside `localOnly`. The HTTP adapter, never the operation, either
+omits a field (when it means nothing remotely) or renames it with the
+`servingMachine` prefix, and adds `machine`. Stdio passes results through
+untouched, so CLI and stdio parity stay exact. Declaring fields, rather than
+pattern-matching strings, keeps relative concept paths such as `README.md`
+intact. The end-to-end sweep catches what a declaration misses: it calls every
+tool the HTTP server lists against a workspace under one temporary directory, and
+fails on any string containing that directory outside a `servingMachine` field.
+Error messages that name a path are a residual. Coded errors keep their text,
+since the code is the contract; a follow-up may redact paths in them.
+
 This MODIFIES `remote-access / HTTP transport` and its parity scenario, and ADDs
 `Local-only tools` and `Serving machine paths` to `remote-access`. Tying the
 behavior to an option (`--machine-name`) would have kept strict parity, but an HTTP
@@ -81,7 +97,7 @@ HTTP labeling.
 Two slices, merged to `main` one at a time (the gate has cleared):
 - `local-only`, with no dependencies: the flag, transport filtering, and `repos
   which`/`which_repo` as its first user. `repo-context`'s open slice builds on it.
-- `remote-paths`, after `local-only`: `servingMachinePath` and `--machine-name`.
+- `remote-paths`, after `local-only`: `machine`, `--machine-name` and `servingMachine…` fields across every tool result over HTTP.
 
 **Landing order across the sibling plans** (coordinator, 2026-10-22):
 1. `machine-setup` (landed and archived) and this change's `local-only` slice;
@@ -104,10 +120,10 @@ harness) started with the same workspace and options.
   operation. Review of new tools checks for the flag.
 - [Clients that read `path` over HTTP break] → intended: they get no path instead
   of a wrong one. The description names the replacement key.
-- [Other tools also return the serving machine's paths over HTTP] → the #33
-  connector check showed ChatGPT the workspace `root`, which several results carry.
-  This change labels `list_repos` only. Whether other results' `root` fields should
-  be labeled or withheld over HTTP is an open question for a follow-up.
+- [A new operation returns a local path without declaring it] → the HTTP sweep
+  scenario calls every listed tool and fails on any unlabeled fixture path.
+- [Error messages over HTTP can still name a serving-machine path] → accepted
+  residual for now; the code, not the text, is the contract.
 
 ## Migration Plan
 

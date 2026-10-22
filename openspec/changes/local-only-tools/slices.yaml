@@ -9,7 +9,7 @@ slices:
       - remote-access / HTTP transport
     paths: ["lib/repos.mjs", "lib/operations.mjs", "lib/mcp/**", "bin/mcp.mjs", "bin/hub.mjs", "test/e2e/repos.test.mjs", "test/e2e/remote.test.mjs", "skills/context-kit/references/**", "openspec/changes/local-only-tools/tasks.md"]
   - id: remote-paths
-    title: list_repos over HTTP names the serving machine's paths
+    title: Tool results over HTTP carry no unlabeled serving-machine paths
     implements:
       - remote-access / HTTP transport
       - remote-access / Serving machine paths

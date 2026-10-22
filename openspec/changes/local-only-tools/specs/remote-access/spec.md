@@ -3,7 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: HTTP transport
-The MCP server SHALL serve Streamable HTTP at `/mcp` when started with `--http <port>`, offering the same tools and prompts as the stdio server for the same options, with equivalent results and coded errors, except that local-only tools are not offered and `list_repos` labels checkout paths as the serving machine's.
+The MCP server SHALL serve Streamable HTTP at `/mcp` when started with `--http <port>`, offering the same tools and prompts as the stdio server for the same options, with equivalent results and coded errors, except that local-only tools are not offered and local paths in results are labeled as the serving machine's.
 
 #### Scenario: Same tools over HTTP
 - **WHEN** a client lists tools and reads a hub's context over HTTP and over stdio from servers started with the same workspace and options
@@ -39,12 +39,16 @@ Tools that resolve a path or checkout on this machine (such as `which_repo`, or 
 - **THEN** none of them is offered over HTTP
 
 ### Requirement: Serving machine paths
-Over HTTP, `list_repos` SHALL name the serving machine (`--machine-name`, default its host name) and return each local checkout as `servingMachinePath` instead of `path`, and its description SHALL say these paths are on the serving machine. Over stdio it SHALL return `path` with no machine label.
+Over HTTP, no tool result SHALL contain an unlabeled local filesystem path. Each field carrying one (the workspace `root`, checkout paths, file paths) SHALL be omitted or renamed with a `servingMachine` prefix (`root` to `servingMachineRoot`, `list_repos`' `path` to `servingMachinePath`), and a result with such a field SHALL name the serving machine as `machine` (`--machine-name`, default its host name). Stdio results SHALL be unchanged.
 
 #### Scenario: Remote client sees whose paths they are
 - **WHEN** an HTTP client of a server started with `--machine-name studio` calls `list_repos` on a workspace with a located repository
 - **THEN** the result names machine `studio`, gives that repository's `servingMachinePath` and no `path`, and the tool's description says the paths are on the serving machine
 
+#### Scenario: Remote client sees no unlabelled paths
+- **WHEN** an HTTP client of that server calls every tool it lists, with valid arguments, on a workspace with located repositories, a hub, captures and specs, all under a temporary directory
+- **THEN** no result contains that directory's absolute path, or any path under it, except in a `servingMachine`-prefixed field, and every result with such a field names machine `studio`
+
 #### Scenario: Local clients unchanged
-- **WHEN** a stdio client calls `list_repos` on the same workspace
-- **THEN** it receives `path` as before and no machine label
+- **WHEN** a stdio client calls `list_repos` and `list_hubs` on the same workspace
+- **THEN** it receives `path` and `root` as before and no machine label
