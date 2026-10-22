@@ -447,3 +447,30 @@ test('an annotated tag ref pins the commit it points at', async t => {
   assert.deepEqual((await config()).mounts.shared, { source: source.url, ref: 'v1', commit: source.first });
   assert.equal(added.json.mount.trust.unverified, 1);
 });
+
+// Review round 2 regression.
+
+// spec: hub-federation / Fresh machine fetches its mounts
+test('many takers of a stale lock never overlap: every pin is kept, one fetch exports', async t => {
+  const { base, workspace, run, config, repository } = await fixture(t);
+  const source = await repository('shared-context', hub('team/data'));
+  const gone = Number((await exec(process.execPath, ['-e', 'console.log(process.pid)'])).stdout.trim());
+  const stale = name => writeFile(join(workspace, '.state/mounts', name), JSON.stringify({ pid: gone, at: Date.now(), token: 'stale' }));
+  await mkdir(join(workspace, '.state/mounts'), { recursive: true });
+  for (let round = 0; round < 3; round++) {
+    await stale('.lock-config');
+    const names = Array.from({ length: 6 }, (_, i) => `r${round}-${i}`);
+    const added = await Promise.all(names.map(name => run(['--root', workspace, 'mounts', 'add', name, source.url])));
+    assert.deepEqual(added.map(result => result.code), names.map(() => 0), added.map(result => result.output).join('\n'));
+    for (const name of names) assert.ok((await config()).mounts[name], `round ${round} lost the pin for ${name}`);
+  }
+
+  const copy = join(base, 'other-machine');
+  await cp(workspace, copy, { recursive: true, filter: path => !path.startsWith(join(workspace, '.state')) });
+  await mkdir(join(copy, '.state/mounts'), { recursive: true });
+  await writeFile(join(copy, '.state/mounts/.lock-mount-r0-0'), JSON.stringify({ pid: gone, at: Date.now(), token: 'stale' }));
+  const fetches = await Promise.all(Array.from({ length: 5 }, () => run(['--root', copy, 'mounts', 'fetch', 'r0-0'])));
+  assert.deepEqual(fetches.map(result => result.code), [0, 0, 0, 0, 0], fetches.map(result => result.output).join('\n'));
+  assert.deepEqual(fetches.map(result => result.json.mounts[0].outcome).sort(), ['fetched', 'unchanged', 'unchanged', 'unchanged', 'unchanged']);
+  assert.deepEqual((await readdir(join(copy, '.state/mounts'))).filter(entry => entry.startsWith('.lock')), []);
+});
