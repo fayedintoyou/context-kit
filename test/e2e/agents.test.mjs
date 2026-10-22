@@ -1133,7 +1133,94 @@ test('a routing skill in the shared ~/.agents/skills location alone also makes a
   const refused = await run(['--root', second, 'agents', 'install', '--agent', 'claude']);
   assert.equal(refused.error.code, 'WORKSPACE_CONFLICT');
   assert.ok(refused.error.message.startsWith(`${join(env.HOME, '.agents/skills/my-repos')} belongs to the workspace at ${workspace};`), refused.error.message);
-  assert.equal(await exists(join(base, 'claude/skills')), false, 'nothing written');
+  assert.equal(await exists(join(base, 'claude/skills')), false, 'nothing written');});
+
+const recordsFile = workspace => join(workspace, '.state/agents.json');
+async function editRecords(workspace, edit) {
+  const state = JSON.parse(await readFile(recordsFile(workspace), 'utf8'));
+  state.items = state.items.map(item => item.kind === 'skill' ? edit(item) ?? item : item);
+  await writeFile(recordsFile(workspace), JSON.stringify(state));
+}
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('copies put back after the installed ones were deleted are not this install\'s, even when identical', async t => {
+  const { base, env, workspace, agents } = await fixture(t);
+  const shared = join(env.HOME, '.agents/skills');
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  // The user deletes the installed copies and puts identical ones of their own in their place.
+  const theirs = join(base, 'theirs');
+  await promisify(execFile)('cp', ['-R', shared, theirs]);
+  await rm(shared, { recursive: true });
+  await promisify(execFile)('cp', ['-R', theirs, shared]);
+  const status = await agents('status');
+  assert.ok(status.json.items.filter(item => item.kind === 'skill').every(item => item.state === 'replaced'), JSON.stringify(status.json.items));
+  const removed = await agents('uninstall', '--force');
+  const skills = removed.json.results.filter(item => item.kind === 'skill');
+  assert.ok(skills.length && skills.every(item => item.action === 'skipped' && item.code === 'SKILL_FOREIGN'), JSON.stringify(skills));
+  assert.deepEqual((await readdir(shared)).sort(), BUNDLED);
+  assert.deepEqual((await readFile(recordsFile(workspace), 'utf8')).includes('"kind": "skill"'), false, 'their records are dropped');
+  const installed = await agents('install', '--agent', 'codex');
+  assert.ok(installed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'conflict' && item.code === 'SKILL_FOREIGN'));
+});
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('a workspace whose copies were deleted does not remove the identical ones another workspace installed', async t => {
+  const machine = await fixture(t);
+  const { base, env, run, agents } = machine;
+  const shared = join(env.HOME, '.agents/skills');
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  await rm(shared, { recursive: true });
+  const second = join(base, 'second');
+  await run(['init', second]);
+  assert.equal((await run(['--root', second, 'agents', 'install', '--agent', 'codex'])).code, 0);
+  const removed = await agents('uninstall');
+  assert.ok(removed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'skipped' && item.code === 'SKILL_FOREIGN'));
+  assert.deepEqual((await readdir(shared)).sort(), BUNDLED);
+  const status = await run(['--root', second, 'agents', 'status']);
+  assert.ok(status.json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+});
+
+// Linux's ext4 can give a new file the inode of a deleted one; only the birth time tells them
+// apart. A subprocess can't make the kernel reuse an inode on demand, so the records are given a
+// birth time the copy doesn't have, which is what such a reused inode would present.
+// spec: agent-installation / Foreign and edited skills are preserved
+test('a copy whose birth time differs from the recorded one is not this install\'s', async t => {
+  const machine = await fixture(t);
+  const { env, workspace, agents } = machine;
+  const shared = join(env.HOME, '.agents/skills');
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  const recorded = JSON.parse(await readFile(recordsFile(workspace), 'utf8')).items.find(item => item.name === 'reflect');
+  if (recorded.identity.birth === undefined) return t.skip('this file system reports no birth time');
+  await editRecords(workspace, item => item.name === 'reflect' ? { ...item, identity: { ...item.identity, birth: '1' } } : null);
+  assert.equal((await agents('status')).json.items.find(item => item.name === 'reflect').state, 'replaced');
+  const removed = await agents('uninstall');
+  assert.deepEqual(skillResults(removed.json.results, 'reflect').map(item => [item.action, item.code]), [['skipped', 'SKILL_FOREIGN']]);
+  assert.ok(await exists(join(shared, 'reflect')));
+  assert.equal(await exists(join(shared, 'context-kit')), false);
+
+  // The same for an install interrupted after its swap: the pending record's birth time decides.
+  const next = await fixture(t);
+  assert.equal(await killedAtFirstSwap(next, ['agents', 'install', '--agent', 'codex']), 'SIGKILL');
+  await editRecords(next.workspace, item => item.pending ? { ...item, pending: { ...item.pending, identity: { ...item.pending.identity, birth: '1' } } } : null);
+  const pending = JSON.parse(await readFile(recordsFile(next.workspace), 'utf8')).items.find(item => item.pending);
+  const again = await next.agents('install', '--agent', 'codex');
+  const result = again.json.results.find(item => item.path === pending.path);
+  assert.deepEqual([result.action, result.code], ['conflict', 'SKILL_FOREIGN']);
+});
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('records from before identities are judged by content until the next install refreshes them', async t => {
+  const { env, workspace, agents } = await fixture(t);
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  await editRecords(workspace, ({ identity: _, ...item }) => item);
+  assert.ok((await agents('status')).json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+  const refreshed = await agents('install', '--agent', 'codex');
+  assert.ok(refreshed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'unchanged'));
+  const items = JSON.parse(await readFile(recordsFile(workspace), 'utf8')).items.filter(item => item.kind === 'skill');
+  assert.ok(items.every(item => item.identity?.ino), 'every record has an identity again');
+  const removed = await agents('uninstall');
+  assert.ok(removed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'removed'));
+  assert.deepEqual(await readdir(join(env.HOME, '.agents/skills')), []);
 });
 
 // Every configuration install reads is read before its first write, so a broken one refuses

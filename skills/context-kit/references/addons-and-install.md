@@ -71,10 +71,19 @@ npm run agents -- uninstall [--agent claude,codex]
   check they can be written: if not, they fail with `RECORDS_UNWRITABLE` before
   changing anything. An invalid `--name` fails before anything is written. Before
   swapping a copy in, install records it as `pending`: its new mode, source, content
-  hash and the built copy's device and inode. An install interrupted after the swap
-  is completed by the next one (`unchanged`, `recovered: true`) only when that very
+  hash and the built copy's identity. An install interrupted after the swap is
+  completed by the next one (`unchanged`, `recovered: true`) only when that very
   file is in place. A copy with no record, or one an equal hash alone would match,
   is never claimed: it stays `SKILL_FOREIGN`.
+- Each record remembers which copy it installed: device, inode and, where the
+  platform reports it, birth time (macOS; Linux through statx on file systems such
+  as ext4). If you delete a copy and something else puts one there, even an
+  identical one or another workspace's, status reports it `replaced`; install
+  treats it as foreign, and uninstall and cleanup leave it (`skipped`,
+  `SKILL_FOREIGN`), even with `--force`. Without a birth time, a reused inode
+  can't be told apart. Records from older cores are judged by content until the
+  next install adds an identity. Moving your home to another disk changes every
+  identity; reinstall with `--force` to take the copies back.
 - `--link` symlinks skills so edits apply immediately (not possible in the shared
   location when a skill needs adapted frontmatter).
 - Project scope keeps Claude Code's server private to the project; Codex needs
@@ -100,7 +109,8 @@ npm run agents -- uninstall [--agent claude,codex]
   one workspace per user owns it and `my-repos` (`WORKSPACE_CONFLICT` otherwise;
   see `repositories`).
 - `status` reports each item `installed`, `changed`, `stale` (source changed;
-  reinstall) or `missing`, `broken` if the Node path moved, and `moved` if it was
+  reinstall), `missing`, `replaced` (another copy in its place) or `pending` (an
+  interrupted install), `broken` if the Node path moved, and `moved` if it was
   installed from another workspace path; the tripwire is `installed`, `edited` or
   `missing`. The launcher also reports `onPath`.
 
