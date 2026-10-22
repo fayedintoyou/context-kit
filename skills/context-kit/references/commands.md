@@ -82,8 +82,10 @@ refuse (`INVALID_POLICY`).
   commit status is named by `context`, optionally `creator`.
 - Only success passes; `skipped` or `neutral` passes only for an entry with a
   `skippable` reason. Otherwise `CHECKS_FAILED`, `CHECKS_MISSING` or
-  `CHECKS_PENDING`, naming the checks. `--wait` polls pending checks every 20
-  seconds until `--timeout` (default 30 minutes).
+  `CHECKS_PENDING`, naming the checks. A matching check run whose workflow run
+  GitHub hasn't indexed yet is `CHECKS_UNTRACEABLE`, never a pass. `--wait` polls
+  pending and untraceable checks every 20 seconds until `--timeout` (default 30
+  minutes).
 - `expectedChecks: []` refuses (`CHECKS_NONE_EXPECTED`) unless `--no-checks
   "<alternative validation and link>"`, which is posted on the pull request; with
   checks expected, `--no-checks` is `INVALID_INPUT`.
