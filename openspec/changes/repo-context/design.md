@@ -4,57 +4,64 @@
 
 - Repository concepts are the registry (`lib/repos.mjs` `registry()`). Each is
   `<hub-id>/<concept-id>` with `resource` and `aliases`. Checkouts live in
-  `.state/checkouts.json`, keyed by normalized upstream. `recordedCheckout()`
-  already returns the `repos locate`/`repos clone` remedies.
+  `.state/checkouts.json`, keyed by normalized upstream. `find()` already
+  resolves an id, title, alias or upstream name (`UNKNOWN_REPOSITORY`,
+  `AMBIGUOUS_REPOSITORY`), and `recordedCheckout()` already returns the
+  `repos locate`/`repos clone` remedies. Today the agent gets these only as
+  skill text.
 - OKF concept frontmatter is permissive: unknown keys are allowed, and only
   `hub.json` rejects unknown fields. So `context` is new *meaning* for a key on
   one concept type. It is validated strictly when present, and every other
   concept keeps OKF's permissiveness (`knowledge-format / Permissive consumption`
   still holds).
-- The routing skill is rendered deterministically into `.state/generated/my-repos/`,
-  and staleness is a re-render comparison, so new rendered content is picked up
-  by `agents status`, `agents install`, `repos sync` and the pull hooks for free.
-- Agent Skills frontmatter allows only `name`, `description`, `license`,
-  `compatibility`, `metadata` and `allowed-tools`, and claude.ai uploads
-  hard-error on anything else. The sibling change `machine-setup` owns the
-  routing skill's frontmatter and installation, so this change touches only
-  its body.
-- `find()` in `lib/repos.mjs` already resolves an id, title, alias or upstream
-  name deterministically (`UNKNOWN_REPOSITORY`, `AMBIGUOUS_REPOSITORY`), and
-  `listRepositories()` already layers this machine's checkouts over the
-  registry. Today the agent receives the result only as skill text.
-- Glob matching already exists twice (`lib/landing.mjs`, `lib/specs/progress.mjs`)
-  with `*`, `**` and `?` semantics.
-- MCP 2026-07-28 deprecates Roots, so tools take the repository, path and pack
-  as explicit arguments and never infer them from client roots.
+- Sibling changes own neighbouring ground:
+  - `machine-setup` (#50) owns the routing skill's frontmatter renderer, an
+    optional `keywords` field on Repository concepts, and the remote-access
+    parity amendment. That amendment includes the rule that tools resolving
+    this machine's checkouts are local-only (as its `which_repo` is). This
+    change only edits the skill body, keeps `keywords` out of `context`, and
+    relies on that rule rather than amending `remote-access`.
+  - `hub-federation` (#48) uses the same `<qualifier>:/<id>` reference form.
+  - The prerequisite `slice-aware-links` lets each slice keep the spec-link
+    gate green.
+- `getSkill()` (`lib/workspace.mjs`) reads a skill only through a hub whose
+  manifest declares it, and `listSkills()` hides `kit:` skills of disabled
+  addons.
+- Glob matching exists twice, with different semantics:
+  - `lib/landing.mjs`: `**/` matches zero or more directories, a bare `**`
+    matches anything, and there's no trailing-`/` rule.
+  - `lib/specs/progress.mjs`: `**` swallows a following `/`, so `a/**/b`
+    also matches `a/xb`, and a trailing `/` matches everything below.
+- MCP 2026-07-28 deprecates Roots, so tools take the repository, path, role
+  and pack as explicit arguments.
 
 ## Goals / Non-Goals
 
 **Goals:**
 - An agent told "work on <repo>" makes one call, `repos open <repo>` (MCP
-  `open_repo`), and has the path, the instruction files to read, the relevant
-  concept, skill and MCP pointers, and a tree of the checkout, so it doesn't
-  scout.
-- A fresh worker (a subagent, a teammate, a new session) bootstraps from that
-  result in roughly 1–2k tokens, then pulls more only as needed with `read`,
-  `read-skill` or `repos pack`.
-- A pack is a pure function of the hubs, the checkout's tracked files and the
-  arguments, so two agents, or a builder and its reviewer, can compare packs
-  by hash and cache them.
-- Nothing a hub says is executed, fetched or installed.
+  `open_repo`). It gets the path, the instruction files to read, the
+  verification commands, the relevant concept, skill and MCP pointers, and a
+  tree of the checkout, in at most 8 KiB (about 2k tokens). It doesn't scout.
+- A fresh worker bootstraps from that result, then pulls more only as needed
+  with `read`, `read-skill` or `repos pack`. A reviewer bootstraps with
+  `--role reviewer` and never sees what the role withholds.
+- A pack's canonical payload is a pure function of declared inputs and file
+  bytes. Builders, reviewers and machines can then compare hashes.
+- Nothing a hub says is executed, fetched or installed. Reading a checkout
+  never runs its git configuration.
 
 **Non-Goals:**
-- Inline file contents, summaries or symbol maps in packs (the agent reads the
-  listed files with its own tools). The default tree lists paths only.
-- Ranking, retrieval or embeddings. A pack is exactly what was declared.
-- Detecting the repository or area from the caller's working directory.
-  Callers name them.
-- Federation's mount resolution. This change only reserves the reference form.
+- Inline file contents, summaries or symbol maps in packs or the tree.
+- Ranking, retrieval or embeddings.
+- Detecting the repository from the working directory (`machine-setup`'s
+  `repos which` does that). `open` ignores the cwd.
+- Federation's mount resolution, `keywords`, skill frontmatter, and serving
+  checkouts remotely.
 
 ## Decisions
 
 0. **One resolve-and-load call.** `repos open` is the centre of the change.
-   Resolution is two explicit layers, both already in Context Kit:
+   Resolution is two explicit layers:
 
    ```
    name ──▶ shared registry (Repository concepts in hubs, committed)  ──▶ upstream
@@ -63,17 +70,18 @@
 
    The result records both steps: `resolution: { name, matched: "alias",
    concept: "team/fruit/orchard", upstream, path, source: "machine" }`. Once the
-   path is known, the same call loads the instruction-file pointers, the
-   concept and declared pointers, and the default pack. An unmapped repository
-   is a successful result with `status: missing` and `next` (the exact locate
-   and clone commands), not an error, because the pointers are still useful
-   and the agent's next step is to ask the user. `repos pack` stays separate
-   for declared packs and roles, which cost more and are requested for a
-   particular action. Alternative: keep a pointer-only `repos context` and
-   leave the tree to the agent. Rejected: that's the scouting this removes.
+   path is known, the same call returns the instruction pointers, the
+   repository concept, and (once `fields` lands) `verify` and the declared
+   pointers, plus the default bootstrap tree.
 
-1. **One `context` mapping on the Repository concept, not new top-level keys or
-   separate concepts.** Fictional example:
+   An unmapped or stale repository is a successful `status: missing` result
+   with `next` (the exact locate and clone commands), not an error. The
+   pointers are still useful, and the agent's next step is to ask the user.
+   `repos pack` stays separate because it costs more and is asked for per
+   action. Alternative: a pointer-only `repos context`, leaving the tree to
+   the agent. Rejected, because that's the scouting this removes.
+
+1. **One `context` mapping with a closed schema.** Fictional example:
 
    ```yaml
    type: Repository
@@ -89,6 +97,11 @@
        - path: services/billing
          concepts: [/guides/billing-ledger]
          mcp: [ledger-db]
+     roles:
+       reviewer:
+         exclude: ["notes/builder/**"]
+         omit: [/guides/release-builder]
+         concepts: [/guides/review-checklist]
      packs:
        release:
          description: Cut a release of the orchard.
@@ -96,205 +109,191 @@
          exclude: ["**/*.tmp"]
          concepts: [/guides/release-builder, /guides/release-checklist]
          limits: { files: 60, bytes: 262144 }
-         roles:
-           reviewer:
-             exclude: ["notes/builder/**"]
-             omit: [/guides/release-builder]
    ```
 
-   One namespaced key means strict validation has a clear boundary, and it
-   can't collide with OKF or other tools' keys. Alternative: a
-   `RepositoryArea` concept type pointing at its repository. Rejected for now.
-   It spreads one repository's routing over many files, and the pointers live
-   with the routing they extend. It can be added later if areas grow large.
+   Every level rejects unknown keys, and every string and list has a bound
+   (spec: *Context schema*, *Context bounds*). One namespaced key gives strict
+   validation a clear boundary and can't collide with OKF, other tools, or
+   `machine-setup`'s `keywords`. Alternative: `RepositoryArea` concepts.
+   Deferred until a monorepo needs it.
 
-1a. **Verification commands are declared text.** `verify` is the one place a
-   hub holds command lines, and it's deliberately not configuration Context
-   Kit acts on. `repos open` returns the strings, and the agent runs them in
-   the checkout under its own permissions. The routing skill already says to
-   follow the checkout's workflow, and `verify` makes that workflow's checks
-   explicit and identical across sessions. This is why MCP entries can be
-   names only while `verify` can be text: one names a capability to look up,
-   the other is an instruction to a person or agent. Packs don't include
-   `verify`, and their manifest hash doesn't cover it.
+   `verify` is the one place commands appear. They're declared text the agent
+   is told to run under its own permissions, never something Context Kit acts
+   on. That's why MCP entries are names only (a capability to look up) while
+   `verify` is text (an instruction). Packs don't include `verify`.
 
 2. **Concept references are `[<hub-id>:]/<concept-id>`.** The leading `/` reads
-   as hub-root-relative, like root-relative links. The qualifier is resolved by
-   one function that, in this change, knows workspace hub IDs. Hub IDs can't
-   contain `:`, so the grammar is unambiguous. `hub-federation` can teach that
-   resolver mount namespaces (`team-data:/tables/orders`) without changing the
-   field format or any stored reference. Unqualified references never fall back
-   to other hubs, so adding a hub or mount can't silently change what a
-   reference means.
+   as hub-root-relative. One resolver handles the qualifier, and in this
+   change it knows workspace hub IDs. Hub IDs can't contain `:`. `hub-federation`
+   (#48) extends the same resolver to mount namespaces without changing stored
+   references. Unqualified references never fall back to other hubs.
 
-3. **Skills use manifest reference forms. MCP entries are bare names.** Skill
-   references reuse the hub-manifest resolver (`kit:<name>` or a workspace
-   `SKILL.md` path), so `read-skill` works on what `repos open` returns. MCP
-   entries match `^[a-z0-9][a-z0-9_-]{0,63}$`. That rejects URLs, command
-   lines, mappings and anything carrying a secret by construction, so a hub
-   never becomes MCP configuration. A purpose string per server was considered
-   and left out. The concept body can explain, and a mapping form would invite
-   configuration.
+3. **Skill pointers are readable by construction.** `validate` accepts a skill
+   reference only when some hub's manifest declares it and, for `kit:`, an
+   enabled addon provides it. That is exactly when `getSkill()` and
+   `listSkills()` serve it. The pointer carries `hub` (the first declaring
+   hub in hub-ID order) and `reference`, the arguments `read-skill`/`read_skill`
+   take. Alternative: a new read path that bypasses manifests. Rejected,
+   because declaring a skill in a hub is the existing authorization step.
 
-4. **Areas carry pointers only, keyed by a literal directory path.** A subpath
-   matches an area when the area path equals it or is a `/`-segment prefix of
-   it. Pointers merge outermost-first after the repository's own, deduplicated
-   by reference. Areas without a subpath are summarized as counts (spec: *Areas
-   and packs summarized*) to hold the bootstrap budget. Area paths
-   aren't checked against a checkout at validate time, because checkouts are
-   machine-local. `repos open` warns when a located checkout lacks an area's
-   directory.
+4. **Areas carry pointers only, keyed by a literal directory.** An area matches
+   a subpath when its path equals it or is a `/`-segment prefix of it. Pointers
+   merge outermost-first, deduplicated. Areas without a subpath are summarized
+   as counts.
 
-5. **Pointer shape.** Concept pointers reuse the OKF summary already computed
-   for browse (type, title, description capped at 300, trust) plus the
-   freshness action, `hub`, `concept` and the `ref` as written. Skill pointers
-   reuse `list_skills`' name and description. No bodies. Over a typical
-   repository (a handful of concepts and skills, two or three packs) this is
-   ~1–2k tokens. The design budget is a soft target, enforced by the 300-char
-   description cap, list caps (50 entries per list, 50 areas, 20 packs, 8 roles
-   per pack, 50 globs per list), and the existing 128 KiB output ceiling.
+5. **The default bootstrap fits a byte allowance.** The tree is built from the
+   index (decision 7). It holds paths at depth 1 and 2 in code-point order,
+   directories with their tracked-file counts, and nothing deeper, with at
+   most 150 entries. The whole `open` result must fit 8 KiB of compact JSON
+   (`JSON.stringify` without spacing), about 2k tokens. When it doesn't, the
+   tree is trimmed from the end first, then declared pointers from the end,
+   and `truncated` reports what went and the first omitted path.
 
-5a. **The default pack needs no configuration.** It holds the
-   instruction-file pointers, the repository concept, and a tree built from
-   `git ls-files` under the root or subpath. The tree has every path at depth
-   1 and 2 in code-point order, each directory with its tracked-file count,
-   and nothing deeper (counts cover it), capped at 150 entries with
-   `truncated`. Git-tracked means `.gitignore` is respected by construction,
-   and the output depends only on the index and working tree. Depth 2 and 150
-   entries come to about 1–1.5k tokens of paths, which keeps the whole `open`
-   result near the 1–2k target. Instruction files are `AGENTS.md` and
-   `CLAUDE.md` exactly (the two the routing skill already names), at the root
-   and in each directory down to the subpath. Every declared pack also carries
-   the default pack's instruction and concept pointers but not its tree, so a
-   pack is never missing the repository's own rules. `repos pack <repo>
-   default` returns the default pack alone, and `default` is reserved as a
-   pack name.
+   Instruction files are `AGENTS.md` and `CLAUDE.md` exactly, at the root and
+   in each directory down to the subpath. They're the deliberate exception to
+   tracked-only: agents load them from the checkout whether or not git tracks
+   them, so pointing at untracked ones is honest. They must still pass the
+   containment rule (decision 6). Every pack carries the instruction pointers.
+   `repos pack <repo> default` returns the default bootstrap's files and
+   references as a canonical payload, and `default` is reserved as a pack
+   name.
 
-6. **Pack expansion is a fixed built-in algorithm over `git ls-files`.**
-   - Candidates are `git -C <checkout> ls-files -z --cached` (the index, so
-     ignored and untracked files never appear). Untracked files that match are
-     counted by `git ls-files --others --exclude-standard` filtered by the
-     globs, for the `skipped` report only.
-   - Each candidate is `lstat`ed. Symlinks, gitlinks (submodules) and entries
-     missing from the working tree are skipped and counted. Regular files are
-     hashed with SHA-256 over their working-tree bytes, so uncommitted edits
-     show up. `dirty` comes from `git status --porcelain` restricted to the
-     listed files.
-   - Include globs are matched, then exclude globs (pack and role) remove.
-     Paths are sorted by code point (as `browse` sorts), then the file and
-     byte limits stop the listing at the first file that would exceed either.
-     `truncated` names the limit, the omitted count and the first omitted
-     path. Stopping at the first overflow (rather than skipping big files and
-     continuing) keeps the result easy to predict from the sorted list.
-   - The manifest hash is SHA-256 over a canonical JSON of the repository id,
-     pack, role, commit, dirty flag, files and references. It leaves out the
-     checkout path, MCP availability and the seed, so two machines with the
-     same commit agree. Pack concept pointers carry `ref`, `hub`, `concept`,
-     `type` and `title` only, without the time-dependent trust, staleness and
-     freshness that `repos open` reports. Otherwise a pack would change as
-     its concepts age.
-   - Every git call runs with `-c core.fsmonitor=false -c core.hooksPath=/dev/null`
-     and `GIT_OPTIONAL_LOCKS=0`, and uses only `ls-files`, `rev-parse` and
-     `status`. A checkout's own config then can't make Context Kit run a
-     command, and a pack never takes the index lock.
-   - Glob matching is the existing `*`/`**`/`?` matcher, moved into one shared
-     helper used by landing, progress and packs. No braces, negation or
-     character classes, which `validate` rejects. No new dependency and no
-     experimental `path.matchesGlob`.
+6. **Containment is checked per component, before opening.** Paths are
+   relative, `/`-separated, without `.`, `..`, backslash or leading `/`. Every
+   read walks from the checkout's real root, `lstat`ing each component. A
+   symlink anywhere below the root (not only the final component) means a
+   subpath fails with `PATH_ESCAPE` and a file is skipped and counted. The
+   final file is opened with `O_NOFOLLOW` and its real path checked against
+   the root. This defeats a tracked directory replaced by an outside-pointing
+   symlink. The same walk serves instruction files, the tree and packs.
 
-7. **Budgets.** Defaults are 100 files and 512 KiB, which a pack's `limits`
-   may raise up to the hard maxima of 500 files and 4 MiB. Callers may only
-   lower the byte budget, with `--budget`. Bytes are the summed sizes of listed
-   files: the reading cost the agent is being handed, not the manifest's own
-   size. That stays small (about 120 bytes per entry, so 500 entries fit well
-   within the 128 KiB output ceiling). Token budgets were considered. Bytes
-   are deterministic across models and tokenizers. The help topic gives the
-   rough 4-bytes-per-token rule.
+7. **Git is read only from the index and HEAD, with configuration disabled.**
+   Working-tree comparisons (`status`, `diff`, `ls-files -m`) can run clean
+   and process filters, and fsmonitor can run on refresh. So Context Kit
+   never runs them. It runs only:
+   - `git rev-parse --show-toplevel` and `--show-object-format`;
+   - `git rev-parse HEAD`;
+   - `git ls-files -z --stage` (the index's paths, modes and blob IDs; no
+     working-tree read, no refresh).
 
-8. **Roles inherit and subtract, and report withheld counts only.** A role is
-   the pack plus its additions, minus its `exclude` globs and `omit`
-   references. The result reports `withheld: { files, concepts, skills, mcp }`
-   as counts, so a reviewer pack doesn't point the reviewer at the builder's
-   notes it was meant not to see. The builder and reviewer manifests have
-   different hashes, so an orchestrator can confirm the reviewer got the
-   reviewer pack. Alternative: roles as fully independent packs. Rejected,
-   because the common case is "same pack, minus a few things", and duplication
-   would drift.
+   Each call uses an environment with every `GIT_*` variable removed, then
+   `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`,
+   `GIT_OPTIONAL_LOCKS=0`, `GIT_TERMINAL_PROMPT=0`, and `-c core.fsmonitor=false
+   -c core.hooksPath=/dev/null -c core.untrackedCache=false`. It never fetches.
+   Node reads and hashes the files itself. `dirty` compares the git blob ID of
+   the raw working-tree bytes with the index's blob ID (SHA-1 or SHA-256 per
+   the object format). A file whose index content went through a filter
+   (CRLF, LFS) can therefore show as dirty. That's documented and safe.
 
-9. **MCP availability asks each agent's CLI, only on request.** `--check-mcp`
-   runs `claude mcp get <name>` and `codex mcp get <name>` with a short
-   timeout, from the located checkout (so Claude Code's project and local
-   scopes count) or the workspace otherwise. This is the same probe `agents
-   install` uses. Exit 0 means `available`, non-zero means `missing`, and a
-   missing CLI or timeout means `unknown`. It's off by default because
-   spawning CLIs on every bootstrap is slow and an MCP server calling its own
-   host's CLI is surprising. Context Kit never calls `mcp add`. Remediation is
-   left to the user or agent, guided by the concept body.
+   The claim is limited to what these commands do. None of them converts
+   content or refreshes the index, and the hostile-config fixture (fsmonitor,
+   clean filter and process filter each writing a marker) proves no marker
+   appears. Untracked files are never listed or counted, since counting them
+   would need a working-tree walk git configuration can hook.
 
-10. **Seeded front matter is a deterministic OKF mapping.** It includes `type:
-    ContextPack`, `title`, `description`, `status: draft`, `resource`
-    (upstream) and `context_pack: { repository, pack, role, commit,
-    manifest_hash, concepts, files }`. No `generated` or `verified` (they need
-    times and actors, and the agent adds `generated` when it writes the note),
-    so the seed stays byte-stable. `capture` keeps writing `type: Note`. Using
-    a seed as a working note is the agent's choice, not a new write path.
+8. **One canonical payload, open-time data beside it.** A pack result is
+   `{ payload, hash, annotations }`:
+   - The `payload` holds the repository id and upstream, pack, role, HEAD, the
+     instruction files and selected files (path, size, SHA-256, `binary`), the
+     concept references (`hub`, `concept`), the skill references, the MCP
+     names, `dirty`, `missing`, `skipped` counts, `truncated` and `withheld`
+     counts.
+   - The `hash` is SHA-256 of the payload's canonical JSON (sorted keys, no
+     spacing).
+   - The `annotations` hold the checkout path, concept titles, trust and
+     freshness, and MCP availability. They aren't hashed, so aging, moving
+     the checkout and probing never change the hash.
 
-11. **Operations live in core and are read-only.** `open_repo` and
-    `context_pack` sit beside `list_repos` (repositories are core), are offered
-    on read-only MCP servers including HTTP, and take `repository`, `path`,
-    `pack`, `role`, `budget`, `seed` and `checkMcp` as explicit arguments.
-    `list_repos` already exposes checkout paths, and packs return paths,
-    sizes and hashes but no contents, so remote exposure doesn't grow
-    materially.
+   Files are sorted by code point. Each is `lstat`ed and its size checked
+   against the remaining budget before it's opened, so a file over budget is
+   never read. Binary means a NUL in the first 8 KiB. Binary files are listed
+   (size and hash) and count toward the budget like text.
 
-12. **The routing skill just says "open it".** Its body gains one instruction:
-    when a request names a repository, run the exact `repos open <id>` command
-    given for it (or call `open_repo`) first, and work from the result. The
-    pack names, MCP servers and trees aren't copied into the skill. The skill
-    stays small and doesn't go stale when a hub edits `context`, and the
-    frontmatter (description, metadata, the 1000-character cap) is untouched,
-    leaving it to `machine-setup`. The existing "read AGENTS.md first" guidance
-    stays and is now backed by the pointers `open` returns.
+9. **Budgets.** Defaults are 100 files and 512 KiB, raised by `limits` up to
+   500 files and 4 MiB, and only lowered by `--budget`. The listing stops at
+   the first file that would exceed either limit, which keeps it predictable
+   from the sorted list. Bytes rather than tokens because bytes are the same
+   for every model. The help gives the rough 4-bytes-per-token rule.
+
+10. **Roles are workspace-level and apply from the first call.** Roles sit
+    under `context.roles`, not inside a pack, so `repos open --role reviewer`
+    can filter the bootstrap itself. A role's `exclude` removes files from
+    the tree and every pack, `omit` removes declared pointers, and its own
+    pointers are added. Instruction files are never withheld, because a
+    reviewer must still follow the repository's rules. Results report only
+    `withheld` counts. The routing skill tells reviewing agents to pass
+    `--role`, and an orchestrator spawning a reviewer passes it explicitly.
+    Alternative: roles inside packs (the first draft). Rejected by review,
+    because the mandatory unfiltered `open` would show the reviewer what its
+    pack later withholds.
+
+11. **Local only.** `open_repo` and `context_pack` read the serving machine's
+    checkouts, so under `machine-setup`'s rule they're offered on stdio MCP
+    and not on the HTTP server, like `which_repo`. The CLI has both. This
+    change adds an ADDED requirement saying so and doesn't modify
+    `remote-access`.
+
+12. **Globs: landing's semantics, one shared helper for landing and packs.**
+    Packs use `lib/landing.mjs`'s matcher (`**/` = zero or more directories,
+    `*` and `?` within a segment, no trailing-`/` rule). It moves to
+    `lib/globs.mjs` unchanged, and landing imports it. `lib/specs/progress.mjs`
+    keeps its own matcher untouched, because its looser `**` and trailing `/`
+    are part of how existing `slices.yaml` paths behave. Merging them would
+    be a migration for `change-progress`, out of scope here. The landing tests
+    are the regression check, plus new cases for `a/**/b`, `**/x` and `docs/*`
+    in the pack tests.
+
+13. **MCP availability asks each agent's CLI, only on request.** `--check-mcp`
+    runs `claude mcp get <name>` and `codex mcp get <name>` with a short
+    timeout from the located checkout, the probe `agents install` uses. Exit 0
+    means `available`, non-zero means `missing`, and a missing CLI or timeout
+    means `unknown`. It's off by default everywhere. Context Kit never calls
+    `mcp add`.
+
+14. **Seeded front matter is a deterministic OKF mapping.** It holds `type:
+    ContextPack`, `title`, `description`, `status: draft`, `resource` and
+    `context_pack: { repository, pack, role, commit, hash, concepts, files }`,
+    with no `generated` or `verified`. The agent adds `generated` if it writes
+    the note.
+
+15. **The routing skill just says "open it".** Its body gains one instruction:
+    when a request names a repository, run the exact `repos open <id>` given
+    for it (`--role <role>` when reviewing), or call `open_repo`, and work from
+    the result. Nothing else is copied into the skill, so it doesn't go stale
+    when `context` changes, and the frontmatter is left to `machine-setup`.
 
 ## Risks / Trade-offs
 
-- [Hub authors write broad globs (`**`) that blow the budget] → Budgets stop
-  the listing with an explicit `truncated` report. `validate` can't know file
-  counts, so the help topic recommends narrow globs.
-- [References rot as concepts move] → `validate` fails on them, and reads mark
-  them `missing` with a warning instead of failing (spec: *Lenient context
-  reads*).
-- [The tree is noise for huge monorepos] → Depth 2 and 150 entries bound it,
-  and `repos open <repo> <subpath>` roots the tree at the area being worked
-  on. Declared packs give precise selections.
-- [The reference form diverges from what `hub-federation` settles on] → The
-  qualifier resolver is the single point to extend. If federation picks a
-  different separator, this change's references need a mechanical rewrite
-  before either archives. Flagged to the owner.
-- [Withheld counts leak that something was withheld] → Accepted. Hiding the
-  fact would make reviewer packs look complete when they aren't, and the
-  counts reveal no names.
-- [A hostile checkout configures git to run commands (`core.fsmonitor`)] →
-  Decision 6 disables it on every call, and an e2e fixture sets
-  `core.fsmonitor` to a command that writes a marker file, which must never
-  appear.
-- [`claude mcp get` semantics change across versions] → Results degrade to
-  `unknown`, never to an install. The probe is the one `agents install`
-  already depends on.
-- [A pack includes a secret file that's tracked] → Packs return hashes, not
-  contents. The file was already in the repository. The help topic says not to
-  point packs at secrets.
+- [Filtered files show as dirty] → Decision 7 compares raw bytes. This is
+  documented, and it errs towards "check this file".
+- [Untracked instruction files could be planted] → They're only pointed at,
+  pass containment, and are what the agent would load anyway in that checkout.
+- [A broad glob blows the budget] → Stopped with an explicit `truncated`
+  report, without reading the overflow.
+- [References rot] → `validate` fails, and reads mark them `missing`.
+- [Withheld counts reveal that something was withheld] → Accepted, so a
+  reviewer knows its view is partial. Names never appear.
+- [The reference form diverges from `hub-federation`] → One resolver is the
+  extension point. #48 uses the same form today.
+- [Git versions add refresh or filter behaviour to `ls-files --stage`] → The
+  hostile-config fixture runs in CI against the installed git and would fail.
 
 ## Migration Plan
 
 Additive. Every registered repository can be opened immediately, with its
-default pack and no edits. `my-repos` gains the open instruction on the next
-`repos sync`, pull hook or `agents install`. Declare `context` on a Repository
-concept when the defaults aren't enough, and run `validate`. Rollback: remove the `context` keys.
-An older core ignores them as OKF extra keys.
+default bootstrap and no edits. `my-repos` gains the open instruction on the
+next `repos sync`, pull hook or `agents install`. Declare `context` when the
+defaults aren't enough, and run `validate`. Rollback: remove `context`. An
+older core ignores it as an OKF extra key.
 
-## Open Questions
+## Defaults adopted for owner review
 
-- Default limits (100 files, 512 KiB) and hard maxima (500, 4 MiB) are first
-  guesses. Tuning them after real packs exist is a small amendment to *Pack
-  declarations* and *Pack budgets*, not a change of approach.
+- The plan merges on its own after `slice-aware-links`.
+- `<hub-id>:/<id>`, matching #48.
+- A tracked-only tree (instruction files excepted), depth 2 and up to 150
+  entries, as an upper bound under the 8 KiB allowance.
+- Packs list files only, without contents.
+- MCP probing is off everywhere by default.
+- Nothing is written into instruction files.
+- Withheld counts are reported.
+- Areas stay inside `context` until a monorepo shows a need.
