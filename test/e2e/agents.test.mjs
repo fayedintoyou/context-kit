@@ -1382,3 +1382,192 @@ test('a changed device number alone does not make a copy replaced when birth tim
   assert.ok(removed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'removed'));
   assert.deepEqual(await readdir(join(env.HOME, '.agents/skills')), []);
 });
+
+// The optional global rule: Claude Code's user rules directory, $CLAUDE_CONFIG_DIR/rules.
+const ruleOf = base => join(base, 'claude/rules/context-kit.md');
+const ruleResults = results => results.filter(item => item.kind === 'rule');
+const claudeRule = results => ruleResults(results).find(item => item.agent === 'claude');
+
+// spec: agent-installation / Opt in
+test('--global-rule writes a small Claude Code user rule naming the resolve operation, not the repositories', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room', aliases: ['fayelore.com'] });
+  const installed = await agents('install', '--global-rule');
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  assert.deepEqual(ruleResults(installed.json.results).map(item => [item.agent, item.action]), [['codex', 'unsupported'], ['claude', 'installed']]);
+  assert.match(ruleResults(installed.json.results)[0].reason, /no user rules directory/);
+  const text = await readFile(ruleOf(base), 'utf8');
+  assert.ok(points(text) < 600, `${points(text)} characters`);
+  assert.match(text, /`list_repos` tool of the `context-workspace` MCP server/);
+  assert.ok(text.includes(`${join(base, 'home/.local/bin/context-kit')} repos`), text);
+  assert.doesNotMatch(text, /the room|fayelore|github\.com\/me\/room/);
+  assert.doesNotMatch(text, /^---/, 'no paths frontmatter: it loads in every project');
+  const status = (await agents('status')).json.items.find(item => item.kind === 'rule');
+  assert.deepEqual(status, { agent: 'claude', kind: 'rule', name: 'context-kit.md', path: ruleOf(base), enabled: true, state: 'installed' });
+});
+
+// spec: agent-installation / Opt in
+test('harnesses without a rules directory report the rule unsupported, and project scope writes none', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  const others = await agents('install', '--agent', 'codex,gemini,cursor', '--global-rule');
+  assert.equal(others.code, 0, JSON.stringify(others.error));
+  assert.deepEqual(ruleResults(others.json.results).map(item => [item.agent, item.action]), [['codex', 'unsupported'], ['gemini', 'unsupported'], ['cursor', 'unsupported']]);
+  const project = join(base, 'project');
+  await mkdir(project);
+  const scoped = await agents('install', '--agent', 'claude', '--scope', 'project', '--project', project, '--global-rule');
+  assert.equal(claudeRule(scoped.json.results).action, 'skipped');
+  assert.equal(await exists(join(base, 'claude/rules')), false);
+  assert.equal(await exists(join(project, '.claude/rules')), false);
+  assert.equal(JSON.parse(await readFile(recordsFile(workspace), 'utf8')).items.some(item => item.kind === 'rule'), false);
+  const both = await agents('install', '--global-rule', '--no-global-rule');
+  assert.equal(both.error.code, 'INVALID_INPUT');
+});
+
+// spec: agent-installation / Off unless asked
+test('the rule is off unless asked, kept by plain reinstalls, and removed by --no-global-rule', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  const plain = await agents('install');
+  assert.deepEqual(ruleResults(plain.json.results), []);
+  assert.equal(await exists(ruleOf(base)), false);
+  assert.equal(claudeRule((await agents('install', '--global-rule')).json.results).action, 'installed');
+  const again = await agents('install');
+  assert.equal(claudeRule(again.json.results).action, 'unchanged');
+  assert.equal(ruleResults(again.json.results).find(item => item.agent === 'codex').action, 'unsupported');
+  assert.ok(await exists(ruleOf(base)));
+  // A launcher that moves changes the rule's text: a plain install updates it in place.
+  const moved = await agents('install', '--name', 'my-context');
+  assert.equal(claudeRule(moved.json.results).action, 'updated');
+  assert.match(await readFile(ruleOf(base), 'utf8'), /`my-context` MCP server/);
+  const off = await agents('install', '--no-global-rule');
+  assert.equal(claudeRule(off.json.results).action, 'removed');
+  assert.equal(await exists(ruleOf(base)), false);
+  assert.equal(JSON.parse(await readFile(recordsFile(workspace), 'utf8')).items.some(item => item.kind === 'rule'), false);
+  assert.deepEqual(ruleResults((await agents('install')).json.results), []);
+  assert.equal(await exists(ruleOf(base)), false);
+});
+
+// spec: agent-installation / Edited rule
+test('an edited rule is kept and reported edited by --no-global-rule and by uninstall', async t => {
+  const { base, agents } = await fixture(t);
+  await agents('install', '--global-rule');
+  const edited = (await readFile(ruleOf(base), 'utf8')) + 'Also prefer worktrees.\n';
+  await writeFile(ruleOf(base), edited);
+  assert.equal((await agents('status')).json.items.find(item => item.kind === 'rule').state, 'edited');
+  const off = claudeRule((await agents('install', '--no-global-rule')).json.results);
+  assert.deepEqual([off.action, off.state, off.code], ['kept', 'edited', 'RULE_EDITED']);
+  assert.equal(await readFile(ruleOf(base), 'utf8'), edited);
+  const plain = claudeRule((await agents('install')).json.results);
+  assert.deepEqual([plain.action, plain.state], ['kept', 'edited'], 'opted out: a plain install does not restore it');
+  const removed = claudeRule((await agents('uninstall')).json.results);
+  assert.deepEqual([removed.action, removed.state, removed.code], ['kept', 'edited', 'RULE_EDITED']);
+  assert.equal(await readFile(ruleOf(base), 'utf8'), edited);
+  const forced = claudeRule((await agents('uninstall', '--force')).json.results);
+  assert.equal(forced.action, 'removed');
+  assert.equal(await exists(ruleOf(base)), false);
+});
+
+// spec: agent-installation / Edited rule
+test('an opted-in edited rule is kept unless forced, and uninstall removes only the rule it wrote', async t => {
+  const { base, agents } = await fixture(t);
+  await agents('install', '--global-rule');
+  await writeFile(ruleOf(base), 'mine\n');
+  const kept = claudeRule((await agents('install')).json.results);
+  assert.deepEqual([kept.action, kept.code], ['edited', 'RULE_EDITED']);
+  assert.equal(await readFile(ruleOf(base), 'utf8'), 'mine\n');
+  assert.equal(claudeRule((await agents('install', '--force')).json.results).action, 'updated');
+  assert.match(await readFile(ruleOf(base), 'utf8'), /list_repos/);
+  await writeFile(join(base, 'claude/rules/mine.md'), 'my own rule\n');
+  const removed = await agents('uninstall');
+  assert.equal(claudeRule(removed.json.results).action, 'removed');
+  assert.deepEqual(await readdir(join(base, 'claude/rules')), ['mine.md']);
+});
+
+// spec: agent-installation / Opt in
+test('a rule file Context Kit did not write is never replaced or removed, even with --force', async t => {
+  const { base, workspace, agents } = await fixture(t);
+  await mkdir(join(base, 'claude/rules'), { recursive: true });
+  await writeFile(ruleOf(base), 'a rule of my own\n');
+  for (const args of [['--global-rule'], ['--global-rule', '--force']]) {
+    const result = claudeRule((await agents('install', ...args)).json.results);
+    assert.deepEqual([result.action, result.code], ['conflict', 'RULE_FOREIGN'], args.join(' '));
+  }
+  assert.equal(await readFile(ruleOf(base), 'utf8'), 'a rule of my own\n');
+  assert.equal(JSON.parse(await readFile(recordsFile(workspace), 'utf8')).items.some(item => item.kind === 'rule'), false);
+  await agents('uninstall', '--force');
+  assert.equal(await readFile(ruleOf(base), 'utf8'), 'a rule of my own\n');
+
+  // Installed, then deleted and another file put in its place: that file isn't Context Kit's.
+  await rm(ruleOf(base));
+  await agents('install', '--global-rule');
+  const text = await readFile(ruleOf(base), 'utf8');
+  await rm(ruleOf(base));
+  await writeFile(ruleOf(base), 'someone else\n');
+  for (const args of [[], ['--force']]) {
+    const result = claudeRule((await agents('install', ...args)).json.results);
+    assert.deepEqual([result.action, result.code], ['conflict', 'RULE_REPLACED']);
+  }
+  assert.equal((await agents('status')).json.items.find(item => item.kind === 'rule').state, 'replaced');
+  const left = claudeRule((await agents('uninstall', '--force')).json.results);
+  assert.deepEqual([left.action, left.code], ['skipped', 'RULE_REPLACED']);
+  assert.equal(await readFile(ruleOf(base), 'utf8'), 'someone else\n');
+
+  // A restore with the installed content is taken back by the workspace that owns the launcher.
+  await rm(ruleOf(base));
+  await agents('install', '--global-rule');
+  await rm(ruleOf(base));
+  await writeFile(ruleOf(base), text);
+  assert.equal(claudeRule((await agents('install')).json.results).action, 'unchanged');
+  assert.equal(claudeRule((await agents('uninstall')).json.results).action, 'removed');
+  assert.equal(await exists(ruleOf(base)), false);
+});
+
+// spec: agent-installation / Opt in
+test('the rule is written and removed only through real directories', async t => {
+  const { base, agents } = await fixture(t);
+  const elsewhere = join(base, 'elsewhere');
+  await mkdir(elsewhere);
+  await mkdir(join(base, 'claude'), { recursive: true });
+  await symlink(elsewhere, join(base, 'claude/rules'));
+  const refused = claudeRule((await agents('install', '--global-rule')).json.results);
+  assert.deepEqual([refused.action, refused.code], ['refused', 'SYMLINKED_PATH']);
+  assert.deepEqual(await readdir(elsewhere), []);
+  await rm(join(base, 'claude/rules'));
+  assert.equal(claudeRule((await agents('install', '--global-rule')).json.results).action, 'installed');
+  await rename(join(base, 'claude/rules'), join(elsewhere, 'rules'));
+  await symlink(join(elsewhere, 'rules'), join(base, 'claude/rules'));
+  const kept = claudeRule((await agents('install', '--no-global-rule')).json.results);
+  assert.deepEqual([kept.action, kept.code], ['kept', 'SYMLINKED_PATH']);
+  assert.ok(await exists(join(elsewhere, 'rules/context-kit.md')));
+});
+
+// spec: agent-installation / Off unless asked
+test('an install killed just after the rule is put in place is completed by the next, without --force', async t => {
+  const machine = await fixture(t);
+  const { base, env, workspace, agents } = machine;
+  const preload = join(base, 'kill-at-rule.mjs');
+  await writeFile(preload, `import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+const link = fs.link;
+fs.link = async (from, to) => { const result = await link(from, to); if (String(to).endsWith('/rules/context-kit.md')) process.kill(process.pid, 'SIGKILL'); return result; };
+syncBuiltinESMExports();
+`);
+  const killed = await exec(process.execPath, ['--import', preload, join(kit, 'bin/hub.mjs'), '--root', workspace, 'agents', 'install', '--agent', 'claude', '--global-rule'], { env })
+    .then(() => 'finished', error => error.signal);
+  assert.equal(killed, 'SIGKILL');
+  assert.equal((await agents('status')).json.items.find(item => item.kind === 'rule').state, 'pending');
+  const next = await agents('install', '--agent', 'claude');
+  assert.equal(claudeRule(next.json.results).action, 'unchanged', 'the opt-in survived the kill');
+  assert.deepEqual((await readdir(join(base, 'claude/rules'))), ['context-kit.md'], 'the built temporary is gone');
+  assert.equal(claudeRule((await agents('uninstall')).json.results).action, 'removed');
+  assert.equal(await exists(ruleOf(base)), false);
+});
+
+// spec: agent-installation / Off unless asked
+test('the opt-in follows CLAUDE_CONFIG_DIR: the old rule goes, the new directory gets it', async t => {
+  const { base, workspace, run } = await fixture(t);
+  await run(['--root', workspace, 'agents', 'install', '--agent', 'claude', '--global-rule']);
+  const moved = await run(['--root', workspace, 'agents', 'install', '--agent', 'claude'], { CLAUDE_CONFIG_DIR: join(base, 'claude2') });
+  assert.deepEqual(ruleResults(moved.json.results).map(item => [item.path, item.action]), [[ruleOf(base), 'removed'], [join(base, 'claude2/rules/context-kit.md'), 'installed']]);
+  assert.equal(await exists(ruleOf(base)), false);
+  assert.match(await readFile(join(base, 'claude2/rules/context-kit.md'), 'utf8'), /list_repos/);
+});
