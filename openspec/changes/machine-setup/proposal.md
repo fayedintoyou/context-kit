@@ -55,6 +55,13 @@ its own checkouts. It is fragile today:
   scans to a configurable depth, records what it finds, offers to locate or clone
   the rest, never clones without being asked, and refreshes the skills. `repos scan`
   gains `--depth`, and a linked worktree is recorded as its main checkout.
+- **Install safety, found in review.** Skill records identify the copy they
+  installed: a copy put in its place is `replaced` and left alone, the installed
+  content is taken back by the workspace that owns the launcher or with `--adopt`,
+  and a replaced legacy Codex copy is left with its record dropped. Config-file
+  edits are checked swaps (`MCP_CONFLICT` when one can't apply cleanly), replaced
+  files are kept as previous versions for an hour, and installs take a
+  per-workspace lock (`AGENTS_BUSY`). Two race residuals are stated, not hidden.
 - **Moved to `local-only-tools`:** `repos which`/`which_repo`, the local-only tool
   rule over HTTP and serving-machine paths. That change carries the
   `remote-access` delta and waits for `remote-mcp-access` to archive.
@@ -83,8 +90,9 @@ None.
 - `agent-installation`: the shared `~/.agents/skills` location, the harness table
   (Gemini CLI, Copilot CLI, Cursor), MCP registration by config file,
   the launcher, one workspace per user, moved-workspace detection, discovery
-  checks, warnings for copies a harness reads twice, and the optional global
-  rule.
+  checks, warnings for copies a harness reads twice, the optional global
+  rule, replaced skill copies, one install at a time, checked config edits and
+  previous versions of config files.
   MODIFIES `Install into agents` (Codex's user skill directory).
 
 ## Impact
@@ -101,7 +109,8 @@ None.
 - Tests: `test/e2e/agents.test.mjs`, `repos.test.mjs`, with fake
   harness CLIs and temporary `HOME`, `XDG_*`, `CODEX_HOME`, `COPILOT_HOME` and
   `CLAUDE_CONFIG_DIR`; an opt-in `test/e2e/discovery.test.mjs` against real Claude
-  Code and Codex; `test/manual-checks.md` entries for the other harnesses.
+  Code and Codex; `test/manual-checks.md` entries for the other harnesses, run
+  under the follow-up change `harness-discovery-checks`.
 - No new runtime dependency.
 - Slices merge to `main` one at a time.
 - The owner's machine, after upgrading: `npm run agents -- install --agent

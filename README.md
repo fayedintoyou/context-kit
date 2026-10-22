@@ -67,7 +67,8 @@ server is registered through `claude`, `codex` and `gemini mcp add`, and as one
 entry in Copilot CLI's `~/.copilot/mcp-config.json` and Cursor's
 `~/.cursor/mcp.json`, edited in place so your other entries and formatting stay;
 a config file with comments or invalid JSON is refused untouched. The `help
-addons-and-install` topic has the harness table and its sources; OpenCode and
+addons-and-install` topic has the harness table and its sources, and the narrow
+races install can't close (install while the harness isn't running); OpenCode and
 Antigravity CLI come later. Reinstalling for Codex moves the copies an
 older core put in `$CODEX_HOME/skills` to `~/.agents/skills`, removing each only
 after its replacement is in place and matches; one you edited is kept and reported.

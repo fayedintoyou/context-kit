@@ -16,6 +16,7 @@ slices:
       - agent-installation / Install into agents
       - agent-installation / Shared skills location
       - agent-installation / Codex skills move to the shared location
+      - agent-installation / Replaced skill copies
     paths: ["lib/install.mjs", "test/e2e/agents.test.mjs", "README.md", "skills/context-kit/references/addons-and-install.md", "openspec/changes/machine-setup/tasks.md"]
   - id: harnesses
     title: Gemini CLI, Copilot CLI and Cursor, with discovery checks
@@ -26,6 +27,9 @@ slices:
       - agent-installation / Gemini CLI registration
       - agent-installation / Registration through config files
       - agent-installation / Project scope for more harnesses
+      - agent-installation / One install at a time
+      - agent-installation / Checked config edits
+      - agent-installation / Previous versions of config files
     depends_on: [shared-skills]
     paths: ["lib/install.mjs", "bin/hub.mjs", "lib/help.mjs", "test/e2e/agents.test.mjs", "test/e2e/discovery.test.mjs", "test/manual-checks.md", "README.md", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
   - id: portable-entry

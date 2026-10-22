@@ -10,7 +10,7 @@ The workspace SHALL provide a generated skill named `my-repos` whose description
 - **THEN** its description contains the title and each alias, its metadata gives the upstream and the local path, and it passes the bundled-skill frontmatter rules for both agents
 
 ### Requirement: Scan a directory once
-`repos scan <directory> [--depth <n>]` SHALL examine `<directory>` and its subdirectories down to `<n>` levels (default 1, at most 6), never entering hidden directories, `node_modules` or a checkout it found, record every git checkout whose remote matches a registered upstream that has no recorded path, report what it recorded and what remains missing, and never overwrite a recorded path that still exists.
+`repos scan <directory> [--depth <n>]` SHALL examine `<directory>` and its subdirectories to `<n>` levels (default 1, at most 6), never entering hidden directories, `node_modules`, a checkout found below `<directory>`, or `<directory>` itself when it is a registered repository's checkout. It SHALL record every checkout whose remote matches a registered upstream with no recorded path, report what it recorded and what remains missing, and never overwrite a recorded path that still exists.
 
 #### Scenario: Scan finds checkouts
 - **WHEN** a directory holds a matching checkout one level down, an unrelated repository, and a matching checkout three levels down
@@ -19,6 +19,14 @@ The workspace SHALL provide a generated skill named `my-repos` whose description
 #### Scenario: Deeper scan
 - **WHEN** the same directory is scanned with `--depth 3`, and another registered repository's checkout sits inside the first checkout and inside a hidden directory
 - **THEN** the checkout three levels down is recorded too, the nested and hidden ones are not, and `--depth 7` fails with `INVALID_INPUT` before scanning
+
+#### Scenario: Scan from inside a checkout
+- **WHEN** the scanned directory is a registered repository's checkout holding another registered repository's checkouts, and it is scanned with `--depth 3` before and after it is recorded
+- **THEN** the first scan records only the scanned checkout, neither records a checkout inside it, and the other repository is reported missing
+
+#### Scenario: Home directory kept in git
+- **WHEN** the home directory is itself a checkout of no registered repository, a registered checkout sits two levels below it with another inside that, and a caller runs `repos setup --depth 3`
+- **THEN** the checkout below home is recorded and the one inside it is not
 
 ## ADDED Requirements
 
@@ -51,6 +59,10 @@ The routing skill SHALL build its description only from each repository's effect
 #### Scenario: Blank title
 - **WHEN** one repository's title is blank and it has an alias, and another's is blank with no alias, and the skill is rendered
 - **THEN** the first is named by its alias and the second by its id
+
+#### Scenario: No title
+- **WHEN** one repository has no title and has aliases, and another has neither, and the skill is rendered
+- **THEN** the first is named by its first alias and the second by its id, the upstream's name is not used for either, and `validate` passes
 
 #### Scenario: Id too long to name
 - **WHEN** a repository has no usable title or alias and its id is over 80 characters
@@ -106,7 +118,7 @@ Generated skills SHALL use only the Agent Skills frontmatter keys `name`, `descr
 - **THEN** its frontmatter has only standard keys, its name is its directory's name and at most 64 lowercase characters, and every metadata value is a string
 
 ### Requirement: Routing without a workspace path
-The routing skill's body SHALL tell agents to resolve a repository through one workspace operation, named both as a tool of the workspace's MCP server and as a launcher command. Every command it gives, including clone, locate, concept reads and recovery, SHALL run through the launcher, never a `cd` into the workspace. It SHALL name the core's resolve-and-load operation when one exists, else `list_repos` (`repos`).
+The routing skill's body SHALL tell agents to resolve a repository through one workspace operation, named as a tool of the workspace's MCP server and as a launcher command. Every command it gives (clone, locate, concept reads, recovery) SHALL run through the launcher, or the core by absolute path with `--root` while this workspace's launcher is not in place, never a `cd` into the workspace. It SHALL name the core's resolve-and-load operation when one exists, else `list_repos` (`repos`).
 
 #### Scenario: Body names the server and the launcher
 - **WHEN** the routing skill is rendered for a workspace whose MCP server is registered as `context-home`
@@ -115,6 +127,10 @@ The routing skill's body SHALL tell agents to resolve a repository through one w
 #### Scenario: Remedies use the launcher
 - **WHEN** the skill is rendered for a repository with no recorded path
 - **THEN** its `repos clone`, `repos locate` and concept read commands run through the launcher and contain no `cd`
+
+#### Scenario: Launcher unavailable
+- **WHEN** the skill is rendered before any install, and again after the installed launcher is replaced by another file and a caller runs `repos sync`
+- **THEN** both times its commands run the core by absolute path with `--root` and the workspace, contain no `cd`, and the resolve command lists the repositories from another directory
 
 ### Requirement: Machine setup
 `repos setup` SHALL scan each `--scan` directory (default: the home directory) to `--depth` (default 2), then report every repository still missing with its remedies. It SHALL clone only repositories named with `--clone` or approved at a prompt, prompting only when stdin is a terminal or with `--ask`, and SHALL refresh installed routing skills.
