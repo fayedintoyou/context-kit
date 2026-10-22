@@ -686,12 +686,72 @@ test('install sweeps copies an interrupted install left behind, but not recent o
   const { env, agents } = await fixture(t);
   const shared = join(env.HOME, '.agents/skills');
   assert.equal((await agents('install', '--agent', 'codex')).code, 0);
-  const stale = join(shared, '.context-kit-reflect-123-1700000000000-old');
-  const recent = join(shared, '.context-kit-reflect-456-1700000000001');
+  // Age comes from the creation time in the name: a set-aside copy keeps its old mtime.
+  const stale = join(shared, `.context-kit-reflect-123-${Date.now() - 2 * 3600000}-old`);
+  const recent = join(shared, `.context-kit-reflect-456-${Date.now()}-old`);
   for (const path of [stale, recent]) { await mkdir(path); await writeFile(join(path, 'SKILL.md'), 'left over'); }
-  const hourAgo = new Date(Date.now() - 2 * 3600000);
-  await utimes(stale, hourAgo, hourAgo);
+  const yearAgo = new Date(Date.now() - 365 * 24 * 3600000);
+  await utimes(recent, yearAgo, yearAgo);
   assert.equal((await agents('install', '--agent', 'codex')).code, 0);
   assert.equal(await exists(stale), false);
   assert.ok(await exists(recent));
+});
+
+// spec: agent-installation / Upgrade an existing Codex install
+test('records that cannot be written stop the install before any legacy copy is deleted', async t => {
+  if (process.getuid?.() === 0) return t.skip('permissions do not bind root');
+  const machine = await fixture(t);
+  const { base, env, workspace, agents } = machine;
+  const legacy = await legacyCodexInstall(machine, join(base, 'codex'));
+  const file = join(workspace, '.state/agents.json');
+  const before = await readFile(file, 'utf8');
+  await chmod(file, 0o444);
+  const refused = await agents('install', '--agent', 'codex');
+  await chmod(file, 0o644);
+  assert.notEqual(refused.code, 0);
+  assert.equal(refused.error.code, 'RECORDS_UNWRITABLE');
+  assert.match(refused.error.message, /nothing was changed/);
+  assert.deepEqual((await readdir(legacy)).sort(), BUNDLED);
+  assert.equal(await exists(join(env.HOME, '.agents/skills')), false);
+  assert.equal(await readFile(file, 'utf8'), before);
+  const upgraded = await agents('install', '--agent', 'codex');
+  assert.ok(upgraded.json.results.filter(item => item.kind === 'skill' && item.path.startsWith(legacy)).every(item => item.action === 'moved'));
+  assert.deepEqual(await readdir(legacy), []);
+});
+
+test('records are replaced by rename, never rewritten in place', async t => {
+  const { workspace, agents } = await fixture(t);
+  assert.equal((await agents('install', '--agent', 'claude')).code, 0);
+  const file = join(workspace, '.state/agents.json');
+  const first = (await lstat(file)).ino;
+  assert.equal((await agents('install', '--agent', 'claude')).code, 0);
+  assert.notEqual((await lstat(file)).ino, first);
+  assert.deepEqual((await readdir(join(workspace, '.state'))).filter(name => name.startsWith('agents.json.')), []);
+  assert.ok(JSON.parse(await readFile(file, 'utf8')).items.length);
+});
+
+// spec: agent-installation / Existing hooks are kept
+test('a hook that cannot be read is reported and never replaced', async t => {
+  if (process.getuid?.() === 0) return t.skip('permissions do not bind root');
+  const { base, workspace, agents } = await fixture(t);
+  await gitWorkspace(base, workspace);
+  const hook = join(workspace, '.git/hooks/post-merge');
+  await writeFile(hook, '#!/bin/sh\necho mine\n');
+  await chmod(hook, 0o000);
+  const installed = await agents('install', '--agent', 'claude');
+  await chmod(hook, 0o755);
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  const hooks = Object.fromEntries(installed.json.results.filter(item => item.kind === 'hook').map(item => [item.name, item]));
+  assert.deepEqual([hooks['post-merge'].action, hooks['post-merge'].code], ['failed', 'NOT_READABLE']);
+  assert.equal(hooks['post-rewrite'].action, 'installed');
+  assert.equal(await readFile(hook, 'utf8'), '#!/bin/sh\necho mine\n');
+});
+
+test('an invalid server name fails before anything is written', async t => {
+  const { base, env, workspace, agents } = await fixture(t);
+  const result = await agents('install', '--name', 'Not Kebab');
+  assert.equal(result.error.code, 'INVALID_INPUT');
+  assert.equal(await exists(join(base, 'claude/skills')), false);
+  assert.equal(await exists(join(env.HOME, '.agents')), false);
+  assert.equal(await exists(join(workspace, '.state/agents.json')), false);
 });

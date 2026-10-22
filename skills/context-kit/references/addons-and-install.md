@@ -65,7 +65,11 @@ npm run agents -- uninstall [--agent claude,codex]
   hour from an interrupted install are swept on the next one. A skill, hook or
   settings file that can't be written is reported `failed` with a code
   (`NOT_WRITABLE`, `WRITE_FAILED`, `NOT_READABLE`, `READ_FAILED`) rather than
-  stopping the install, and what was already done stays recorded.
+  stopping the install, and what was already done stays recorded. A hook that
+  can't be read is never replaced. The records (`.state/agents.json`) are written
+  by temporary file and rename, and `install`, `uninstall` and `repos sync` first
+  check they can be written: if not, they fail with `RECORDS_UNWRITABLE` before
+  changing anything. An invalid `--name` fails before anything is written.
 - `--link` symlinks skills so edits apply immediately (not possible in the shared
   location when a skill needs adapted frontmatter).
 - Project scope keeps Claude Code's server private to the project; Codex needs
