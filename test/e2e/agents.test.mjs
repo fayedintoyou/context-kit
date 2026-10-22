@@ -2204,3 +2204,78 @@ test('a held agents lock makes another install wait and then give up with AGENTS
   assert.equal((await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'])).code, 0);
   assert.equal(await exists(lock), false);
 });
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('a lock holder sweeps temporaries killed saves left in .state, by exact name and only when their process is gone', async t => {
+  const { workspace, agents } = await fixture(t, { agents: [] });
+  const state = join(workspace, '.state');
+  await mkdir(state, { recursive: true });
+  const now = Date.now();
+  const dead = [`agents.json.999999-${now}`, `leftovers.json.999999-${now}`, `agents.json.${process.pid}-1`];
+  // A live process's recent one, and names that only look alike.
+  const kept = [`agents.json.${process.pid}-${now}`, 'agents.json.bak', 'agents.json.999999-1-x', 'other.json.999999-1'];
+  for (const name of [...dead, ...kept]) await writeFile(join(state, name), '{}');
+  assert.equal((await agents('install', '--agent', 'cursor')).code, 0);
+  const left = await readdir(state);
+  for (const name of dead) assert.ok(!left.includes(name), name);
+  for (const name of kept) assert.ok(left.includes(name), name);
+});
+
+// spec: agent-installation / Selective uninstall of shared copies
+test('an uninstall that loses the agents lock stops before removing anything more, and the next one finishes', async t => {
+  const { base, env, workspace, run, agents } = await fixture(t, { agents: [] });
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  const shared = join(env.HOME, '.agents/skills');
+  const before = (await readdir(shared)).length;
+  // After the first skill is removed, another command takes the lock over.
+  const preload = join(base, 'takeover.mjs');
+  await writeFile(preload, `import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+const { rm } = fs;
+let done = false;
+fs.rm = async (path, options) => {
+  const result = await rm(path, options);
+  if (!done && String(path).startsWith(${JSON.stringify(shared)})) {
+    done = true;
+    await fs.writeFile(${JSON.stringify(join(workspace, '.state/.lock-agents'))}, JSON.stringify({ pid: ${process.pid}, at: Date.now(), token: 'taken-over' }));
+  }
+  return result;
+};
+syncBuiltinESMExports();
+`);
+  const lost = await run(['--root', workspace, 'agents', 'uninstall'], { NODE_OPTIONS: `--import=${preload}` });
+  assert.equal(lost.error?.code, 'AGENTS_BUSY');
+  assert.equal((await readdir(shared)).length, before - 1, 'only the skill removed before the takeover is gone');
+  assert.equal(JSON.parse(await readFile(join(workspace, '.state/.lock-agents'), 'utf8')).token, 'taken-over', 'the other holder\'s lock is left');
+  await rm(join(workspace, '.state/.lock-agents'));
+  const finished = await agents('uninstall');
+  assert.equal(finished.code, 0, JSON.stringify(finished.error));
+  assert.deepEqual(await readdir(shared), []);
+  assert.deepEqual((await agents('status')).json.items, []);
+});
+
+// spec: agent-installation / Other servers are kept
+test('repos sync sweeps previous versions of config files by the same rules as install and uninstall', async t => {
+  const { env, workspace, run, agents } = await fixture(t, { agents: [] });
+  const sync = extra => run(['--root', workspace, 'repos', 'sync'], extra);
+  assert.equal((await agents('install', '--agent', 'cursor')).code, 0);
+  assert.equal((await agents('uninstall')).code, 0);
+  const directory = join(env.HOME, '.cursor');
+  assert.equal((await previous(directory)).length, 1);
+  // Within the hour it stays; once past it, a sync deletes it and the directory the install created.
+  assert.equal((await sync()).code, 0);
+  assert.equal((await previous(directory)).length, 1);
+  assert.equal((await sync(anHourLater)).code, 0);
+  assert.equal(await exists(directory), false);
+
+  // One that no longer holds what it held is displaced and reported, never deleted.
+  assert.equal((await agents('install', '--agent', 'cursor')).code, 0);
+  assert.equal((await agents('uninstall')).code, 0);
+  const [name] = await previous(directory);
+  await writeFile(join(directory, name), '{"mcpServers":{},"late":"write"}');
+  const swept = await sync(anHourLater);
+  const leftover = swept.json.results.find(item => item.kind === 'leftover');
+  assert.equal(leftover.action, 'displaced');
+  assert.equal(await readFile(leftover.path, 'utf8'), '{"mcpServers":{},"late":"write"}');
+  assert.deepEqual(await previous(directory), []);
+});

@@ -133,7 +133,10 @@ npm run agents -- uninstall [--agent claude,codex]
     may still write to it. A later install, uninstall or `repos sync` deletes it once
     it is an hour old and still holds exactly what it held (the hash in its name);
     one that holds anything else is moved to a displaced copy and listed in the
-    result (`displaced`). What an interrupted write leaves follows the same rule; a
+    result (`displaced`; for `repos sync`, a `leftover` item in `results`). A write
+    that lands in the instant between that hash check and the delete, at least an
+    hour after the swap, is lost, as is any write after the delete; the hour is the
+    margin. What an interrupted write leaves follows the same rule; a
     file an interrupted uninstall moved aside is put back. A directory the install
     created goes once only such files were in it, even after uninstall
     (`.state/leftovers.json` remembers them).
@@ -141,7 +144,11 @@ npm run agents -- uninstall [--agent claude,codex]
   `.state/.lock-agents` (created exclusively, with its pid; a dead holder's lock is
   taken over), and another waits up to five minutes, then fails with
   `AGENTS_BUSY`. Records are read back after each save (`RECORDS_CHANGED` if they
-  differ).
+  differ), and uninstall checks it still holds the lock before each item it
+  removes, so one that lost the lock stops with `AGENTS_BUSY` before deleting
+  more (the next uninstall finishes). Temporaries a killed save left in `.state`
+  (`agents.json.<pid>-<ms>`, `leftovers.json.<pid>-<ms>`) are removed by the next
+  lock holder once their process is gone.
 - A harness CLI that fails is reported with a fixed code (`MCP_ADD_FAILED`,
   `MCP_REMOVE_FAILED`, `MCP_CLI_TIMEOUT`, `MCP_CLI_NOT_RUNNABLE`) and never its
   output. A remove that failed while the server is still registered is reported
