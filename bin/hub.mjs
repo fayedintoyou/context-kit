@@ -9,7 +9,7 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   help [topic]
   init <new-directory> [--kit <npm-spec>] [--addons a,b|none]
   setup <new-directory> [--kit <npm-spec>] [--addons a,b|none] [agents install options]
-  agents install [--agent claude,codex] [--scope user|project] [--project <dir>] [--name <server>] [--link] [--force] [--adopt] [--allow-write] [--global-mcp]
+  agents install [--agent claude,codex,gemini,copilot,cursor|all] [--scope user|project] [--project <dir>] [--name <server>] [--link] [--force] [--adopt] [--allow-write] [--global-mcp]
       [--global-rule | --no-global-rule]   (a Claude Code user rule; kept by later installs until --no-global-rule)
   agents status | agents uninstall [--agent claude,codex] [--force] [--adopt]
   list | validate

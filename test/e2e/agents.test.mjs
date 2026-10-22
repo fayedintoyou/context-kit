@@ -4,7 +4,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access, chmod, cp, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, link, rename, rm, realpath, symlink, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 
@@ -28,6 +29,34 @@ if (rest[0] === 'add') { servers[name] = rest.slice(rest.indexOf('--') + 1); }
 fs.writeFileSync(file, JSON.stringify(servers));
 `;
 
+// A fake Gemini CLI: logs every call and, as the real one does, keeps servers in the user
+// settings file, `~/.gemini/settings.json`, which it reads with `-s user` only.
+const fakeGemini = base => `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(join(base, 'calls.jsonl'))}, JSON.stringify({ agent: 'gemini', cwd: process.cwd(), args }) + '\\n');
+const file = path.join(process.env.GEMINI_CLI_HOME || process.env.HOME, '.gemini', 'settings.json');
+const settings = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+const dash = args.indexOf('--');
+const head = dash < 0 ? args : args.slice(0, dash);
+const scope = head[head.indexOf('-s') + 1];
+const [, verb, name, command] = head.filter((arg, i) => arg !== '-s' && head[i - 1] !== '-s');
+if (args[0] !== 'mcp' || head.indexOf('-s') < 0 || scope !== 'user') process.exit(2);
+// A failure that prints something private, which must never reach the result.
+if (process.env.FAKE_GEMINI_FAIL === verb) { process.stderr.write('PRIVATE_TOKEN=raw-error-sentinel\\n'); process.exit(17); }
+settings.mcpServers ??= {};
+if (verb === 'remove') delete settings.mcpServers[name];
+else if (verb === 'add') settings.mcpServers[name] = { command, args: dash < 0 ? [] : args.slice(dash + 1) };
+else process.exit(2);
+fs.mkdirSync(path.dirname(file), { recursive: true });
+fs.writeFileSync(file, JSON.stringify(settings, null, 2));
+`;
+
+// A run an hour later, when previous versions of config files Context Kit replaced or deleted
+// (kept for a harness that still holds one open) may go.
+const anHourLater = { CONTEXT_KIT_KEEP_PREVIOUS_MS: '0' };
+
 // An isolated machine: home and agent config directories, and a PATH with only node, npm
 // and the chosen agent CLIs (fake by default).
 async function fixture(t, { agents = ['claude', 'codex'], addons } = {}) {
@@ -38,10 +67,10 @@ async function fixture(t, { agents = ['claude', 'codex'], addons } = {}) {
   await symlink(process.execPath, join(bin, 'node'));
   await symlink(join(dirname(process.execPath), 'npm'), join(bin, 'npm'));
   for (const agent of agents) {
-    await writeFile(join(bin, agent), fake(base, agent));
+    await writeFile(join(bin, agent), agent === 'gemini' ? fakeGemini(base) : fake(base, agent));
     await chmod(join(bin, agent), 0o755);
   }
-  const env = { HOME: join(base, 'home'), CLAUDE_CONFIG_DIR: join(base, 'claude'), CODEX_HOME: join(base, 'codex'),
+  const env = { HOME: join(base, 'home'), CLAUDE_CONFIG_DIR: join(base, 'claude'), CODEX_HOME: join(base, 'codex'), COPILOT_HOME: join(base, 'copilot'),
     XDG_DATA_HOME: join(base, 'data'), XDG_CONFIG_HOME: join(base, 'config'), PATH: `${bin}:/usr/bin:/bin`,
     npm_config_cache: join(base, 'npm-cache'), npm_config_update_notifier: 'false' };
   await mkdir(env.HOME);
@@ -52,7 +81,8 @@ async function fixture(t, { agents = ['claude', 'codex'], addons } = {}) {
   };
   await run(['init', workspace, ...(addons ? ['--addons', addons] : [])]);
   const calls = async () => (await readFile(join(base, 'calls.jsonl'), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(JSON.parse);
-  return { base, env, workspace, run, calls, agents: (...args) => run(['--root', workspace, 'agents', ...args]) };
+  return { base, env, workspace, run, calls, agents: (...args) => run(['--root', workspace, 'agents', ...args]),
+    later: (...args) => run(['--root', workspace, 'agents', ...args], anHourLater) };
 }
 // Where each harness's user skills are in the fixture: Claude Code's own directory, and the
 // shared ~/.agents/skills for the others.
@@ -465,7 +495,7 @@ test('Claude Code, Codex and Gemini CLI get Claude Code\'s directory and one sha
   }
   assert.match(await readFile(join(base, 'claude/skills/reflect/SKILL.md'), 'utf8'), /^disable-model-invocation: true$/m);
   const gemini = installed.json.results.filter(item => item.agent === 'gemini' && item.kind !== 'skill');
-  assert.deepEqual(gemini.map(item => [item.kind, item.action]), [['mcp', 'unsupported'], ['guard', 'unsupported']]);
+  assert.deepEqual(gemini.map(item => [item.kind, item.action, item.reason?.split(' ')[0]]), [['mcp', 'skipped', 'gemini'], ['guard', 'unsupported', 'Context']]);
   const status = await agents('status');
   assert.deepEqual(status.json.items.filter(item => item.name === 'reflect').map(item => [item.agent, item.path, item.state]),
     [['claude', join(base, 'claude/skills/reflect'), 'installed'], ['codex', join(shared, 'reflect'), 'installed'], ['gemini', join(shared, 'reflect'), 'installed']]);
@@ -1570,4 +1600,607 @@ test('the opt-in follows CLAUDE_CONFIG_DIR: the old rule goes, the new directory
   assert.deepEqual(ruleResults(moved.json.results).map(item => [item.path, item.action]), [[ruleOf(base), 'removed'], [join(base, 'claude2/rules/context-kit.md'), 'installed']]);
   assert.equal(await exists(ruleOf(base)), false);
   assert.match(await readFile(join(base, 'claude2/rules/context-kit.md'), 'utf8'), /list_repos/);
+});
+
+// Harnesses beyond Claude Code and Codex. Copilot CLI and Cursor register through their JSON
+// config files; Gemini CLI through its CLI (faked above).
+const HARNESSES = ['claude', 'codex', 'gemini', 'copilot', 'cursor'];
+const copilotConfig = env => join(env.COPILOT_HOME, 'mcp-config.json');
+const cursorConfig = env => join(env.HOME, '.cursor/mcp.json');
+const serverCommand = workspace => [process.execPath, join(kit, 'bin/mcp.mjs'), '--root', workspace, '--no-skill-prompts'];
+// What a directory holds besides previous versions of its config file.
+const PREVIOUS = /^\..+\.context-kit-\d+-\d+-[pv][0-9a-f]{16}$/;
+const previous = async dir => (await readdir(dir)).filter(name => PREVIOUS.test(name));
+// Copies recovery kept, reported by the sweep before the run or by the registration itself.
+const displacedOf = json => [...(json.displaced ?? []), ...json.results.flatMap(item => item.displaced ?? [])];
+const visible = async dir => (await readdir(dir)).filter(name => !PREVIOUS.test(name)).sort();
+
+// spec: agent-installation / Unknown harness
+test('an unknown harness fails naming every supported one, and nothing is written', async t => {
+  const { base, env, workspace, calls, agents } = await fixture(t, { agents: ['claude', 'codex', 'gemini'] });
+  const result = await agents('install', '--agent', 'claude,windsurf');
+  assert.equal(result.error.code, 'INVALID_INPUT');
+  for (const name of [...HARNESSES, 'all']) assert.match(result.error.message, new RegExp(`\\b${name}\\b`), name);
+  assert.deepEqual(await readdir(env.HOME), []);
+  assert.equal(await exists(join(base, 'claude')), false);
+  assert.equal(await exists(join(workspace, '.state/agents.json')), false);
+  assert.deepEqual(await calls(), []);
+});
+
+// spec: agent-installation / Every harness
+test('--agent all installs skills and an MCP registration for every harness, and uninstall removes them all', async t => {
+  const { env, workspace, agents, later } = await fixture(t, { agents: ['claude', 'codex', 'gemini'] });
+  const installed = await agents('install', '--agent', 'all');
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  assert.deepEqual(installed.json.results.filter(item => item.kind === 'mcp').map(item => [item.agent, item.action]), HARNESSES.map(agent => [agent, 'installed']));
+  const status = (await agents('status')).json.items;
+  for (const agent of HARNESSES) {
+    const skills = status.filter(item => item.agent === agent && item.kind === 'skill');
+    assert.deepEqual(skills.map(item => item.name).sort(), BUNDLED, agent);
+    assert.ok(skills.every(item => item.state === 'installed'), agent);
+    assert.deepEqual(status.filter(item => item.agent === agent && item.kind === 'mcp').map(item => item.state), ['installed'], agent);
+  }
+  const gemini = JSON.parse(await readFile(join(env.HOME, '.gemini/settings.json'), 'utf8'));
+  assert.deepEqual(gemini.mcpServers['context-workspace'], { command: process.execPath, args: serverCommand(workspace).slice(1) });
+
+  const removed = await agents('uninstall');
+  assert.equal(removed.code, 0, JSON.stringify(removed.error));
+  assert.ok(removed.json.results.every(item => item.action === 'removed'), JSON.stringify(removed.json.results.filter(item => item.action !== 'removed')));
+  assert.deepEqual((await agents('status')).json.items, []);
+  assert.deepEqual(JSON.parse(await readFile(join(env.HOME, '.gemini/settings.json'), 'utf8')).mcpServers, {});
+  // The config files the install created are deleted, each kept as a previous version for an hour;
+  // a later run removes them and the directories the install created.
+  assert.deepEqual(await visible(env.COPILOT_HOME), []);
+  assert.deepEqual(await visible(join(env.HOME, '.cursor')), []);
+  assert.equal((await later('uninstall')).code, 0);
+  assert.equal(await exists(env.COPILOT_HOME), false);
+  assert.equal(await exists(join(env.HOME, '.cursor')), false);
+  assert.deepEqual(await readdir(join(env.HOME, '.agents/skills')), []);
+});
+
+// spec: agent-installation / Cursor sees both directories
+test('installing for Claude Code, Codex and Cursor warns that Cursor reads my-repos twice, and the copies are identical', async t => {
+  const { workspace, env, run } = await fixture(t);
+  await repository(workspace, 'studio', { title: 'the studio', resource: 'https://github.com/example/site', aliases: ['example site'] });
+  const installed = await run(['--root', workspace, 'agents', 'install', '--agent', 'claude,codex,cursor'], { CLAUDE_CONFIG_DIR: '' });
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  const claudeCopy = join(env.HOME, '.claude/skills/my-repos');
+  const sharedCopy = join(env.HOME, '.agents/skills/my-repos');
+  const warning = installed.json.warnings.find(item => item.name === 'my-repos');
+  assert.deepEqual([warning.agent, warning.code, warning.paths.sort()], ['cursor', 'READ_TWICE', [sharedCopy, claudeCopy].sort()]);
+  assert.match(warning.reason, /^Cursor reads my-repos from .* no precedence .*identical$/);
+  assert.equal(await readFile(join(claudeCopy, 'SKILL.md'), 'utf8'), await readFile(join(sharedCopy, 'SKILL.md'), 'utf8'));
+  // A bundled skill with keys only Claude Code reads is named too, as differing.
+  assert.match(installed.json.warnings.find(item => item.name === 'reflect').reason, /differ$/);
+  // Without Cursor, or with Cursor reading one copy, nothing is reported.
+  assert.deepEqual((await run(['--root', workspace, 'agents', 'install', '--agent', 'claude,codex'], { CLAUDE_CONFIG_DIR: '' })).json.warnings, []);
+  const alone = await fixture(t);
+  assert.deepEqual((await alone.run(['--root', alone.workspace, 'agents', 'install', '--agent', 'claude,cursor'], { CLAUDE_CONFIG_DIR: '' })).json.warnings, []);
+});
+
+// spec: agent-installation / Register with Gemini CLI
+test('Gemini CLI registers the server through gemini mcp add and remove at user scope', async t => {
+  const { env, workspace, calls, agents } = await fixture(t, { agents: ['gemini'] });
+  const installed = await agents('install', '--agent', 'gemini');
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  const [node, ...rest] = serverCommand(workspace);
+  assert.deepEqual((await calls()).map(call => call.args), [
+    ['mcp', 'remove', '-s', 'user', 'context-workspace'],
+    ['mcp', 'add', '-s', 'user', 'context-workspace', node, '--', ...rest]]);
+  assert.deepEqual((await agents('status')).json.items.filter(item => item.kind === 'mcp').map(item => [item.agent, item.scope, item.state]), [['gemini', 'user', 'installed']]);
+  const removed = await agents('uninstall', '--agent', 'gemini');
+  assert.equal(removed.code, 0, JSON.stringify(removed.error));
+  assert.deepEqual((await calls()).at(-1).args, ['mcp', 'remove', '-s', 'user', 'context-workspace']);
+  assert.equal(JSON.parse(await readFile(join(env.HOME, '.gemini/settings.json'), 'utf8')).mcpServers['context-workspace'], undefined);
+  // Without the CLI, as for other agents: skipped, skills still installed.
+  const bare = await fixture(t, { agents: [] });
+  const skipped = (await bare.agents('install', '--agent', 'gemini')).json.results.find(item => item.kind === 'mcp');
+  assert.deepEqual([skipped.action, skipped.reason], ['skipped', 'gemini CLI not found on PATH']);
+  assert.ok(await exists(join(bare.env.HOME, '.agents/skills/reflect/SKILL.md')));
+});
+
+// spec: agent-installation / Other servers are kept
+test('Copilot CLI and Cursor config files gain one entry in their shape, and uninstall restores them byte for byte', async t => {
+  const { env, workspace, agents } = await fixture(t, { agents: [] });
+  // Formatting of the user's own choosing: four spaces and a trailing key for Copilot, one line for Cursor.
+  const copilotBefore = '{\n    "mcpServers": {\n        "notes": {\n            "type": "local",\n            "command": "notes-mcp",\n            "args": [],\n            "tools": ["*"]\n        }\n    },\n    "theme": "dark"\n}\n';
+  const cursorBefore = '{"mcpServers": {"notes": {"command": "notes-mcp"}}, "other": [1, 2]}';
+  await mkdir(env.COPILOT_HOME, { recursive: true });
+  await mkdir(join(env.HOME, '.cursor'));
+  await writeFile(copilotConfig(env), copilotBefore, { mode: 0o640 });
+  await writeFile(cursorConfig(env), cursorBefore);
+  const installed = await agents('install', '--agent', 'copilot,cursor');
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  assert.deepEqual(installed.json.results.filter(item => item.kind === 'mcp').map(item => [item.agent, item.action, item.path]),
+    [['copilot', 'installed', copilotConfig(env)], ['cursor', 'installed', cursorConfig(env)]]);
+  const [node, ...args] = serverCommand(workspace);
+  const copilot = JSON.parse(await readFile(copilotConfig(env), 'utf8'));
+  assert.deepEqual(copilot, { mcpServers: { notes: JSON.parse(copilotBefore).mcpServers.notes, 'context-workspace': { type: 'local', command: node, args, tools: ['*'] } }, theme: 'dark' });
+  const cursor = JSON.parse(await readFile(cursorConfig(env), 'utf8'));
+  assert.deepEqual(cursor, { mcpServers: { notes: { command: 'notes-mcp' }, 'context-workspace': { type: 'stdio', command: node, args } }, other: [1, 2] });
+  assert.ok((await readFile(copilotConfig(env), 'utf8')).startsWith('{\n    "mcpServers": {\n        "notes": {'), 'the user\'s text is kept, not reformatted');
+  assert.equal((await lstat(copilotConfig(env))).mode & 0o777, 0o640);
+  assert.deepEqual((await agents('status')).json.items.filter(item => item.kind === 'mcp').map(item => [item.agent, item.state]), [['copilot', 'installed'], ['cursor', 'installed']]);
+  assert.deepEqual((await agents('install', '--agent', 'copilot,cursor')).json.results.filter(item => item.kind === 'mcp').map(item => item.action), ['unchanged', 'unchanged']);
+
+  const removed = await agents('uninstall');
+  assert.deepEqual(removed.json.results.filter(item => item.kind === 'mcp').map(item => [item.agent, item.action]), [['copilot', 'removed'], ['cursor', 'removed']]);
+  assert.equal(await readFile(copilotConfig(env), 'utf8'), copilotBefore);
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), cursorBefore);
+});
+
+// spec: agent-installation / Other servers are kept
+test('a config file without mcpServers gets the key and loses it again; a foreign entry of the same name is kept unless forced', async t => {
+  const { env, agents } = await fixture(t, { agents: [] });
+  await mkdir(join(env.HOME, '.cursor'));
+  const before = '{\n  "editor": {\n    "fontSize": 13\n  }\n}\n';
+  await writeFile(cursorConfig(env), before);
+  assert.equal((await agents('install', '--agent', 'cursor')).code, 0);
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(cursorConfig(env), 'utf8'))), ['editor', 'mcpServers']);
+  await agents('uninstall');
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), before);
+
+  const foreign = `{\n  "mcpServers": {\n    "context-workspace": {\n      "command": "elsewhere"\n    }\n  }\n}\n`;
+  await writeFile(copilotConfig(env), foreign).catch(async () => { await mkdir(env.COPILOT_HOME); await writeFile(copilotConfig(env), foreign); });
+  const conflict = (await agents('install', '--agent', 'copilot')).json.results.find(item => item.kind === 'mcp');
+  assert.deepEqual([conflict.action, conflict.code], ['conflict', 'MCP_FOREIGN']);
+  assert.equal(await readFile(copilotConfig(env), 'utf8'), foreign);
+  assert.deepEqual((await agents('uninstall')).json.results.filter(item => item.kind === 'mcp'), []);
+  assert.equal(await readFile(copilotConfig(env), 'utf8'), foreign);
+  assert.equal((await agents('install', '--agent', 'copilot', '--force')).json.results.find(item => item.kind === 'mcp').action, 'installed');
+  assert.equal(JSON.parse(await readFile(copilotConfig(env), 'utf8')).mcpServers['context-workspace'].type, 'local');
+});
+
+// spec: agent-installation / Unreadable config
+test('a commented Copilot config and an invalid Cursor config are refused untouched, and the skills still install', async t => {
+  const { env, agents } = await fixture(t, { agents: [] });
+  const copilotBefore = '{\n  // my servers\n  "mcpServers": {}\n}\n';
+  const cursorBefore = '{ "mcpServers": { "notes": ';
+  await mkdir(env.COPILOT_HOME, { recursive: true });
+  await mkdir(join(env.HOME, '.cursor'));
+  await writeFile(copilotConfig(env), copilotBefore);
+  await writeFile(cursorConfig(env), cursorBefore);
+  const installed = await agents('install', '--agent', 'copilot,cursor');
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  const mcp = installed.json.results.filter(item => item.kind === 'mcp');
+  assert.deepEqual(mcp.map(item => [item.agent, item.action, item.code, item.path]),
+    [['copilot', 'refused', 'CONFIG_MALFORMED', copilotConfig(env)], ['cursor', 'refused', 'CONFIG_MALFORMED', cursorConfig(env)]]);
+  for (const item of mcp) {
+    assert.ok(item.reason.startsWith(`${item.path} is not plain JSON`), item.reason);
+    assert.equal(item.entry.command, process.execPath, 'the entry to add by hand');
+  }
+  assert.equal(await readFile(copilotConfig(env), 'utf8'), copilotBefore);
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), cursorBefore);
+  assert.deepEqual((await readdir(join(env.HOME, '.agents/skills'))).sort(), BUNDLED);
+  assert.ok(installed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'installed'));
+  assert.deepEqual((await agents('status')).json.items.filter(item => item.kind === 'mcp'), []);
+  // An mcpServers that isn't an object, or a link to nothing, is refused the same way.
+  await writeFile(cursorConfig(env), '{"mcpServers": []}');
+  await rm(copilotConfig(env));
+  await symlink(join(env.HOME, 'nowhere.json'), copilotConfig(env));
+  const again = (await agents('install', '--agent', 'copilot,cursor')).json.results.filter(item => item.kind === 'mcp');
+  assert.deepEqual(again.map(item => [item.agent, item.action, item.code]), [['copilot', 'refused', 'CONFIG_LINK_BROKEN'], ['cursor', 'refused', 'CONFIG_MALFORMED']]);
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), '{"mcpServers": []}');
+  assert.equal(await exists(join(env.HOME, 'nowhere.json')), false);
+  // A key listed twice anywhere is ambiguous, so it is refused too.
+  const twice = '{"mcpServers": {}, "editor": {"font": 1, "font": 2}}';
+  await writeFile(cursorConfig(env), twice);
+  const duplicate = (await agents('install', '--agent', 'cursor')).json.results.find(item => item.kind === 'mcp');
+  assert.deepEqual([duplicate.action, duplicate.code], ['refused', 'CONFIG_MALFORMED']);
+  assert.match(duplicate.reason, /"font" more than once/);
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), twice);
+});
+
+// spec: agent-installation / Edited entry
+test('an entry edited since install is kept and reported edited by install and uninstall', async t => {
+  const { env, agents, later } = await fixture(t, { agents: [] });
+  assert.equal((await agents('install', '--agent', 'cursor')).code, 0);
+  const config = JSON.parse(await readFile(cursorConfig(env), 'utf8'));
+  config.mcpServers['context-workspace'].env = { DEBUG: '1' };
+  const edited = JSON.stringify(config, null, 2);
+  await writeFile(cursorConfig(env), edited);
+  assert.equal((await agents('status')).json.items.find(item => item.kind === 'mcp').state, 'edited');
+  const installed = (await agents('install', '--agent', 'cursor')).json.results.find(item => item.kind === 'mcp');
+  assert.equal(installed.action, 'edited');
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), edited);
+  const removed = (await agents('uninstall')).json.results.find(item => item.kind === 'mcp');
+  assert.deepEqual([removed.action, removed.state], ['kept', 'edited']);
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), edited);
+  // --force replaces it, and then uninstall removes it, with the file the install created.
+  assert.equal((await agents('install', '--agent', 'cursor', '--force')).json.results.find(item => item.kind === 'mcp').action, 'updated');
+  assert.equal((await agents('uninstall')).json.results.find(item => item.kind === 'mcp').action, 'removed');
+  assert.deepEqual(await visible(join(env.HOME, '.cursor')), []);
+  await later('status');
+  await later('uninstall');
+  assert.equal(await exists(join(env.HOME, '.cursor')), false);
+});
+
+// spec: agent-installation / Other servers are kept
+test('config files reached through symbolic links are edited in place and the links are kept', async t => {
+  const { base, env, agents } = await fixture(t, { agents: [] });
+  // A dotfile manager's layout: ~/.cursor is a link to a directory, and Copilot's file a link to a file.
+  const dotfiles = join(base, 'dotfiles');
+  await mkdir(join(dotfiles, 'cursor'), { recursive: true });
+  const cursorBefore = '{\n  "mcpServers": {\n    "notes": { "command": "notes-mcp" }\n  }\n}\n';
+  const copilotBefore = '{\n  "mcpServers": {}\n}\n';
+  await writeFile(join(dotfiles, 'cursor/mcp.json'), cursorBefore);
+  await writeFile(join(dotfiles, 'copilot.json'), copilotBefore);
+  await symlink(join(dotfiles, 'cursor'), join(env.HOME, '.cursor'));
+  await mkdir(env.COPILOT_HOME);
+  await symlink(join(dotfiles, 'copilot.json'), copilotConfig(env));
+  assert.equal((await agents('install', '--agent', 'copilot,cursor')).code, 0);
+  assert.ok((await lstat(join(env.HOME, '.cursor'))).isSymbolicLink());
+  assert.ok((await lstat(copilotConfig(env))).isSymbolicLink());
+  assert.ok(JSON.parse(await readFile(join(dotfiles, 'cursor/mcp.json'), 'utf8')).mcpServers['context-workspace']);
+  assert.ok(JSON.parse(await readFile(join(dotfiles, 'copilot.json'), 'utf8')).mcpServers['context-workspace']);
+  assert.deepEqual(await visible(join(dotfiles, 'cursor')), ['mcp.json'], 'no temporary is left');
+  await agents('uninstall');
+  assert.equal(await readFile(join(dotfiles, 'cursor/mcp.json'), 'utf8'), cursorBefore);
+  assert.equal(await readFile(join(dotfiles, 'copilot.json'), 'utf8'), copilotBefore);
+  assert.ok((await lstat(copilotConfig(env))).isSymbolicLink());
+});
+
+// spec: agent-installation / Project install for Cursor
+test('at project scope Cursor, Copilot CLI and Gemini CLI get project skills and no MCP registration', async t => {
+  const { base, env, calls, agents } = await fixture(t, { agents: ['gemini'] });
+  const project = join(base, 'project');
+  await mkdir(project);
+  await mkdir(join(env.HOME, '.cursor'));
+  const before = '{"mcpServers": {}}';
+  await writeFile(cursorConfig(env), before);
+  const installed = await agents('install', '--agent', 'cursor,copilot,gemini', '--scope', 'project', '--project', project);
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  assert.deepEqual((await readdir(join(project, '.agents/skills'))).sort(), BUNDLED);
+  assert.equal(await exists(join(env.HOME, '.agents')), false);
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), before);
+  assert.equal(await exists(env.COPILOT_HOME), false);
+  assert.deepEqual(await calls(), []);
+  const mcp = installed.json.results.filter(item => item.kind === 'mcp');
+  assert.deepEqual(mcp.map(item => [item.agent, item.action]), [['cursor', 'skipped'], ['copilot', 'skipped'], ['gemini', 'skipped']]);
+  assert.match(mcp[0].reason, /^Cursor's project MCP config is usually committed, so Context Kit registers it only at user scope/);
+});
+
+// Review round 1. A harness (or the user) writing the config file at the worst moments: a
+// preload runs the write once, just before the install's capture link (`capture`), between its
+// check and its swap, in place (`swap`), or before an uninstall moves a created file aside
+// (`aside`). RACE_KEY says what the writer adds: another server, or an unrelated top-level key.
+const racePreload = `import fs from 'node:fs/promises';
+import sync from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const { RACE_AT: at, RACE_FLAG: flag, RACE_KEY: key } = process.env;
+const log = process.env.RACE_LOG;
+const edit = (path, inPlace) => {
+  if (!flag || !sync.existsSync(flag)) return;
+  if (!process.env.RACE_REPEAT) sync.rmSync(flag);
+  let text;
+  if (key === 'broken') text = '{ not json';
+  else {
+    const data = JSON.parse(sync.readFileSync(path, 'utf8'));
+    if (key === 'top') data.harness = true;
+    else if (key === 'later') data.later = true;
+    else if (key === 'ours') (data.mcpServers ??= {})['context-workspace'] = { command: 'theirs' };
+    else (data.mcpServers ??= {})['harness-added'] = { command: 'h' };
+    if (process.env.RACE_REPEAT) data.writes = (data.writes ?? 0) + 1;
+    text = JSON.stringify(data, null, 2) + '\\n';
+  }
+  if (inPlace) sync.writeFileSync(path, text);
+  else { sync.writeFileSync(path + '.harness', text); sync.renameSync(path + '.harness', path); }
+  // What the writer left, for the test to compare with (NUL-separated when it writes again).
+  if (log) sync.appendFileSync(log, (sync.existsSync(log) && sync.readFileSync(log, 'utf8') ? '\\u0000' : '') + text);
+};
+const { link, rename } = fs;
+fs.link = async (from, to) => { if (at === 'capture' && /-p[0-9a-f]{16}$/.test(String(to))) edit(from, false); return link(from, to); };
+fs.rename = async (from, to) => {
+  if (at === 'swap' && String(from).includes('.context-kit-') && /mcp(-config)?\\.json$/.test(String(to))) edit(to, true);
+  if (at === 'aside' && /-o[0-9a-f]{16}$/.test(String(to)) && /mcp(-config)?\\.json$/.test(String(from))) edit(from, true);
+  return rename(from, to);
+};
+syncBuiltinESMExports();
+`;
+async function racer(base) {
+  const preload = join(base, 'race.mjs');
+  await writeFile(preload, racePreload);
+  const flag = join(base, 'race.flag');
+  racer.fired = async () => !await exists(flag);
+  return async (at, key = 'server') => { await writeFile(flag, ''); return { NODE_OPTIONS: `--import=${preload}`, RACE_AT: at, RACE_FLAG: flag, RACE_KEY: key }; };
+}
+
+// spec: agent-installation / Other servers are kept
+test('a harness writing its config while install or uninstall edits it keeps its change', async t => {
+  const { base, env, run, workspace } = await fixture(t, { agents: [] });
+  const race = await racer(base);
+  const cursor = (...args) => run(['--root', workspace, 'agents', ...args]);
+  const servers = async () => Object.keys(JSON.parse(await readFile(cursorConfig(env), 'utf8')).mcpServers).sort();
+  await mkdir(join(env.HOME, '.cursor'));
+  await writeFile(cursorConfig(env), '{\n  "mcpServers": {\n    "notes": { "command": "notes-mcp" }\n  }\n}\n');
+  // Before the capture: nothing is written, and the edit is computed again from the new content.
+  const first = await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'], await race('capture'));
+  assert.ok(await racer.fired(), 'the racing write ran');
+  assert.equal(first.json.results.find(item => item.kind === 'mcp').action, 'installed');
+  assert.deepEqual(await servers(), ['context-workspace', 'harness-added', 'notes']);
+  // During the swap, in place: the file is put back exactly as the writer left it, and the
+  // install says so; the next one applies the entry to it.
+  await cursor('uninstall');
+  assert.deepEqual(await servers(), ['harness-added', 'notes']);
+  const writerLeft = [];
+  const second = await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'], { ...await race('swap', 'top'), RACE_LOG: join(base, 'race.log') });
+  assert.ok(await racer.fired(), 'the racing write ran');
+  writerLeft.push(await readFile(join(base, 'race.log'), 'utf8'));
+  const conflicted = second.json.results.find(item => item.kind === 'mcp');
+  assert.deepEqual([conflicted.action, conflicted.code], ['failed', 'MCP_CONFLICT']);
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), writerLeft[0], 'byte-identical to what the writer left');
+  assert.equal((await cursor('install', '--agent', 'cursor')).json.results.find(item => item.kind === 'mcp').action, 'installed');
+  const both = JSON.parse(await readFile(cursorConfig(env), 'utf8'));
+  assert.deepEqual([Object.keys(both.mcpServers).sort(), both.harness], [['context-workspace', 'harness-added', 'notes'], true]);
+  // Uninstall racing a writer the same way: the writer's file stays, and the record with it.
+  const removed = await run(['--root', workspace, 'agents', 'uninstall'], { ...await race('swap', 'later'), RACE_LOG: join(base, 'race2.log') });
+  assert.ok(await racer.fired(), 'the racing write ran');
+  assert.deepEqual(removed.json.results.filter(item => item.kind === 'mcp').map(item => [item.action, item.code]), [['kept', 'MCP_CONFLICT']]);
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), await readFile(join(base, 'race2.log'), 'utf8'));
+  assert.equal((await cursor('uninstall')).json.results.find(item => item.kind === 'mcp').action, 'removed');
+  assert.deepEqual(await servers(), ['harness-added', 'notes']);
+  assert.deepEqual((await visible(join(env.HOME, '.cursor'))).sort(), ['mcp.json'], 'no temporary or displaced copy is left');
+});
+
+// spec: agent-installation / Other servers are kept
+test('a writer racing every attempt, or racing before an early stop, ends with exactly its bytes and MCP_CONFLICT', async t => {
+  const { base, env, run, workspace } = await fixture(t, { agents: [] });
+  const race = await racer(base);
+  await mkdir(join(env.HOME, '.cursor'));
+  await writeFile(cursorConfig(env), '{"mcpServers":{},"original":true}');
+  // A write before every capture: four attempts, nothing written.
+  const exhausted = await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'], { ...await race('capture'), RACE_REPEAT: '1', RACE_LOG: join(base, 'every.log') });
+  const result = exhausted.json.results.find(item => item.kind === 'mcp');
+  assert.deepEqual([result.action, result.code], ['failed', 'MCP_CONFLICT']);
+  assert.match(result.reason, /nothing was written/);
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), (await readFile(join(base, 'every.log'), 'utf8')).split('\u0000').at(-1));
+  assert.deepEqual(JSON.parse(await readFile(cursorConfig(env), 'utf8')).writes, 4);
+  // The writer adds a server of our name before the capture: the next attempt stops early
+  // (MCP_FOREIGN) and writes nothing.
+  await writeFile(cursorConfig(env), '{"mcpServers":{},"original":true}');
+  const foreign = await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'], { ...await race('capture', 'ours'), RACE_LOG: join(base, 'ours.log') });
+  assert.equal(foreign.json.results.find(item => item.kind === 'mcp').code, 'MCP_FOREIGN');
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), await readFile(join(base, 'ours.log'), 'utf8'));
+  // The writer leaves something that isn't JSON: nothing is written.
+  await writeFile(cursorConfig(env), '{"mcpServers":{},"original":true}');
+  const broken = await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'], { ...await race('capture', 'broken'), RACE_LOG: join(base, 'broken.log') });
+  assert.equal(broken.json.results.find(item => item.kind === 'mcp').code, 'MCP_CONFLICT');
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), '{ not json');
+  assert.deepEqual(await visible(join(env.HOME, '.cursor')), ['mcp.json']);
+});
+
+// spec: agent-installation / Other servers are kept
+test('a file the install created is deleted on uninstall only while it holds nothing else', async t => {
+  const { base, env, run, workspace } = await fixture(t, { agents: [] });
+  const race = await racer(base);
+  assert.equal((await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'])).code, 0);
+  // A key added just before the uninstall moves the file aside: the file stays, with that key.
+  const removed = await run(['--root', workspace, 'agents', 'uninstall'], await race('aside', 'top'));
+  assert.ok(await racer.fired(), 'the racing write ran');
+  assert.equal(removed.json.results.find(item => item.kind === 'mcp').action, 'removed');
+  assert.deepEqual(JSON.parse(await readFile(cursorConfig(env), 'utf8')), { harness: true });
+  assert.deepEqual(await visible(join(env.HOME, '.cursor')), ['mcp.json']);
+});
+
+// spec: agent-installation / Other servers are kept
+test('a config link retargeted to another file is not edited or deleted, and a rewritten file is not claimed', async t => {
+  const { base, env, agents } = await fixture(t, { agents: [] });
+  assert.equal((await agents('install', '--agent', 'cursor')).code, 0);
+  // The same bytes in a file outside HOME, and the config replaced by a link to it.
+  const foreign = join(base, 'foreign.json');
+  const bytes = await readFile(cursorConfig(env), 'utf8');
+  await writeFile(foreign, bytes);
+  await rm(cursorConfig(env));
+  await symlink(foreign, cursorConfig(env));
+  assert.equal((await agents('status')).json.items.find(item => item.kind === 'mcp').state, 'replaced');
+  const install = (await agents('install', '--agent', 'cursor')).json.results.find(item => item.kind === 'mcp');
+  assert.deepEqual([install.action, install.code], ['conflict', 'MCP_REPLACED']);
+  const removed = (await agents('uninstall')).json.results.find(item => item.kind === 'mcp');
+  assert.deepEqual([removed.action, removed.code], ['skipped', 'MCP_REPLACED']);
+  assert.match(removed.reason, new RegExp(`now leads to ${foreign}`));
+  assert.equal(await readFile(foreign, 'utf8'), bytes);
+  assert.ok((await lstat(cursorConfig(env))).isSymbolicLink());
+
+  // A file rewritten since install (the harness saving it) still loses our entry, but the file
+  // and mcpServers the install created are no longer the install's to delete.
+  const other = await fixture(t, { agents: [] });
+  assert.equal((await other.agents('install', '--agent', 'cursor')).code, 0);
+  const path = cursorConfig(other.env);
+  await writeFile(`${path}.saved`, await readFile(path, 'utf8'));
+  await rename(`${path}.saved`, path);
+  assert.equal((await other.agents('uninstall')).json.results.find(item => item.kind === 'mcp').action, 'removed');
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), { mcpServers: {} });
+});
+
+// spec: agent-installation / Other servers are kept
+test('empty objects keep their own whitespace through install and uninstall', async t => {
+  const { env, agents } = await fixture(t, { agents: [] });
+  await mkdir(join(env.HOME, '.cursor'));
+  await mkdir(env.COPILOT_HOME);
+  for (const [cursorBefore, copilotBefore] of [['{ \n\t }\n', '{\n  "mcpServers": { \n\n  }\n}\n'], ['{}', '{"mcpServers":{}}']]) {
+    await writeFile(cursorConfig(env), cursorBefore);
+    await writeFile(copilotConfig(env), copilotBefore);
+    assert.deepEqual((await agents('install', '--agent', 'cursor,copilot')).json.results.filter(item => item.kind === 'mcp').map(item => item.action), ['installed', 'installed']);
+    await agents('uninstall');
+    assert.equal(await readFile(cursorConfig(env), 'utf8'), cursorBefore);
+    assert.equal(await readFile(copilotConfig(env), 'utf8'), copilotBefore);
+  }
+});
+
+// spec: agent-installation / Register with Gemini CLI
+test('a failing gemini CLI is reported with a fixed code and none of its output, and a failed remove keeps the record', async t => {
+  const { env, run, workspace, agents } = await fixture(t, { agents: ['gemini'] });
+  const added = await run(['--root', workspace, 'agents', 'install', '--agent', 'gemini'], { FAKE_GEMINI_FAIL: 'add' });
+  const failed = added.json.results.find(item => item.kind === 'mcp');
+  assert.deepEqual([failed.action, failed.code], ['failed', 'MCP_ADD_FAILED']);
+  assert.doesNotMatch(JSON.stringify(added.json), /PRIVATE_TOKEN|sentinel/);
+  assert.equal((await agents('install', '--agent', 'gemini')).json.results.find(item => item.kind === 'mcp').action, 'installed');
+  const kept = await run(['--root', workspace, 'agents', 'uninstall'], { FAKE_GEMINI_FAIL: 'remove' });
+  const result = kept.json.results.find(item => item.kind === 'mcp');
+  assert.deepEqual([result.action, result.state, result.code], ['kept', 'failed', 'MCP_REMOVE_FAILED']);
+  assert.doesNotMatch(JSON.stringify(kept.json), /PRIVATE_TOKEN|sentinel/);
+  assert.equal((await agents('status')).json.items.find(item => item.kind === 'mcp').state, 'installed');
+  assert.equal((await agents('uninstall')).json.results.find(item => item.kind === 'mcp').action, 'removed');
+  assert.equal(JSON.parse(await readFile(join(env.HOME, '.gemini/settings.json'), 'utf8')).mcpServers['context-workspace'], undefined);
+});
+
+// spec: agent-installation / Register with Gemini CLI
+test('GEMINI_CLI_HOME away from HOME is refused before anything is written', async t => {
+  const { base, env, workspace, run, calls } = await fixture(t, { agents: ['gemini'] });
+  const refused = await run(['--root', workspace, 'agents', 'install', '--agent', 'claude,gemini'], { GEMINI_CLI_HOME: join(base, 'gemini-home') });
+  assert.equal(refused.error.code, 'GEMINI_HOME_UNSUPPORTED');
+  assert.match(refused.error.message, new RegExp(join(base, 'gemini-home', '.agents', 'skills')));
+  assert.deepEqual(await readdir(env.HOME), []);
+  assert.equal(await exists(join(workspace, '.state/agents.json')), false);
+  assert.deepEqual(await calls(), []);
+  // Pointing at HOME itself is the default layout.
+  assert.equal((await run(['--root', workspace, 'agents', 'install', '--agent', 'gemini'], { GEMINI_CLI_HOME: env.HOME })).code, 0);
+});
+
+// spec: agent-installation / Other servers are kept
+test('a config file an interrupted uninstall moved aside is put back, or kept as displaced when another took its place', async t => {
+  const { env, agents } = await fixture(t, { agents: [] });
+  await mkdir(join(env.HOME, '.cursor'));
+  // A process that no longer exists (pid 999999) moved the file aside and was killed.
+  const before = '{"mcpServers": {"notes": {"command": "notes-mcp"}}}';
+  const aside = join(env.HOME, '.cursor/.mcp.json.context-kit-999999-1-o0123456789abcdef');
+  await writeFile(aside, before);
+  assert.equal((await agents('install', '--agent', 'cursor')).json.results.find(item => item.kind === 'mcp').action, 'installed');
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(cursorConfig(env), 'utf8')).mcpServers), ['notes', 'context-workspace']);
+  assert.deepEqual(await visible(join(env.HOME, '.cursor')), ['mcp.json']);
+  await writeFile(aside, before);
+  const again = (await agents('install', '--agent', 'cursor')).json;
+  const files = (await visible(join(env.HOME, '.cursor'))).sort();
+  assert.equal(files.length, 2);
+  assert.match(files[1], /^mcp\.json\.context-kit-displaced-\d+-\d+-0$/);
+  assert.deepEqual(displacedOf(again), [join(env.HOME, '.cursor', files[1])]);
+  assert.equal(await readFile(join(env.HOME, '.cursor', files[1]), 'utf8'), before);
+});
+
+// spec: agent-installation / Other servers are kept
+test('recovery removes only what holds the bytes Context Kit wrote, and never replaces a displaced copy', async t => {
+  const { env, agents, later } = await fixture(t, { agents: [] });
+  const directory = join(env.HOME, '.cursor');
+  await mkdir(directory);
+  await writeFile(cursorConfig(env), '{"mcpServers":{},"live":"keep"}');
+  const hash = text => createHash('sha256').update(text).digest('hex').slice(0, 16);
+  // A dead process's capture whose bytes diverged (a write landed in it before a kill), its own
+  // temporary, an existing displaced copy, and a moved-aside file whose place is taken.
+  const diverged = '{"mcpServers":{},"user":"edit made during the swap"}';
+  await writeFile(join(directory, `.mcp.json.context-kit-999999-1-p${hash('{"mcpServers":{}}')}`), diverged);
+  const temporary = '{"mcpServers":{"context-workspace":{}}}';
+  await writeFile(join(directory, `.mcp.json.context-kit-999999-1-t${hash(temporary)}`), temporary);
+  // A recent capture that matches: a previous version, kept for an hour.
+  const recent = `.mcp.json.context-kit-999999-${Date.now()}-p${hash('same')}`;
+  await writeFile(join(directory, recent), 'same');
+  await writeFile(join(directory, 'mcp.json.context-kit-displaced-1'), 'USER-BACKUP-MUST-SURVIVE');
+  await writeFile(join(directory, '.mcp.json.context-kit-999999-1-o0123456789abcdef'), 'OTHER-USER-BYTES');
+  const installed = (await agents('install', '--agent', 'cursor')).json;
+  const result = { ...installed.results.find(item => item.kind === 'mcp'), displaced: displacedOf(installed) };
+  assert.equal(result.action, 'installed');
+  assert.equal(await readFile(join(directory, 'mcp.json.context-kit-displaced-1'), 'utf8'), 'USER-BACKUP-MUST-SURVIVE');
+  const kept = await Promise.all(result.displaced.map(path => readFile(path, 'utf8')));
+  assert.deepEqual(kept.sort(), ['OTHER-USER-BYTES', diverged].sort());
+  // The matching temporary goes; the matching capture is a previous version, kept for an hour.
+  const hidden = async () => (await readdir(directory)).filter(name => name.startsWith('.')).sort();
+  assert.deepEqual((await hidden()).filter(name => /-t[0-9a-f]{16}$/.test(name)), []);
+  assert.ok((await hidden()).includes(recent));
+  assert.deepEqual(await visible(directory), ['mcp.json', 'mcp.json.context-kit-displaced-1', ...result.displaced.map(path => basename(path))].sort());
+  assert.equal((await later('status')).code, 0);
+  assert.equal((await later('install', '--agent', 'cursor')).code, 0);
+  assert.deepEqual(await hidden(), [], 'an hour later, the previous versions that still hold what they held are gone');
+});
+// spec: agent-installation / Other servers are kept
+test('a directory the install created goes once empty, even when its file was recreated after an interrupted uninstall', async t => {
+  const { env, agents, later } = await fixture(t, { agents: [] });
+  assert.equal((await agents('install', '--agent', 'cursor')).code, 0);
+  // An uninstall killed after deleting the file, before removing the directory or its record.
+  await rm(cursorConfig(env));
+  assert.equal((await agents('install', '--agent', 'cursor')).json.results.find(item => item.kind === 'mcp').action, 'installed');
+  assert.equal((await agents('uninstall')).json.results.find(item => item.kind === 'mcp').action, 'removed');
+  assert.deepEqual(await visible(join(env.HOME, '.cursor')), []);
+  await later('uninstall');
+  assert.equal(await exists(join(env.HOME, '.cursor')), false);
+});
+
+// Review round 3. A harness holding the config file open writes through its descriptor after
+// Context Kit replaced (install) or deleted (uninstall) that file.
+const latePreload = `import fs from 'node:fs/promises';
+import sync from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const { rename } = fs;
+let fd;
+const late = () => {
+  if (fd === undefined) return;
+  const bytes = JSON.stringify({ mcpServers: {}, lateHarnessWrite: 'must survive' });
+  sync.ftruncateSync(fd, 0); sync.writeSync(fd, bytes, 0, 'utf8'); sync.closeSync(fd); fd = undefined;
+};
+fs.rename = async (from, to) => {
+  from = String(from); to = String(to);
+  // Opened before the swap or the move aside, as a harness that has the file open.
+  if (process.env.LATE === 'install' && /-t[0-9a-f]{16}$/.test(from) && to.endsWith('mcp.json')) fd = sync.openSync(to, 'r+');
+  if (process.env.LATE === 'uninstall' && from.endsWith('mcp.json') && /-o[0-9a-f]{16}$/.test(to)) fd = sync.openSync(from, 'r+');
+  const result = await rename(from, to);
+  // Written once Context Kit has set the old file aside as a previous version.
+  if (/-[po][0-9a-f]{16}$/.test(from) && /-v[0-9a-f]{16}$/.test(to)) late();
+  return result;
+};
+syncBuiltinESMExports();
+`;
+
+// spec: agent-installation / Other servers are kept
+test('a late write through a descriptor to the file install replaced or uninstall deleted is kept, then displaced and reported', async t => {
+  for (const phase of ['install', 'uninstall']) {
+    const { base, env, run, workspace, agents, later } = await fixture(t, { agents: [] });
+    const preload = join(base, 'late.mjs');
+    await writeFile(preload, latePreload);
+    const directory = join(env.HOME, '.cursor');
+    if (phase === 'install') { await mkdir(directory); await writeFile(cursorConfig(env), '{"mcpServers":{},"original":true}'); }
+    else assert.equal((await agents('install', '--agent', 'cursor')).code, 0);
+    const args = phase === 'install' ? ['install', '--agent', 'cursor'] : ['uninstall'];
+    const result = await run(['--root', workspace, 'agents', ...args], { NODE_OPTIONS: `--import=${preload}`, LATE: phase });
+    assert.equal(result.code, 0, JSON.stringify(result.error));
+    const holding = async () => (await Promise.all((await readdir(directory)).map(async name => [name, await readFile(join(directory, name), 'utf8')])))
+      .filter(([, text]) => text.includes('lateHarnessWrite')).map(([name]) => name);
+    assert.equal((await holding()).length, 1, `${phase}: the late write is on disk`);
+    // It no longer holds what it held, so it is someone's: displaced and reported, never deleted.
+    const sweep = await later(...(phase === 'install' ? ['install', '--agent', 'cursor'] : ['uninstall']));
+    const [kept] = await holding();
+    assert.match(kept, /^mcp\.json\.context-kit-displaced-/, phase);
+    // Reported by whichever run moved it: the uninstall itself when it cleans up, or the later one.
+    assert.deepEqual([...displacedOf(result.json), ...displacedOf(sweep.json)], [join(await realpath(directory), kept)], phase);
+  }
+});
+
+// spec: agent-installation / Other servers are kept
+test('concurrent installs of one workspace take turns, so every registration stays recorded', async t => {
+  for (let pair = 0; pair < 3; pair++) {
+    const { env, workspace, run, agents } = await fixture(t, { agents: [] });
+    await mkdir(join(env.HOME, '.cursor'));
+    await writeFile(cursorConfig(env), '{"mcpServers":{"foreign":{"command":"keep"}},"user":"keep"}');
+    const both = await Promise.all([1, 2].map(() => run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'])));
+    assert.deepEqual(both.map(item => item.code), [0, 0]);
+    assert.deepEqual(both.map(item => item.json.results.find(result => result.kind === 'mcp').action).sort(), ['installed', 'unchanged']);
+    const records = JSON.parse(await readFile(join(workspace, '.state/agents.json'), 'utf8')).items.filter(item => item.kind === 'mcp');
+    assert.equal(records.length, 1);
+    assert.equal((await agents('status')).json.items.find(item => item.kind === 'mcp').state, 'installed');
+    assert.equal((await agents('uninstall')).json.results.find(item => item.kind === 'mcp').action, 'removed');
+    assert.deepEqual(JSON.parse(await readFile(cursorConfig(env), 'utf8')), { mcpServers: { foreign: { command: 'keep' } }, user: 'keep' });
+  }
+});
+
+// spec: agent-installation / Other servers are kept
+test('a held agents lock makes another install wait and then give up with AGENTS_BUSY, and a dead holder\'s lock is taken over', async t => {
+  const { workspace, run } = await fixture(t, { agents: [] });
+  const lock = join(workspace, '.state/.lock-agents');
+  await mkdir(dirname(lock), { recursive: true });
+  // Held by a live process (this test runner).
+  await writeFile(lock, JSON.stringify({ pid: process.pid, at: Date.now(), token: 'held' }));
+  const busy = await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'], { CONTEXT_KIT_AGENTS_LOCK_WAIT_MS: '300' });
+  assert.equal(busy.error.code, 'AGENTS_BUSY');
+  assert.equal(await exists(join(workspace, '.state/agents.json')), false);
+  // A holder that is gone.
+  await writeFile(lock, JSON.stringify({ pid: 999999, at: Date.now(), token: 'dead' }));
+  assert.equal((await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'])).code, 0);
+  assert.equal(await exists(lock), false);
 });
