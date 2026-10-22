@@ -493,3 +493,27 @@ test('many takers of a stale lock (or stale breaker): no success without its pin
   // A breaker can rarely outlive its owner (it is then stale in 10 s); no lock itself remains.
   assert.deepEqual((await readdir(join(workspace, '.state/mounts'))).filter(entry => entry.startsWith('.lock') && !entry.endsWith('.break')), []);
 });
+
+// Review round 5 regression.
+
+// spec: hub-federation / Remove a mount
+test('remove that has lost its mount lock refuses before touching the declaration', async t => {
+  const { workspace, run, config, repository } = await fixture(t);
+  const source = await repository('shared-context', hub('team/data'));
+  assert.equal((await run(['--root', workspace, 'mounts', 'add', 'shared', source.url])).code, 0);
+  const locks = join(workspace, '.state/mounts');
+  // Hold the config lock (as a live process), so remove waits with its mount lock taken.
+  await writeFile(join(locks, '.lock-config'), JSON.stringify({ pid: process.pid, at: Date.now(), token: 'test' }));
+  const removing = run(['--root', workspace, 'mounts', 'remove', 'shared']);
+  const mountLock = join(locks, '.lock-mount-shared');
+  for (let i = 0; i < 400 && !(await readFile(mountLock, 'utf8').catch(() => '')).includes('"token"'); i++) await new Promise(done => setTimeout(done, 25));
+  // Another command takes the mount lock over, then the config lock frees up.
+  await writeFile(mountLock, JSON.stringify({ pid: process.pid, at: Date.now(), token: 'usurper' }));
+  await rm(join(locks, '.lock-config'));
+  const removed = await removing;
+  assert.equal(removed.error?.code, 'MOUNT_BUSY', removed.output);
+  assert.match(removed.error.message, /nothing was changed/);
+  assert.ok((await config()).mounts.shared, 'the declaration must survive a refused remove');
+  await rm(mountLock);
+  assert.equal((await run(['--root', workspace, 'mounts'])).json.mounts[0].status, 'fetched');
+});
