@@ -17,24 +17,56 @@ Repository concepts in fetched mounts, outside their inbox, SHALL be registered 
 - **WHEN** the routing skill is installed, and the mounted hub's source gains a Repository concept that the workspace pulls in with `mounts upgrade shared`
 - **THEN** the installed skill names the new repository as missing, with the exact `repos clone` and `repos locate` commands for its id, without running `agents install`
 
+### Requirement: One repository per upstream
+When a mount's concept shares an upstream with another concept, they SHALL be one repository: its id is the first by precedence (workspace hubs, then mounts by name, each by concept ID) and the others are its `alternateIds`, which every `repos` command SHALL accept. A shared upstream SHALL NOT be a name collision.
+
+#### Scenario: Same upstream twice
+- **WHEN** a workspace hub and a mount both register `https://github.com/example/orders` with title `orders`, and a caller runs `repos`, `repos locate shared:/repos/orders <checkout>` and `validate`
+- **THEN** `repos` lists one repository under the workspace hub's id with `alternateIds` naming `shared:/repos/orders`, the locate records the checkout for it, and `validate` passes without a collision warning
+
 ### Requirement: Names across mounts
-A repository name or upstream claimed in more than one place SHALL resolve by precedence: workspace hubs over mounts. A name two mounts claim, and no workspace hub, SHALL belong to neither. Each collision SHALL be a warning naming the claimants, never a `validate` failure, and every repository stays addressable by its id.
+When different upstreams claim one title or alias and a mount is among the claimants, a workspace hub's claim SHALL win, and a name claimed only by several mounts SHALL belong to none, so their repositories need their ids. Each such collision SHALL be a `validate` warning naming the claimants. Claims among workspace hubs alone SHALL fail `validate` as before.
 
 #### Scenario: Workspace keeps its alias
 - **WHEN** a workspace hub and a mount each register a different repository with alias `site`, and a caller runs `repos locate site <checkout of the workspace's one>` and `validate`
 - **THEN** the workspace's repository is located, `validate` passes with a warning naming both ids, and the mount's repository is still listed and locatable by its id
 
 #### Scenario: Two mounts claim an alias
-- **WHEN** two mounts each register a different repository with alias `api`, and a caller runs `repos locate api <path>`
-- **THEN** it fails with `AMBIGUOUS_REPOSITORY` naming both ids, the routing skill's description omits `api`, and each repository is listed with a warning
+- **WHEN** two mounts each register a different repository with alias `api`, and a caller runs `repos locate api <path>`, then `repos locate shared:/repos/api <path>`
+- **THEN** the first fails with `AMBIGUOUS_REPOSITORY` naming both ids and records nothing, the second records the path, and each repository is listed with a warning
 
-#### Scenario: Same upstream twice
-- **WHEN** a workspace hub and a mount both register the same upstream
-- **THEN** `repos` lists it once under the workspace hub's id and warns naming the mount's concept
+#### Scenario: Workspace duplicates still fail
+- **WHEN** a workspace that also has a mount has two workspace hubs whose Repository concepts share an alias
+- **THEN** `validate` fails naming both concepts and the alias, as without the mount
 
-### Requirement: Routing with unavailable mounts
-When a declared mount is unfetched or broken, the routing skill SHALL say so in its body with the exact `mounts fetch` command, and SHALL list the repositories of the other hubs and mounts as usual.
+## MODIFIED Requirements
+
+### Requirement: Generated routing skill
+The workspace SHALL provide a generated skill named `my-repos` whose description names every registered repository by title and aliases, except names ambiguous across mounts, so agents select it when a request mentions one, and whose `metadata` lists each repository's id, upstream, aliases and local path or `missing`. An ambiguous name SHALL appear only in the body, with the ids it may mean.
+
+#### Scenario: Skill names every repository
+- **WHEN** a workspace registers a repository with aliases and its checkout is located, and the skill is rendered
+- **THEN** its description contains the title and each alias, its metadata gives the upstream and the local path, and it passes the bundled-skill frontmatter rules for both agents
+
+#### Scenario: Ambiguous names leave the triggers
+- **WHEN** two mounts each register a different repository with alias `api` and distinct titles, and the skill is rendered
+- **THEN** its description contains both titles but not `api`, and its body says `api` may mean either id and to use the id
+
+### Requirement: Routing skill guidance
+The routing skill's body SHALL tell agents to work in a repository's recorded path, not to search the filesystem for it, to offer `repos clone` or `repos locate` when it is missing, and to run the exact `mounts fetch` command for each unfetched or broken mount. A workspace with no registered repositories SHALL generate no routing skill unless a mount is unavailable.
+
+#### Scenario: Missing checkout guidance
+- **WHEN** the skill is rendered for a repository with no recorded path
+- **THEN** its body lists that repository as missing with the exact `repos clone` and `repos locate` commands for it
+
+#### Scenario: No repositories
+- **WHEN** a workspace has no Repository concepts and declares no mounts
+- **THEN** no routing skill is generated
 
 #### Scenario: Mount declared but not fetched
 - **WHEN** a workspace declares a mount it has not fetched and registers one repository of its own, and the skill is rendered
-- **THEN** its body names the mount with `mounts fetch shared` and its metadata lists the workspace's repository
+- **THEN** its body names the mount with the exact `mounts fetch shared` command and its metadata lists the workspace's repository
+
+#### Scenario: Only unfetched mounts
+- **WHEN** a workspace with no Repository concepts of its own declares an unfetched mount, and a caller in an unrelated directory runs `context-kit --root <workspace> agents install` for both agents
+- **THEN** each agent gets a `my-repos` skill whose body gives the exact command to fetch `shared` from the workspace, and after `mounts fetch` it names the mount's repositories

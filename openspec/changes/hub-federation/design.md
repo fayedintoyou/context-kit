@@ -78,9 +78,21 @@ manifest-less bundles.
    become a live checkout by accident, and an upgrade is an atomic switch of the
    pin. Old commit directories are removed by `upgrade` and `remove`. `.state/` is
    already in the starter `.gitignore`; `.state` is never under `hubs/`, so the
-   "never inside a hub directory" decision holds by construction. Hosts that
-   refuse fetch-by-SHA fall back to fetching `ref` and checking the commit is
-   reachable (`FETCH_FAILED` otherwise).
+   "never inside a hub directory" decision holds by construction.
+
+   **Exactly the pin, atomically.** A fetch or upgrade exports into a temporary
+   sibling directory, loads it with the lenient rules (decision 8), and only then
+   renames it to `<commit>/` and, for an upgrade, rewrites the pin in
+   `context-kit.json` (write to a temporary file, then rename). Any failure leaves
+   the previous pin and directory untouched. Fetch-by-SHA is the only path that
+   selects content; when a host refuses it, the fallback fetches `ref` with
+   history and exports the pinned commit only if it is present, otherwise
+   `FETCH_FAILED`. A branch tip is never served in place of the pin, including
+   when the branch has moved past an older pin another machine committed.
+
+   **Offline.** Reads, `search`, `repos` and rendering `my-repos` use only the
+   exported trees; they never run git against a source. A machine with no network
+   reads every mount it has fetched.
 
 3. **Nothing implicit touches the network or the pin.** Only `mounts add`,
    `fetch` and `upgrade` reach a source; reads never do. These commands, and
@@ -90,6 +102,18 @@ manifest-less bundles.
    person can review what changes (concept IDs added/removed/changed by blob,
    repositories added/removed) before moving it. This is the "upgraded
    deliberately, like an instance pins the core" decision.
+
+   **Credentials.** `source` is validated before it is stored or used: HTTP(S)
+   URLs with any user info (`user:token@` or `token@`), any URL with a password,
+   and any URL with a query or fragment are rejected (`INVALID_INPUT` from
+   `mounts add`, `INVALID_CONFIG` from loading a hand-edited config), and the
+   error names the mount, not the value. SSH user names (`git@host:owner/repo`,
+   `ssh://git@host/...`) are allowed because they carry no secret. Private sources
+   authenticate through the user's git credential helpers or SSH agent; git runs
+   with `GIT_TERMINAL_PROMPT=0` so a missing credential fails fast with
+   `FETCH_FAILED` ("authentication failed") instead of hanging. Git's stderr is
+   passed through a redactor that strips URL user info before it reaches a result
+   or error, and provenance only ever reports the stored, credential-free source.
 
 4. **A mount is one hub; its name is its hub ID.** A mount points at one hub
    directory with a `hub.json`. In every hub-ID position (`context`, `browse`,
@@ -133,7 +157,10 @@ manifest-less bundles.
    stores name machine registrations, both of which deserve their own deliberate
    change. `read-skill <mount> …` fails with `UNKNOWN_SKILL`. Path confinement
    applies to the exported tree exactly as to workspace hubs: a `path` with `..`
-   is `INVALID_PATH`, and a symlink in the tree that escapes it is rejected.
+   is `INVALID_PATH`, as is a `path` that is itself a symlink in the repository.
+   Inside the exported tree a symlink is never followed: a symlinked Markdown file
+   is a warning and unreadable, and a symlinked directory is not walked, so no
+   read or search can return content from outside the tree.
 
 9. **Read-only by construction and by check.** Writes resolve their target hub
    first; a mount fails with `READ_ONLY_MOUNT` before any file is touched
@@ -163,30 +190,52 @@ manifest-less bundles.
     once serves every hub that registers it. `my-repos` lists mounted repositories
     with their mount and gives `read shared repos/orders` as the read command. The
     skill's "a new repository isn't listed until…" guidance says that a mounted
-    hub's repositories are added in that hub's own repository. Every command that
+    hub's repositories are added in that hub's own repository.
+
+    **One repository per upstream.** Upstream identity and name ambiguity are
+    separate. Concepts that share a normalized upstream, where at least one is in
+    a mount, are one repository: the canonical id is the first by precedence
+    (workspace hubs by hub then concept ID, then mounts by mount name then concept
+    ID), the rest are `alternateIds`, and `find()` resolves any of them to the
+    canonical entry, so `repos locate shared:/repos/orders` still works. The
+    canonical concept supplies title and aliases; alternates' extra aliases are
+    not merged. Two workspace-hub concepts with one upstream keep today's
+    behavior (their shared title fails `validate`), so existing workspaces don't
+    change. Every command that
     changes a mount (`add`, `fetch`, `upgrade`, `remove`) refreshes installed,
     unchanged copies of the skill, like `repos locate`.
 
-12. **Collisions never fail someone else's validate.** Workspace hubs keep today's
-    rule: a duplicate alias or title among them fails `validate`, because the
-    person can fix it. Across mounts, precedence decides and a warning names the
-    claimants: workspace hubs win a name or upstream over mounts; a name two mounts
-    claim (and no workspace hub) belongs to neither, so `repos locate api` is
-    `AMBIGUOUS_REPOSITORY` and `my-repos` omits that name; the same upstream in two
-    places is listed once, under the first in precedence. Every repository remains
-    addressable by its id.
+12. **Collisions never fail someone else's validate.** A name collision means
+    different upstreams claiming one title or alias. Among workspace hubs only, it
+    still fails `validate`, because the person can fix it. With a mount among the
+    claimants, precedence decides and a warning names the claimants: a workspace
+    hub's claim wins; a name only mounts claim, more than one, belongs to none, so
+    `repos locate api` is `AMBIGUOUS_REPOSITORY` and every claimant needs its id.
+    `my-repos` leaves ambiguous names out of its description (its triggers) and
+    lists them in the body with the ids they may mean.
 
 13. **Unfetched is a normal state.** A fresh clone of a workspace has pins but no
     content. `list`, `search`, `repos` and `validate` warn with the exact remedy
     (`mounts fetch shared`); addressing the mount fails with `MOUNT_NOT_FETCHED`;
-    `my-repos` names the mount and the command in its body. The `post-merge` sync
-    hook keeps running only `repos sync`, so a pull that moves a pin leaves the
-    mount unfetched until `mounts fetch` (see Open Questions).
+    `my-repos` names the mount and the command in its body. A workspace whose only
+    repositories would come from unavailable mounts still gets a `my-repos`: a
+    recovery skill whose description says the user's repositories from those mounts
+    are not available on this machine yet and whose body gives the exact
+    `cd <root> && npm run -s hub -- mounts fetch <name>` command, so installing
+    from any directory leaves the agent able to recover. The `post-merge` sync hook
+    stays offline: it runs `repos sync`, which re-renders this guidance, and never
+    fetches.
 
-14. **Search shares its bounds.** `search` covers workspace hubs then mounts, within
+14. **Every admitted client sees every mount.** The MCP server, over stdio or the
+    remote HTTP server behind its token and OAuth edge, returns mounted hubs,
+    content and provenance exactly as for workspace hubs. Mounting a hub therefore
+    discloses it to every client the owner has admitted. Per-mount exposure is out
+    of scope (Open Questions).
+
+15. **Search shares its bounds.** `search` covers workspace hubs then mounts, within
     the existing 2 MiB scan and 50-result limits, reporting `truncated` as today.
 
-15. **Error codes.** New: `UNKNOWN_MOUNT`, `MOUNT_EXISTS`, `NOT_A_HUB`,
+16. **Error codes.** New: `UNKNOWN_MOUNT`, `MOUNT_EXISTS`, `NOT_A_HUB`,
     `FETCH_FAILED`, `MOUNT_NOT_FETCHED`, `MOUNT_BROKEN`, `READ_ONLY_MOUNT`. Config
     shape errors reuse `INVALID_CONFIG`. The `help` topic `mounts` documents all of
     them, keeping "Complete help" true.
@@ -224,11 +273,15 @@ moves the pin.
 ## Risks / Trade-offs
 
 - [A pull moves a pin on another machine and the mount goes unfetched] → explicit
-  warnings and remedies everywhere; optional fetch-in-hook is an open question.
+  warnings and remedies everywhere, including in `my-repos`; hooks stay offline.
 - [Precedence hides a mount's alias silently] → every collision is a warning in
   `repos`, `list_repos` and `validate`.
-- [Fetch-by-SHA unsupported by a host] → fall back to fetching the ref and checking
-  reachability.
+- [Fetch-by-SHA unsupported by a host] → fall back to fetching the ref's history
+  and exporting the pinned commit only if present; never the tip.
+- [A credential in a source leaks through config, provenance or errors] → rejected
+  before storage, stderr redacted, git's own helpers for auth.
+- [The remote HTTP server exposes a mount the owner meant to keep local] → stated
+  plainly in help; selective exposure is a later decision.
 - [Mounted text is instructions an agent might follow] → unchanged rule: reading a
   hub does not authorize actions; mounted skills are not installed; provenance is
   on every result.
@@ -242,18 +295,25 @@ Additive. A `context-kit.json` without `mounts` behaves exactly as today. Adding
 `ref` to results is a new field. An older core reading a workspace with `mounts`
 fails with `INVALID_CONFIG`, which is the right signal to upgrade the core first.
 
+## Proposed defaults (owner to confirm)
+
+These were open in the first draft; the plan adopts the review's recommendations
+as defaults, each still the owner's call:
+
+1. **Hooks stay offline.** `post-merge`/`post-rewrite` run only `repos sync`, which
+   refreshes `my-repos` with recovery guidance; they never fetch.
+2. **Setup offers an explicit fetch.** `setup`/`agents install` gain an opt-in
+   option to fetch pinned mounts, specified with the `machine-setup` change rather
+   than here.
+3. **No registry opt-out for now.** Every fetched mount's Repository concepts join
+   the registry.
+4. **Ambiguous alias → neither.** A name two mounts claim belongs to none; the
+   qualified id is required.
+5. **Mounted skills later, by deliberate selection.** A future change lets the owner
+   pick mounted skills to list, read or install; none are offered meanwhile.
+6. **`hub.json` required.** Bare OKF bundles are not mountable for now.
+
 ## Open Questions
 
-1. Should the `post-merge`/`post-rewrite` hooks also run `mounts fetch` when a
-   pull moves a pin (network in a git hook), or keep only warning?
-2. Is fetching all pinned mounts during `setup`/`agents install` acceptable, so a
-   new machine is ready in one command?
-3. Should a workspace be able to opt a mount out of the repository registry
-   (`"repositories": false`) for a hub it reads but whose repositories it doesn't
-   work in?
-4. Precedence when two mounts claim one name: "neither" (proposed) or the first by
-   mount name?
-5. Mounted skills: a later change to list, read and optionally install them, or
-   never?
-6. Manifest-less OKF bundles from other tools: support later with a synthesized
-   manifest (all root-index concepts curated), or require `hub.json`?
+1. Should a mount be hideable from some MCP clients, for example kept off the
+   remote HTTP server while visible over stdio?

@@ -3,6 +3,7 @@ slices:
     title: Declare, add, fetch, remove and list mounts
     implements:
       - hub-federation / Mount declaration
+      - hub-federation / Sources carry no credentials
       - hub-federation / Add a mount
       - hub-federation / Fetch pinned content
       - hub-federation / Remove a mount
@@ -12,13 +13,18 @@ slices:
     title: Mounted hubs in every read, qualified refs, read-only and degraded mounts
     implements:
       - hub-federation / Read mounted hubs
+      - hub-federation / Fetched mounts work offline
+      - hub-federation / Mounted content reaches every client
       - hub-federation / Qualified concept references
       - hub-federation / Bundles side by side
+      - hub-federation / Mounted content stays confined
+      - knowledge-format / Hubs are OKF bundles
+      - knowledge-format / Mounted bundles are checked leniently
       - hub-federation / Mounted hub manifests
       - hub-federation / Mounts are read-only
       - hub-federation / Unavailable mounts degrade
     depends_on: [mount-lifecycle]
-    paths: ["lib/hubs.mjs", "lib/workspace.mjs", "lib/navigate.mjs", "lib/mounts.mjs", "lib/operations.mjs", "lib/repos.mjs", "bin/hub.mjs", "test/e2e/mounts.test.mjs", "skills/context-kit/**", "openspec/changes/hub-federation/tasks.md"]
+    paths: ["lib/hubs.mjs", "lib/workspace.mjs", "lib/navigate.mjs", "lib/mounts.mjs", "lib/operations.mjs", "lib/repos.mjs", "bin/hub.mjs", "lib/okf.mjs", "test/e2e/mounts.test.mjs", "test/e2e/remote.test.mjs", "skills/context-kit/**", "openspec/changes/hub-federation/tasks.md"]
   - id: mount-upgrade
     title: Deliberate upgrades with --check and a change report
     implements:
@@ -35,7 +41,9 @@ slices:
     title: Mounted Repository concepts in the registry and my-repos
     implements:
       - repository-registry / Mounted repositories
+      - repository-registry / One repository per upstream
       - repository-registry / Names across mounts
-      - repository-registry / Routing with unavailable mounts
+      - repository-registry / Generated routing skill
+      - repository-registry / Routing skill guidance
     depends_on: [mounted-reads, mount-upgrade]
     paths: ["lib/repos.mjs", "lib/mounts.mjs", "lib/install.mjs", "test/e2e/repos.test.mjs", "test/e2e/agents.test.mjs", "skills/context-kit/**", "README.md", "docs/**", "openspec/changes/hub-federation/tasks.md"]

@@ -34,8 +34,13 @@ This is core Context Kit functionality, like hubs and repositories.
   content lives in untracked `.state/mounts/<name>/<commit>/`, outside every hub.
 - New CLI-only commands: `mounts` (list), `mounts add <name> <source> [--ref]
   [--path]`, `mounts fetch [<name>]`, `mounts upgrade <name> [--to <rev>]
-  [--check]` and `mounts remove <name>`. Nothing fetches or moves a pin implicitly.
-  MCP gains read-only `list_mounts`.
+  [--check]` and `mounts remove <name>`. Nothing fetches or moves a pin implicitly,
+  and fetched mounts work offline. A fetch or upgrade prepares the exact pinned
+  commit aside and switches atomically, never serving a branch tip; a failure
+  keeps the previous pin and content. MCP gains read-only `list_mounts`.
+- Sources never embed credentials: user info, passwords and query strings are
+  rejected before anything is stored, private sources authenticate only through
+  git's credential helpers or SSH, and errors never echo credentials.
 - A fetched mount is a hub addressed by its mount name in every read: `list`,
   `context`, `browse`, `read`, `search` and their MCP tools. Every concept result,
   workspace or mounted, carries a qualified reference `<hub>:/<concept-id>`, and
@@ -59,8 +64,15 @@ This is core Context Kit functionality, like hubs and repositories.
   `.state/checkouts.json` as today, and `my-repos` lists them: every workspace
   mounting the hub shares the list, each machine owns its paths. There is no
   special kind of hub for teams; a mount is any hub in another repository.
-  Names that a workspace hub and a mount, or two mounts, both claim are resolved
-  by fixed precedence with a warning, never by failing the workspace's `validate`.
+  Concepts sharing an upstream are one repository with alternate ids. A name
+  that a workspace hub and a mount, or two mounts, claim for different upstreams
+  is resolved by fixed precedence with a warning (two mounts: neither, use the id),
+  never by failing `validate`; clashes among workspace hubs still fail as today.
+- `my-repos` leaves ambiguous names out of its triggers, and is generated with
+  recovery guidance (`mounts fetch`) even when the only repositories would come
+  from a mount that is not fetched yet.
+- Every MCP client the server admits, over stdio or the remote HTTP server, sees
+  mounted content and provenance exactly like workspace hubs.
 
 ## Non-goals
 
@@ -74,6 +86,8 @@ This is core Context Kit functionality, like hubs and repositories.
 - Resolving `https://` links to a mount's source host as mount concepts.
 - Credentials for private sources beyond what the user's `git` already has.
 - Pinned content verification beyond git's own commit identity.
+- Exposing some mounts to some MCP clients only (for example, hiding a mount from
+  the remote HTTP server); every admitted client sees every mount.
 - The `repo-context` change's structured pointers on Repository concepts.
 
 ## Capabilities
@@ -85,9 +99,12 @@ This is core Context Kit functionality, like hubs and repositories.
 
 ### Modified Capabilities
 - `progressive-disclosure`: link classification also resolves links into mounts.
-- `repository-registry`: mounted Repository concepts join the registry, with
-  precedence for names claimed across mounts and routing guidance for unfetched
-  mounts (added requirements only).
+- `knowledge-format`: strict bundle validation is scoped to workspace hubs, and
+  mounted bundles are checked leniently, with warnings.
+- `repository-registry`: mounted Repository concepts join the registry, one
+  repository per upstream with alternate ids, precedence for names claimed across
+  mounts (added); `Generated routing skill` and `Routing skill guidance` are
+  narrowly modified for ambiguous names and recovery guidance.
 
 ## Impact
 
@@ -100,5 +117,11 @@ This is core Context Kit functionality, like hubs and repositories.
 - Help: a `mounts` topic, usage lines and the new error codes; `docs/format.md`,
   README and `docs/next.md` describe mounts. OKF links move to the canonical
   repository, https://github.com/GoogleCloudPlatform/open-knowledge-format.
+- Delivery depends on the toolkit-wide `slice-aware-links` change (spec-links
+  requires tests only for requirements of slices that have landed or are being
+  delivered). Until it lands, any branch carrying this change fails `npm test`.
+- Coordinate with the sibling `repo-context` change, which may also touch the two
+  modified `repository-registry` requirements; whichever archives second rebases
+  its MODIFIED text on the other's.
 - No new dependencies. Uses the `git` CLI, like `repos clone`. Tests use local
   `file://` repositories, so they need no network.
