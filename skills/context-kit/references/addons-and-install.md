@@ -23,7 +23,7 @@ Workspace addons carry skills only, never code.
 
 ```sh
 npm run agents -- install [--agent claude,codex] [--scope user|project] [--project <dir>]
-                          [--name <server>] [--link] [--allow-write] [--force] [--global-mcp]
+                          [--name <server>] [--link] [--allow-write] [--force] [--adopt] [--global-mcp]
 npm run agents -- status
 npm run agents -- uninstall [--agent claude,codex]
 ```
@@ -71,10 +71,25 @@ npm run agents -- uninstall [--agent claude,codex]
   check they can be written: if not, they fail with `RECORDS_UNWRITABLE` before
   changing anything. An invalid `--name` fails before anything is written. Before
   swapping a copy in, install records it as `pending`: its new mode, source, content
-  hash and the built copy's device and inode. An install interrupted after the swap
-  is completed by the next one (`unchanged`, `recovered: true`) only when that very
+  hash and the built copy's identity. An install interrupted after the swap is
+  completed by the next one (`unchanged`, `recovered: true`) only when that very
   file is in place. A copy with no record, or one an equal hash alone would match,
   is never claimed: it stays `SKILL_FOREIGN`.
+- Each record remembers which copy it installed: inode and birth time where the
+  platform reports one (macOS; Linux through statx on file systems such as ext4),
+  otherwise device and inode. A path that now holds another file is `replaced`,
+  and its record is kept, so status and every install name it with the remedy:
+  - The installed content (a Time Machine or Migration Assistant restore, `cp -R`,
+    a sync service, a dotfile manager's symlink to it) is taken back by the
+    workspace that owns the launcher: `unchanged`, `readopted: true`. Since one
+    workspace per user owns it, another workspace's copies are never claimed.
+    Without the launcher, it is reported `SKILL_REPLACED` until `install --adopt`
+    takes back such copies (never edited ones, and never the launcher itself).
+  - Different content stays foreign (`SKILL_REPLACED`): remove it and reinstall,
+    or `--force` to replace it. Uninstall and cleanup leave it, even with `--force`.
+  - A replaced legacy Codex copy is left in place and its record dropped.
+  Without a birth time, a reused inode can't be told apart. Records from older
+  cores are judged by content until the next install adds an identity.
 - `--link` symlinks skills so edits apply immediately (not possible in the shared
   location when a skill needs adapted frontmatter).
 - Project scope keeps Claude Code's server private to the project; Codex needs
@@ -100,7 +115,8 @@ npm run agents -- uninstall [--agent claude,codex]
   one workspace per user owns it and `my-repos` (`WORKSPACE_CONFLICT` otherwise;
   see `repositories`).
 - `status` reports each item `installed`, `changed`, `stale` (source changed;
-  reinstall) or `missing`, `broken` if the Node path moved, and `moved` if it was
+  reinstall), `missing`, `replaced` (another copy in its place) or `pending` (an
+  interrupted install), `broken` if the Node path moved, and `moved` if it was
   installed from another workspace path; the tripwire is `installed`, `edited` or
   `missing`. The launcher also reports `onPath`.
 
