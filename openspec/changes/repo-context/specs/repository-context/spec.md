@@ -7,7 +7,7 @@ Let an agent open one of the user's repositories by name in a single determinist
 ## ADDED Requirements
 
 ### Requirement: Open a repository
-`repos open <repo>` and the read-only MCP tool `open_repo` SHALL take a repository id, title, alias or upstream name as an explicit argument and, in one call, return the resolution, the checkout's instruction files, the repository's concept and declared pointers, and its default pack. Both SHALL return equal results.
+`repos open <repo>` and the read-only MCP tool `open_repo` SHALL take a repository id, title, alias or upstream name as an explicit argument and, in one call, return the resolution, the checkout's instruction files, the declared verification commands, the repository's concept and declared pointers, and its default pack. Both SHALL return equal results.
 
 #### Scenario: Open by alias
 - **WHEN** `https://github.com/example/orchard` is registered with alias `orchard`, its checkout has `AGENTS.md` and is recorded on this machine, and a caller runs `repos open orchard` and calls `open_repo` with `orchard`
@@ -50,7 +50,7 @@ Every located repository SHALL have, with no configuration, a default pack: the 
 - **THEN** the tree lists the first 150 by code point and reports `truncated` with 250 omitted and the first omitted path
 
 ### Requirement: Repository context field
-A `type: Repository` concept MAY carry a `context` mapping with only the optional keys `concepts`, `skills`, `mcp`, `areas` and `packs`. `validate` SHALL fail on any other key under `context`, naming the concept and key. Concepts of other types and other frontmatter keys SHALL stay as permissive as OKF requires.
+A `type: Repository` concept MAY carry a `context` mapping with only the optional keys `verify`, `concepts`, `skills`, `mcp`, `areas` and `packs`. `validate` SHALL fail on any other key under `context`, naming the concept and key. Concepts of other types and other frontmatter keys SHALL stay as permissive as OKF requires.
 
 #### Scenario: Declared context validates
 - **WHEN** a Repository concept for `https://github.com/example/orchard` declares `context` with concepts, skills, MCP names, an area and a pack, all well formed and resolvable
@@ -59,6 +59,17 @@ A `type: Repository` concept MAY carry a `context` mapping with only the optiona
 #### Scenario: Unknown context key
 - **WHEN** a Repository concept's `context` has a key `commands`, and a `Guide` concept in the same hub has an unrelated extra key `context: hello`
 - **THEN** `validate` fails naming the Repository concept and `context.commands`, and reports nothing about the Guide
+
+### Requirement: Canonical verification commands
+`context.verify` MAY list up to 10 single-line commands, each at most 200 characters, that agents are told to run to check work in the repository. Opening the repository SHALL return them in order as declared text. Context Kit SHALL never run them, and `validate` SHALL fail on a value that is not a list of such strings.
+
+#### Scenario: Declared checks are returned, not run
+- **WHEN** a Repository declares `verify: ["npm test", "node bin/check.mjs"]` where `bin/check.mjs` writes a marker file, and a caller opens it over the CLI and MCP
+- **THEN** both results list the two commands in order, and the marker file does not exist
+
+#### Scenario: Invalid verification commands
+- **WHEN** a Repository declares `verify: npm test` as a bare string, and another declares a command containing a newline
+- **THEN** `validate` fails naming each concept and `context.verify`
 
 ### Requirement: Concept references
 A concept reference SHALL be `/<concept-id>` for a concept in the Repository concept's own hub, or `<hub-id>:/<concept-id>` for one in another hub of the workspace. `validate` SHALL fail on a reference that is malformed, names an unknown hub, or names no concept, including inbox notes. Unqualified references SHALL never resolve outside the declaring hub.

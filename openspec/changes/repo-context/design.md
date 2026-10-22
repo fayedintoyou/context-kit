@@ -81,6 +81,7 @@
    resource: https://github.com/example/orchard
    aliases: [orchard]
    context:
+     verify: ["npm test", "npm run lint"]
      concepts: [/guides/harvest, personal/notes:/orchard/ideas]
      skills: [kit:independent-review]
      mcp: [orchard-tracker]
@@ -106,6 +107,16 @@
    `RepositoryArea` concept type pointing at its repository. Rejected for now.
    It spreads one repository's routing over many files, and the pointers live
    with the routing they extend. It can be added later if areas grow large.
+
+1a. **Verification commands are declared text.** `verify` is the one place a
+   hub holds command lines, and it's deliberately not configuration Context
+   Kit acts on. `repos open` returns the strings, and the agent runs them in
+   the checkout under its own permissions. The routing skill already says to
+   follow the checkout's workflow, and `verify` makes that workflow's checks
+   explicit and identical across sessions. This is why MCP entries can be
+   names only while `verify` can be text: one names a capability to look up,
+   the other is an instruction to a person or agent. Packs don't include
+   `verify`, and their manifest hash doesn't cover it.
 
 2. **Concept references are `[<hub-id>:]/<concept-id>`.** The leading `/` reads
    as hub-root-relative, like root-relative links. The qualifier is resolved by

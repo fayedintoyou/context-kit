@@ -12,9 +12,9 @@
 
 ## 3. The `context` field and declared pointers (slice `fields`)
 
-- [ ] 3.1 Parse and validate `context` on Repository concepts (allowed keys, concept references `[<hub-id>:]/<id>` through one resolver, skill references through the manifest resolver, MCP names, areas, pack and role shapes including reserved `default`, glob syntax, limits and list caps) and add the problems to `validate`; verify with `test/e2e/repo-context.test.mjs` linked to `Declared context validates`, `Unknown context key`, `References across hubs`, `Unresolvable references`, `Names, not configuration`, `Bad area paths` and `Invalid packs`
+- [ ] 3.1 Parse and validate `context` on Repository concepts (allowed keys, `verify` as a list of single-line strings, concept references `[<hub-id>:]/<id>` through one resolver, skill references through the manifest resolver, MCP names, areas, pack and role shapes including reserved `default`, glob syntax, limits and list caps) and add the problems to `validate`; verify with `test/e2e/repo-context.test.mjs` linked to `Declared context validates`, `Unknown context key`, `Invalid verification commands`, `References across hubs`, `Unresolvable references`, `Names, not configuration`, `Bad area paths` and `Invalid packs`
 - [ ] 3.2 Move the `*`/`**`/`?` glob matcher from `lib/landing.mjs` and `lib/specs/progress.mjs` into one shared helper and verify `npm test` still passes for landing and progress unchanged
-- [ ] 3.3 Return declared pointers, area and pack summaries, outermost-first area merge for a subpath, `missing` pointers with warnings and `INVALID_CONTEXT` from `repos open`; verify with `test/e2e/repo-context.test.mjs` linked to `Pointers without bodies`, `Summarized areas and packs`, `Nested areas`, `Subpath outside every area` and `Deleted concept after validation`
+- [ ] 3.3 Return `verify` commands (never executed), declared pointers, area and pack summaries, outermost-first area merge for a subpath, `missing` pointers with warnings and `INVALID_CONTEXT` from `repos open`; verify with `test/e2e/repo-context.test.mjs` linked to `Declared checks are returned, not run`, `Pointers without bodies`, `Summarized areas and packs`, `Nested areas`, `Subpath outside every area` and `Deleted concept after validation`
 - [ ] 3.4 Document the `context` field in `docs/format.md` and `INVALID_CONTEXT` in the help references, and verify the help completeness test and `node bin/hub.mjs validate` pass
 
 ## 4. Declared packs (slice `packs`)
@@ -35,6 +35,8 @@
 - [ ] 6.1 Run `npm test`, `node bin/hub.mjs validate`, `openspec validate repo-context --strict` and `specs archive --rehearse`, and check that every `repository-context` scenario is linked
 
 ## Workflow follow-up
+
+- Land after the prerequisite change `slice-aware-links`, so each slice can keep `npm test` green
 
 - Open one of the owner's repositories with no `context` and check that a fresh subagent told "work on <repo>" calls `repos open` once and starts work without scouting, in about 1–2k tokens
 - Add a `release` pack with a `reviewer` role to that Repository concept and compare the builder and reviewer manifests

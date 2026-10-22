@@ -48,6 +48,10 @@ being executed and without expanding the whole wiki.
     withheld).
 
   Everything is declarative: no commands, URLs, credentials or scripts.
+- **Canonical verification commands.** `context.verify` lists the commands
+  agents are told to run to check work (for example `npm test`), so every
+  session runs the same checks instead of inventing its own sequence.
+  `repos open` returns them as declared text, and Context Kit never runs them.
 - **Concept references** are `/<concept-id>` (the concept's own hub) or
   `<hub-id>:/<concept-id>`. This is the qualifier-colon-path form federation's
   namespaced IDs (`team-data:/tables/orders`) will reuse.
@@ -75,12 +79,20 @@ configuring MCP servers; inlining file contents; writing into repositories'
 own files; detecting the repository from the caller's working directory or MCP
 roots; federation itself (`hub-federation`).
 
+## Dependencies
+
+- **`slice-aware-links`** (a prerequisite toolkit change). Today
+  `lib/specs/links.mjs` requires a linked test for every scenario of every
+  active change, so `npm test` fails on this plan and on each slice until all
+  of them land. That change makes the gate slice-aware. This change adds no
+  placeholder tests to work around it.
+
 ## Capabilities
 
 ### New Capabilities
 
 - `repository-context`: opening a repository in one call (layered resolution,
-  instruction files, pointers, default pack), the optional `context` field
+  instruction files, verification commands, pointers, default pack), the optional `context` field
   and its validation, declared packs with roles and budgets, MCP availability
   reporting, and the routing skill's instruction to open repositories.
 

@@ -18,6 +18,7 @@ slices:
     title: The context field, its validation, and declared pointers and areas in repos open
     implements:
       - repository-context / Repository context field
+      - repository-context / Canonical verification commands
       - repository-context / Concept references
       - repository-context / Skill and MCP references
       - repository-context / Area declarations
