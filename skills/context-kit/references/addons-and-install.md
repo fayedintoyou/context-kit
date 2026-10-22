@@ -47,7 +47,13 @@ npm run agents -- uninstall [--agent claude,codex]
   /docs/tools/mcp-server; docs.github.com Copilot CLI "Adding skills", "Adding MCP
   servers" and "Configuration directory"; cursor.com/docs/context/skills and
   /docs/context/mcp. OpenCode and Antigravity CLI come later: OpenCode has two MCP
-  config shapes, and Antigravity's documented paths disagree.
+  config shapes, and Antigravity CLI reads its own skills directory
+  (`~/.gemini/antigravity-cli/skills`, not `~/.agents/skills`; its IDE reads
+  `~/.gemini/config/skills`) with MCP in `~/.gemini/config/mcp_config.json`
+  (antigravity.google/docs/skills and /docs/mcp), so it needs a location of its own.
+  `GEMINI_CLI_HOME` moves Gemini CLI's skills under it, so an install for Gemini CLI
+  with it set away from your home is refused (`GEMINI_HOME_UNSUPPORTED`) before
+  anything is written.
 - Skills go to the fewest locations that cover the selection, one copy each:
 
   | Location | User scope | Project scope | Read by |
@@ -88,15 +94,34 @@ npm run agents -- uninstall [--agent claude,codex]
   Cursor (`{"type": "stdio", "command", "args"}`). A config file is edited in place:
   one entry under `mcpServers` is added, every other byte is kept, and uninstall
   removes only that entry (and `mcpServers`, the file or its directory if the
-  install created them), so the file is as it was. It must be plain JSON: a file
-  with comments or that doesn't parse is refused untouched (`refused`,
-  `CONFIG_MALFORMED`, with the path and the `entry` to add by hand), and the
-  skills still install. A server of that name that Context Kit didn't add is a
-  conflict (`MCP_FOREIGN`) until `--force`; an entry you edited is kept and
-  reported `edited` by install and uninstall until `--force`. The write is a
-  temporary file and rename beside the file, keeping its mode (a new file is
-  `0600`); a symbolic link to the file or its directory is kept and its target
-  edited, and a link to nothing is refused (`CONFIG_LINK_BROKEN`).
+  install created them, and an empty object's own whitespace), so the file is as it
+  was. It must be plain JSON with no key listed twice: anything else is refused
+  untouched (`refused`, `CONFIG_MALFORMED`, with the path and the `entry` to add
+  by hand), and the skills still install. A server of that name that Context Kit
+  didn't add is a conflict (`MCP_FOREIGN`) until `--force`; an entry you edited is
+  kept and reported `edited` by install and uninstall until `--force`.
+  - Every write is a compare-and-swap: a temporary file beside the target, keeping
+    its mode (a new file is `0600`), swapped in only while the file still holds
+    what the edit was computed from. A change made meanwhile, by the harness or by
+    hand, is read and the one entry applied to it again; one made during the swap
+    itself is detected afterwards and folded in. Uninstall removes the entry from
+    what the file holds at that moment and deletes a file it created only while
+    nothing else is in it. What can't be reconciled is reported `MCP_CONFLICT` and
+    the other version kept beside the file (`<file>.context-kit-displaced-<time>`).
+  - The record holds the file's resolved target and identity. A symbolic link to
+    the file or its directory is written through and kept; a link to nothing is
+    refused (`CONFIG_LINK_BROKEN`). A link retargeted to another file since
+    install makes it someone else's file: status says `replaced`, install reports
+    `MCP_REPLACED` until `--force`, and uninstall skips it. A file rewritten in
+    place since install (the harness saving it) still loses our entry, but the
+    file and `mcpServers` the install created are then left.
+  - What an interrupted write leaves beside the file is cleaned up by the next
+    install or uninstall, and a file an interrupted uninstall moved aside is put
+    back.
+- A harness CLI that fails is reported with a fixed code (`MCP_ADD_FAILED`,
+  `MCP_REMOVE_FAILED`, `MCP_CLI_TIMEOUT`, `MCP_CLI_NOT_RUNNABLE`) and never its
+  output. A remove that failed while the server is still registered is reported
+  `kept` with state `failed`, and its record stays so the next uninstall retries.
 - `install` is a sync: rerun it after changing addons or upgrading the core.
 - It never overwrites or removes a skill it did not create or that you edited;
   `--force` overrides. A copy is built beside its destination and swapped in by
@@ -175,7 +200,8 @@ npm run agents -- uninstall [--agent claude,codex]
   interrupted install), `broken` if the Node path moved, and `moved` if it was
   installed from another workspace path; the tripwire is `installed`, `edited` or
   `missing`; the rule is `installed`, `edited`, `missing`, `replaced` or `pending`;
-  a config-file registration is `installed`, `edited`, `missing` or `malformed`.
+  a config-file registration is `installed`, `edited`, `missing`, `replaced`,
+  `pending` or `malformed`.
   The launcher also reports `onPath`.
 - Discovery checks: `CONTEXT_KIT_HARNESS_SMOKE=1 node --test test/e2e/discovery.test.mjs`
   proves that real Claude Code and Codex sessions started outside any checkout list
