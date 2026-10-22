@@ -147,7 +147,7 @@ A declared mount that is not available never breaks the other hubs:
 
 The export holds the raw bytes of the pinned tree's regular files, read straight
 from git objects: no checkout, no filters, hooks or other inherited git settings.
-Symlinks and submodules in the tree are not exported. Before anything is written,
+Symlinks, submodules and a top-level `.mount.json` (the name the export's own descriptor takes) in the tree are not exported, and are warned about by name. Before anything is written,
 the tree listing must fit the budgets: at most 10,000 entries (hidden ones
 included), 64 MiB in all, 16 MiB per file, 32 directories deep and paths of at
 most 1,024 characters; otherwise `TOO_LARGE`. A fetch only ever reads the commit
@@ -160,7 +160,7 @@ every listed file is present with exactly those bytes (and, for an upgrade, the
 tree is the candidate's); otherwise they rebuild it, so a damaged or partly
 deleted export is repaired rather than reported `unchanged`. Removing an export
 deletes its `.mount.json` first, so an interrupted removal reads as unfetched.
-Reads don't re-verify: they trust a present descriptor.
+An export made before descriptors listed files is re-exported once by the next `mounts fetch` (kept as it is if the source can't be reached). Reads don't re-verify: they trust a present descriptor.
 
 Everything lives under `.state/mounts/` in the workspace. If any directory on the
 way there is a symlink, mount commands stop with `PATH_ESCAPE` before changing
