@@ -46,8 +46,11 @@ stored (`INVALID_INPUT` from `mounts add`, `INVALID_CONFIG` for a hand-edited
 config), and the error names the mount, never the value. SSH user names such as
 `git@` are fine. Private sources authenticate only through your git credential
 helpers or SSH agent. Git runs with terminal and askpass prompts disabled, so a
-missing credential fails at once with `FETCH_FAILED` ("authentication failed"),
-and URL user info is removed from git's messages.
+missing credential fails at once with `FETCH_FAILED` ("authentication failed").
+Git's own messages are never shown, since a rewritten URL (`insteadOf`) or a server
+may put secrets in them: a failure names the mount, its declared source and one
+of a fixed set of reasons (authentication failed, repository not found, network
+error, the ref or commit is not available there, timed out, git failed).
 
 ## Commands
 
@@ -77,6 +80,24 @@ declared source, path and commit; after a pull changes any of them it is
 `unfetched` with the remedy (`mounts fetch <name>`) until fetched again, so old
 content is never shown under a new pin. `broken` (with a `reason`) means the
 fetched commit is not a loadable hub.
+
+## What is exported, and limits
+
+The export holds the raw bytes of the pinned tree's regular files, read straight
+from git objects: no checkout, no filters, hooks or other inherited git settings.
+Symlinks and submodules in the tree are not exported. Before anything is written,
+the tree listing must fit the budgets: at most 10,000 entries (hidden ones
+included), 64 MiB in all, 16 MiB per file, 32 directories deep and paths of at
+most 1,024 characters; otherwise `TOO_LARGE`. A fetch only ever reads the commit
+the pin names; a pin that names a tag object instead of a commit fails, and
+`--ref` with an annotated tag pins the commit it points at.
+
+Everything lives under `.state/mounts/` in the workspace. If any directory on the
+way there is a symlink, mount commands stop with `PATH_ESCAPE` before changing
+anything, and `mounts` shows the mount `broken`. Commands on one mount, and every
+update of `context-kit.json`, take a lock under `.state/mounts/`, so simultaneous
+runs wait for each other; a lock whose process is gone (or older than an hour) is
+taken over, and after 15 minutes of waiting the command fails with `MOUNT_BUSY`.
 
 Adding, fetching and removing are CLI-only and need an explicit workspace outside
 the toolkit checkout; no MCP tool changes mounts, even with `--allow-write`.

@@ -323,3 +323,127 @@ test('mounts and list_mounts agree, and MCP cannot change mounts even with write
     assert.equal(JSON.parse(result.content[0].text).error.code, 'UNKNOWN_OPERATION');
   }
 });
+
+// Review round 1 regressions.
+
+// spec: hub-federation / Mount a hub from another repository
+test('symlinked state never lets mount commands write or delete outside the workspace', async t => {
+  const { base, workspace, cli, config, repository } = await fixture(t);
+  const source = await repository('shared-context', hub('team/data'));
+  const outside = join(base, 'outside');
+  await mkdir(outside);
+  await writeFile(join(outside, 'keep.txt'), 'unrelated');
+  await mkdir(join(workspace, '.state/mounts'), { recursive: true });
+  await symlink(outside, join(workspace, '.state/mounts/shared'));
+  const before = await readFile(join(workspace, 'context-kit.json'), 'utf8');
+  const added = await cli('mounts', 'add', 'shared', source.url);
+  assert.equal(added.error?.code, 'PATH_ESCAPE');
+  assert.deepEqual(await readdir(outside), ['keep.txt']);
+  assert.equal(await readFile(join(workspace, 'context-kit.json'), 'utf8'), before);
+
+  // The cache path too, at any component.
+  await rm(join(workspace, '.state/mounts/shared'));
+  assert.deepEqual(await readdir(join(workspace, '.state/mounts')), []); // Refused before any change.
+  await symlink(outside, join(workspace, '.state/mounts/.git'));
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).error?.code, 'PATH_ESCAPE');
+  assert.deepEqual(await readdir(outside), ['keep.txt']);
+  await rm(join(workspace, '.state/mounts/.git'));
+
+  // A mount added normally, then its state swapped for a symlink: remove refuses and keeps the pin.
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  await exec('chmod', ['-R', 'u+w', join(workspace, '.state/mounts/shared')]);
+  await rm(join(workspace, '.state/mounts/shared'), { recursive: true });
+  await symlink(outside, join(workspace, '.state/mounts/shared'));
+  assert.equal((await cli('mounts')).json.mounts[0].status, 'broken');
+  assert.equal((await cli('mounts', 'remove', 'shared')).error?.code, 'PATH_ESCAPE');
+  assert.deepEqual(await readdir(outside), ['keep.txt']);
+  assert.ok((await config()).mounts.shared);
+});
+
+// spec: hub-federation / Mount a hub from another repository
+test('exports are raw blobs: no inherited filters run', async t => {
+  const { base, workspace, run, config, repository } = await fixture(t);
+  const marker = join(base, 'smudged');
+  const source = await repository('shared-context', { ...hub('team/data'), '.gitattributes': '* filter=evil\n' });
+  const env = { GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'filter.evil.smudge', GIT_CONFIG_VALUE_0: `touch ${marker}; cat`,
+    GIT_CONFIG_KEY_1: 'filter.evil.required', GIT_CONFIG_VALUE_1: 'true' };
+  const added = await run(['--root', workspace, 'mounts', 'add', 'shared', source.url], env);
+  assert.equal(added.code, 0, added.output);
+  assert.equal(added.json.mount.status, 'fetched');
+  await assert.rejects(readFile(marker), { code: 'ENOENT' });
+  const [key] = await readdir(join(workspace, '.state/mounts/shared'));
+  assert.equal(await readFile(join(workspace, '.state/mounts/shared', key, '.gitattributes'), 'utf8'), '* filter=evil\n');
+  assert.equal((await config()).mounts.shared.commit, source.first);
+});
+
+// spec: hub-federation / Private source without access
+test('fetch failures never carry git output, even when insteadOf adds a token', async t => {
+  const { workspace, run, config, writeConfig } = await fixture(t);
+  const seen = [];
+  const server = createServer((request, response) => { seen.push(request.url); response.writeHead(500); response.end('boom'); });
+  await new Promise(done => server.listen(0, '127.0.0.1', done));
+  t.after(() => server.close());
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const env = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${origin}/t/s3cret/?token=s3cret&r=.insteadOf`, GIT_CONFIG_VALUE_0: `${origin}/declared/` };
+  const added = await run(['--root', workspace, 'mounts', 'add', 'shared', `${origin}/declared/hub.git`], env);
+  assert.equal(added.error?.code, 'FETCH_FAILED');
+  assert.ok(seen.some(url => url.includes('s3cret')), 'the rewrite reached the server');
+  assert.doesNotMatch(added.output, /s3cret/);
+  await writeConfig({ ...await config(), mounts: { shared: { source: `${origin}/declared/hub.git`, ref: 'main', commit: '0123456789abcdef0123456789abcdef01234567' } } });
+  const fetched = await run(['--root', workspace, 'mounts', 'fetch'], env);
+  assert.equal(fetched.json.mounts[0].error.code, 'FETCH_FAILED');
+  assert.doesNotMatch(fetched.output, /s3cret/);
+});
+
+// spec: hub-federation / Fresh machine fetches its mounts
+test('concurrent fetches and adds are serialized, and a stale lock is taken over', async t => {
+  const { base, workspace, run, config, repository } = await fixture(t);
+  const one = await repository('one', hub('team/one'));
+  const two = await repository('two', hub('team/two'));
+  const added = await Promise.all([run(['--root', workspace, 'mounts', 'add', 'one', one.url]), run(['--root', workspace, 'mounts', 'add', 'two', two.url])]);
+  assert.deepEqual(added.map(result => result.code), [0, 0], added.map(result => result.output).join('\n'));
+  assert.deepEqual(Object.keys((await config()).mounts), ['one', 'two']);
+
+  const copy = join(base, 'other-machine');
+  await cp(workspace, copy, { recursive: true, filter: path => !path.startsWith(join(workspace, '.state')) });
+  const fetches = await Promise.all(Array.from({ length: 4 }, () => run(['--root', copy, 'mounts', 'fetch'])));
+  assert.deepEqual(fetches.map(result => result.code), [0, 0, 0, 0], fetches.map(result => result.output).join('\n'));
+  assert.deepEqual((await run(['--root', copy, 'mounts'])).json.mounts.map(mount => mount.status), ['fetched', 'fetched']);
+  for (const name of ['one', 'two']) assert.equal((await readdir(join(copy, '.state/mounts', name))).length, 1);
+  assert.deepEqual((await readdir(join(copy, '.state/mounts'))).filter(entry => entry.startsWith('.lock')), []);
+
+  // A lock left by a process that is gone does not block.
+  const gone = (await exec(process.execPath, ['-e', 'console.log(process.pid)'])).stdout.trim();
+  const third = join(base, 'third-machine');
+  await cp(copy, third, { recursive: true, filter: path => !path.startsWith(join(copy, '.state')) });
+  await mkdir(join(third, '.state/mounts'), { recursive: true });
+  await writeFile(join(third, '.state/mounts/.lock-mount-one'), JSON.stringify({ pid: Number(gone), at: Date.now(), token: 'old' }));
+  const fetched = await run(['--root', third, 'mounts', 'fetch', 'one']);
+  assert.equal(fetched.code, 0, fetched.output);
+  assert.equal(fetched.json.mounts[0].status, 'fetched');
+});
+
+// spec: hub-federation / Source is not a hub
+test('a tree over budget is refused before anything is exported, hidden entries included', async t => {
+  const { workspace, cli, repository } = await fixture(t);
+  const bulk = Object.fromEntries(Array.from({ length: 10010 }, (_, i) => [`.bulk/${i}.txt`, '']));
+  const source = await repository('big', { ...hub('team/big'), ...bulk });
+  const before = await readFile(join(workspace, 'context-kit.json'), 'utf8');
+  const added = await cli('mounts', 'add', 'big', source.url);
+  assert.equal(added.error?.code, 'TOO_LARGE');
+  assert.match(added.error.message, /10000 entries/);
+  assert.equal(await readFile(join(workspace, 'context-kit.json'), 'utf8'), before);
+  assert.deepEqual((await readdir(join(workspace, '.state/mounts'))).filter(entry => !entry.startsWith('.')), []);
+});
+
+// spec: hub-federation / Mount a hub from another repository
+test('an annotated tag ref pins the commit it points at', async t => {
+  const { cli, config, repository, git } = await fixture(t);
+  const source = await repository('shared-context', hub('team/data'));
+  await git(source.path, 'tag', '-a', 'v1', '-m', 'release');
+  await source.commit({ 'later.md': '---\ntype: Guide\n---\n# Later\n' });
+  const added = await cli('mounts', 'add', 'shared', source.url, '--ref', 'v1');
+  assert.equal(added.code, 0, added.output);
+  assert.deepEqual((await config()).mounts.shared, { source: source.url, ref: 'v1', commit: source.first });
+  assert.equal(added.json.mount.trust.unverified, 1);
+});
