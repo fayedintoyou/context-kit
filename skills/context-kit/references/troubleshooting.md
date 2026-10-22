@@ -5,7 +5,7 @@
 | `INVALID_INPUT` | Bad arguments; check `context-kit help commands` |
 | `INVALID_OKF` | A hub file is not OKF; add frontmatter with a `type` (see `knowledge`) |
 | `INVALID_MANIFEST` | `hub.json` has a missing, unknown or invalid field |
-| `INVALID_CONFIG` | `context-kit.json`, an `addon.json`, install records, `openspec/taxonomy.yaml`, a store's `openspec/parties.yaml` or a change's `slices.yaml` are invalid, or a plan's base branch is missing |
+| `INVALID_CONFIG` | `context-kit.json` (including its `mounts`), an `addon.json`, install records, `openspec/taxonomy.yaml`, a store's `openspec/parties.yaml` or a change's `slices.yaml` are invalid, or a plan's base branch is missing |
 | `INVALID_INBOX` | An unexpected file sits in a hub's `inbox/` |
 | `INVALID_PATH`, `PATH_ESCAPE` | A path uses `..`, a dot directory, or a symlink leaving its root |
 | `NOT_FOUND`, `UNKNOWN_HUB`, `UNKNOWN_CONCEPT`, `UNKNOWN_PATH`, `UNKNOWN_SKILL`, `UNKNOWN_SPEC`, `UNKNOWN_STORE`, `UNKNOWN_OPERATION`, `UNKNOWN_TOPIC` | Nothing by that name; list first |
@@ -27,6 +27,10 @@
 | `NOT_A_CHECKOUT`, `REMOTE_MISMATCH` | `repos locate` needs the top of a git checkout whose remote is the upstream |
 | `REPOSITORY_EXISTS`, `CONCEPT_EXISTS` | `repos add` found the upstream, an alias or the concept already in use |
 | `DESTINATION_EXISTS`, `CLONE_FAILED` | `repos clone` needs a new path and a reachable upstream |
+| `MOUNT_EXISTS` | A mount or workspace hub already has that name; pick another mount name |
+| `UNKNOWN_MOUNT` | No mount has that name; run `mounts` |
+| `NOT_A_HUB` | The mounted `--path` has no `hub.json`, or its curated documents are not OKF concepts |
+| `FETCH_FAILED` | A mount's source, ref or pinned commit could not be fetched; for "authentication failed", set up a git credential helper or SSH key (see `mounts`) |
 
 ## Common problems
 

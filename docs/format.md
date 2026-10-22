@@ -1,7 +1,7 @@
 # Hub format
 
 A hub is a directory one level below `hubs/` or `examples/`. Each hub directory is
-an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format)
 (OKF) v0.2 bundle, plus a `hub.json` manifest for what OKF does not define. OKF
 tools can read a hub as-is; they ignore `hub.json`.
 
@@ -124,6 +124,21 @@ Captured notes are written as concepts with `type: Note`, `status: draft`, no
 `verified`, and `generated.by` naming the MCP client or the CLI's `--by` actor
 (default `context-kit/<version>`). Reviewing a note means folding it into a
 curated concept, adding a `verified` entry if you checked it, and deleting the note.
+
+## Mounts
+
+A workspace can also use a hub from another git repository. Its `context-kit.json`
+declares `mounts`, each mount name mapping to a credential-free git `source`, an
+optional `path` to the hub directory inside it, an optional `ref` and the pinned
+40-hex `commit`:
+
+```json
+"mounts": { "shared": { "source": "https://github.com/example/shared-context", "path": "hubs/data", "ref": "main", "commit": "0123456789abcdef0123456789abcdef01234567" } }
+```
+
+The mounted directory must hold a `hub.json` and an OKF bundle. `mounts add` writes
+the declaration; `mounts fetch` exports the pinned commit, read-only, into untracked
+`.state/mounts/<name>/`, never under `hubs/`. The `mounts` help topic has the rules.
 
 ## Migrating
 

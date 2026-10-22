@@ -22,6 +22,7 @@ To help, read the topic that fits. The same topics are available as
 | `navigating` | Finding things: context, browse, read, search, links |
 | `capturing` | Saving findings as notes and reviewing them |
 | `repositories` | Registering repositories, local checkouts, the `my-repos` skill |
+| `mounts` | Using a hub from another git repository, pinned to a commit |
 | `addons-and-install` | Choosing addons, installing into Claude Code or Codex |
 | `remote` | Reaching a workspace from ChatGPT, Claude or a phone: origin, tunnel, edge, credentials, connecting hosts |
 | `specs` | OpenSpec specs, shared stores and audits (specs addon) |

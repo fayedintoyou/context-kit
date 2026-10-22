@@ -2,7 +2,7 @@
 
 A **hub** is a directory under `hubs/` (or `examples/`) describing one area: a
 person's preferences, a team's domain, a project. Each hub directory is an
-[Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+[Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format)
 v0.2 bundle plus a `hub.json` manifest.
 
 ## Concepts

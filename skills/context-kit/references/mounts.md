@@ -1,0 +1,82 @@
+# Mounts: hubs from other repositories
+
+A mount uses a hub that lives in another git repository, such as your own hub
+kept in its own repository for several workspaces, or one many people share. The
+workspace pins it to a commit in its tracked `context-kit.json`; each machine
+fetches that exact commit into untracked `.state/mounts/`, outside every hub.
+Nothing fetches or moves a pin on its own.
+
+```sh
+npm run hub -- mounts add shared https://github.com/example/shared-context --path hubs/data
+npm run hub -- mounts                 # name, source, path, ref, commit, status, trust counts
+npm run hub -- mounts fetch           # on another machine, after pulling the workspace
+npm run hub -- mounts remove shared
+```
+
+## Declaring
+
+```json
+{
+  "version": 1,
+  "addons": ["specs"],
+  "mounts": {
+    "shared": {
+      "source": "https://github.com/example/shared-context",
+      "path": "hubs/data",
+      "ref": "main",
+      "commit": "0123456789abcdef0123456789abcdef01234567"
+    }
+  }
+}
+```
+
+- The name is lowercase words joined by hyphens, at most 64 characters, and
+  differs from every workspace hub ID (`MOUNT_EXISTS` from `validate` otherwise).
+- `source` is a git URL: HTTPS, SSH (`git@host:owner/repo`), `git://` or
+  `file://`. `path` is the hub directory inside it (default: the root), `ref` the
+  branch or tag it follows, `commit` the full 40-hex pin.
+- Any other shape, an unknown key or a commit that is not 40 hex is
+  `INVALID_CONFIG` from every command, naming each mount.
+
+## Credentials
+
+A source never carries a secret. HTTP(S) URLs with user info, any URL with a
+password, and any URL with a query or fragment are refused before anything is
+stored (`INVALID_INPUT` from `mounts add`, `INVALID_CONFIG` for a hand-edited
+config), and the error names the mount, never the value. SSH user names such as
+`git@` are fine. Private sources authenticate only through your git credential
+helpers or SSH agent. Git runs with terminal and askpass prompts disabled, so a
+missing credential fails at once with `FETCH_FAILED` ("authentication failed"),
+and URL user info is removed from git's messages.
+
+## Commands
+
+- `mounts add <name> <source> [--ref <ref>] [--path <dir>]` resolves the ref (the
+  source's default branch when omitted), fetches that commit, checks that `path`
+  holds a `hub.json` and a loadable OKF bundle (its curated documents are
+  concepts), then records the mount. It refuses a taken name (`MOUNT_EXISTS`), a
+  `path` leaving the repository or that is a symlink in it (`INVALID_PATH`), a
+  path with no hub (`NOT_A_HUB`) and an unreachable source (`FETCH_FAILED`), and
+  then records nothing.
+- `mounts fetch [<name>]` makes each mount's pinned commit available, never a
+  branch tip: it fetches the commit by SHA, or, when the host refuses that, the
+  ref's history, using the pinned commit only if it is there. Each export is
+  prepared in a temporary directory, checked, made read-only and renamed into
+  place. A mount already fetched at its pin is `unchanged`. A failure reports
+  `FETCH_FAILED` for that mount, keeps what it had, still fetches the others and
+  makes the command exit nonzero; `failed` lists them.
+- `mounts remove <name>` deletes the declaration and the fetched content
+  (`UNKNOWN_MOUNT` when no mount has that name).
+- `mounts` (MCP `list_mounts`, read-only) lists each mount's `name`, `source`,
+  `path`, `ref`, `commit`, `status`, `manifestId` (the mounted `hub.json` id) and
+  `trust`, its concepts per OKF tier (`human-reviewed`, `machine-confirmed`,
+  `unverified`).
+
+Status is `fetched` only while the fetched content was recorded for exactly the
+declared source, path and commit; after a pull changes any of them it is
+`unfetched` with the remedy (`mounts fetch <name>`) until fetched again, so old
+content is never shown under a new pin. `broken` (with a `reason`) means the
+fetched commit is not a loadable hub.
+
+Adding, fetching and removing are CLI-only and need an explicit workspace outside
+the toolkit checkout; no MCP tool changes mounts, even with `--allow-write`.
