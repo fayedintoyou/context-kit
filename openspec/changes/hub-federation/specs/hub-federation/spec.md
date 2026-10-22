@@ -36,7 +36,7 @@ A mount `source` SHALL NOT embed credentials: `mounts add` and validation SHALL 
 - **THEN** the commands fail with `NOT_A_HUB`, `INVALID_PATH`, `INVALID_PATH` and `MOUNT_EXISTS` respectively, and `context-kit.json` is unchanged
 
 ### Requirement: Fetch pinned content
-`mounts fetch [<name>]` SHALL make exactly each mount's pinned commit available in untracked state outside every hub, never a branch tip, without changing a pin. Content SHALL be prepared and checked aside and switched in atomically. A failure SHALL report `FETCH_FAILED` for that mount, keep its previous content and still fetch the others.
+`mounts fetch [<name>]` SHALL make exactly each mount's pinned commit available in untracked state outside every hub, never a branch tip, without changing a pin. Content SHALL be prepared and checked aside, switched in atomically, and count as fetched only while its recorded source, path and commit all match the declaration. A failure SHALL report `FETCH_FAILED` for that mount, keep its previous content and still fetch the others.
 
 #### Scenario: Fresh machine fetches its mounts
 - **WHEN** a workspace copy whose `context-kit.json` declares two mounts but has no local state runs `mounts fetch`
@@ -45,6 +45,10 @@ A mount `source` SHALL NOT embed credentials: `mounts add` and validation SHALL 
 #### Scenario: One source unreachable
 - **WHEN** a caller fetches two mounts and one source no longer exists
 - **THEN** the result reports `FETCH_FAILED` for that mount, the other is fetched, and the command exits nonzero
+
+#### Scenario: Declaration changes under a fetched mount
+- **WHEN** a fetched mount's declaration keeps its commit but changes `path` from `hubs/data` to `hubs/platform`, and a caller reads the mount, runs `mounts fetch shared` and reads again; and separately only its `source` changes to another repository holding the same commit
+- **THEN** each first read fails with `MOUNT_NOT_FETCHED` and `mounts` reports `unfetched`, never the old hub with the new provenance, and after the fetch reads return the `hubs/platform` hub with matching `mount` provenance
 
 #### Scenario: Pin from another machine
 - **WHEN** a workspace is fetched at commit A, its `context-kit.json` then changes the pin to an older commit B as a pull from another machine would, while the source's branch has moved on to C, and a caller reads the mount, runs `mounts fetch` and reads again

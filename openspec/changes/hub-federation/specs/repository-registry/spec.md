@@ -39,21 +39,21 @@ When different upstreams claim one title or alias and a mount is among the claim
 - **WHEN** a workspace that also has a mount has two workspace hubs whose Repository concepts share an alias
 - **THEN** `validate` fails naming both concepts and the alias, as without the mount
 
-## MODIFIED Requirements
-
-### Requirement: Generated routing skill
-The workspace SHALL provide a generated skill named `my-repos` whose description names every registered repository by title and aliases, except names ambiguous across mounts, so agents select it when a request mentions one, and whose `metadata` lists each repository's id, upstream, aliases and local path or `missing`. An ambiguous name SHALL appear only in the body, with the ids it may mean.
-
-#### Scenario: Skill names every repository
-- **WHEN** a workspace registers a repository with aliases and its checkout is located, and the skill is rendered
-- **THEN** its description contains the title and each alias, its metadata gives the upstream and the local path, and it passes the bundled-skill frontmatter rules for both agents
+### Requirement: Effective trigger names
+Each repository's effective names SHALL be its title, aliases and any keywords minus names disputed across mounts, by the precedence in "Names across mounts". Any routing skill renderer SHALL take trigger names only from effective names, before applying a description budget, and a disputed name SHALL appear only in the skill body with the qualified ids it may mean.
 
 #### Scenario: Ambiguous names leave the triggers
 - **WHEN** two mounts each register a different repository with alias `api` and distinct titles, and the skill is rendered
-- **THEN** its description contains both titles but not `api`, and its body says `api` may mean either id and to use the id
+- **THEN** its description contains both titles but not `api`, and its body says `api` may mean either qualified id and to use the id
+
+#### Scenario: Disputed names filtered before the budget
+- **WHEN** a workspace's effective names fill the routing skill's description budget, and two mounts also claim the alias `api`
+- **THEN** the description holds every effective name it held without the mounts' dispute, never `api`, and `api` is not reported as a skipped alias
+
+## MODIFIED Requirements
 
 ### Requirement: Routing skill guidance
-The routing skill's body SHALL tell agents to work in a repository's recorded path, not to search the filesystem for it, to offer `repos clone` or `repos locate` when it is missing, and to run the exact `mounts fetch` command for each unfetched or broken mount. A workspace with no registered repositories SHALL generate no routing skill unless a mount is unavailable.
+The routing skill's body SHALL tell agents to work in a repository's recorded path, not to search the filesystem for it, to offer `repos clone` or `repos locate` when it is missing, and to fetch each unfetched or broken mount with the exact `mounts fetch` command through the skill's portable entry point, never by changing into the workspace. A workspace with no registered repositories SHALL generate no routing skill unless a mount is unavailable.
 
 #### Scenario: Missing checkout guidance
 - **WHEN** the skill is rendered for a repository with no recorded path
@@ -69,4 +69,8 @@ The routing skill's body SHALL tell agents to work in a repository's recorded pa
 
 #### Scenario: Only unfetched mounts
 - **WHEN** a workspace with no Repository concepts of its own declares an unfetched mount, and a caller in an unrelated directory runs `context-kit --root <workspace> agents install` for both agents
-- **THEN** each agent gets a `my-repos` skill whose body gives the exact command to fetch `shared` from the workspace, and after `mounts fetch` it names the mount's repositories
+- **THEN** each agent gets a `my-repos` skill whose body gives the exact `mounts fetch shared` command through the portable entry point, with no `cd` into the workspace
+
+#### Scenario: Recovery from an unrelated directory
+- **WHEN** a caller in an unrelated directory runs the fetch command exactly as that skill's body gives it, then `repos sync` the same way
+- **THEN** the mount is fetched in the workspace, nothing is written to the unrelated directory, and the installed skill names the mount's repositories

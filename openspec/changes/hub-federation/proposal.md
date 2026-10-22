@@ -31,7 +31,8 @@ This is core Context Kit functionality, like hubs and repositories.
 - A workspace declares mounts in `context-kit.json`: a name, a git `source`, an
   optional `path` to the hub inside that repository, the `ref` to follow on upgrade,
   and the pinned `commit`. The pin is tracked with the workspace; the fetched
-  content lives in untracked `.state/mounts/<name>/<commit>/`, outside every hub.
+  content lives in untracked `.state/mounts/<name>/<key>/`, keyed by source, path
+  and commit, outside every hub.
 - New CLI-only commands: `mounts` (list), `mounts add <name> <source> [--ref]
   [--path]`, `mounts fetch [<name>]`, `mounts upgrade <name> [--to <rev>]
   [--check]` and `mounts remove <name>`. Nothing fetches or moves a pin implicitly,
@@ -68,9 +69,10 @@ This is core Context Kit functionality, like hubs and repositories.
   that a workspace hub and a mount, or two mounts, claim for different upstreams
   is resolved by fixed precedence with a warning (two mounts: neither, use the id),
   never by failing `validate`; clashes among workspace hubs still fail as today.
-- `my-repos` leaves ambiguous names out of its triggers, and is generated with
-  recovery guidance (`mounts fetch`) even when the only repositories would come
-  from a mount that is not fetched yet.
+- The registry defines effective trigger names (collision-resolved) that the
+  routing renderer uses before budgeting, and `my-repos` is generated with
+  recovery guidance (`mounts fetch` through the portable entry point) even when
+  the only repositories would come from a mount that is not fetched yet.
 - Every MCP client the server admits, over stdio or the remote HTTP server, sees
   mounted content and provenance exactly like workspace hubs.
 
@@ -103,8 +105,8 @@ This is core Context Kit functionality, like hubs and repositories.
   mounted bundles are checked leniently, with warnings.
 - `repository-registry`: mounted Repository concepts join the registry, one
   repository per upstream with alternate ids, precedence for names claimed across
-  mounts (added); `Generated routing skill` and `Routing skill guidance` are
-  narrowly modified for ambiguous names and recovery guidance.
+  mounts, and effective trigger names for any routing renderer (added);
+  `Routing skill guidance` is narrowly modified for recovery guidance.
 
 ## Impact
 
@@ -120,8 +122,16 @@ This is core Context Kit functionality, like hubs and repositories.
 - Delivery depends on the toolkit-wide `slice-aware-links` change (spec-links
   requires tests only for requirements of slices that have landed or are being
   delivered). Until it lands, any branch carrying this change fails `npm test`.
-- Coordinate with the sibling `repo-context` change, which may also touch the two
-  modified `repository-registry` requirements; whichever archives second rebases
-  its MODIFIED text on the other's.
+- Coordinates with two sibling plans. `machine-setup` (#50) owns the routing-skill
+  renderer (front-matter budget, shards, keywords, the launcher-based portable
+  entry point), so this change does not modify `Generated routing skill`; it adds
+  `Effective trigger names`, the collision-resolved names any renderer must use,
+  and its recovery guidance uses #50's portable entry point. `repo-context` (#49)
+  changes the skill body around `repos open`. The one remaining MODIFIED registry
+  requirement, `Routing skill guidance`, rebases onto #49's and #50's text before
+  archive. Agreed landing order after `slice-aware-links`: #50's routing,
+  front-matter and portable-entry slices, then #49's open and routing slices, then
+  this change's `mounted-repositories` slice; the other slices of all three can
+  land concurrently.
 - No new dependencies. Uses the `git` CLI, like `repos clone`. Tests use local
   `file://` repositories, so they need no network.

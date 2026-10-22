@@ -72,9 +72,13 @@ manifest-less bundles.
 2. **Fetched content is a commit-addressed, read-only tree outside every hub.**
    `mounts fetch` runs `git fetch --depth 1 <source> <commit>` into a bare cache
    at `.state/mounts/.git/<name>` and exports `<path>` at that commit into
-   `.state/mounts/<name>/<commit>/`, then removes write permission. Loading uses
-   the directory for the pinned commit only: present means `fetched`, absent means
-   `unfetched`. No working tree, no branch, nothing to pull, so a mount cannot
+   `.state/mounts/<name>/<key>/`, then removes write permission. `<key>` is a
+   digest of the full identity, normalized `source` + `path` + `commit`, and the
+   export carries a descriptor (`.mount.json`, written last) recording the three.
+   Loading uses only the directory whose key and descriptor both match the current
+   declaration: a match means `fetched`, anything else `unfetched`. Changing only
+   `path` or only `source` while keeping the commit therefore never serves the old
+   tree under new provenance. No working tree, no branch, nothing to pull, so a mount cannot
    become a live checkout by accident, and an upgrade is an atomic switch of the
    pin. Old commit directories are removed by `upgrade` and `remove`. `.state/` is
    already in the starter `.gitignore`; `.state` is never under `hubs/`, so the
@@ -82,7 +86,7 @@ manifest-less bundles.
 
    **Exactly the pin, atomically.** A fetch or upgrade exports into a temporary
    sibling directory, loads it with the lenient rules (decision 8), and only then
-   renames it to `<commit>/` and, for an upgrade, rewrites the pin in
+   renames it to `<key>/` and, for an upgrade, rewrites the pin in
    `context-kit.json` (write to a temporary file, then rename). Any failure leaves
    the previous pin and directory untouched. Fetch-by-SHA is the only path that
    selects content; when a host refuses it, the fallback fetches `ref` with
@@ -188,7 +192,8 @@ manifest-less bundles.
     carries `mount`. Checkouts stay keyed by upstream in `.state/checkouts.json`,
     so `locate`, `clone` and `scan` work unchanged, and the same upstream located
     once serves every hub that registers it. `my-repos` lists mounted repositories
-    with their mount and gives `read shared repos/orders` as the read command. The
+    with their mount and gives the concept read command for `shared:/repos/orders`
+    through the renderer's portable entry point (see decision 13). The
     skill's "a new repository isn't listed until…" guidance says that a mounted
     hub's repositories are added in that hub's own repository.
 
@@ -211,8 +216,16 @@ manifest-less bundles.
     claimants, precedence decides and a warning names the claimants: a workspace
     hub's claim wins; a name only mounts claim, more than one, belongs to none, so
     `repos locate api` is `AMBIGUOUS_REPOSITORY` and every claimant needs its id.
-    `my-repos` leaves ambiguous names out of its description (its triggers) and
-    lists them in the body with the ids they may mean.
+    **Effective names are the registry's contract to renderers.** The registry
+    computes each repository's effective names: title, aliases and any keywords
+    (if `machine-setup` or `repo-context` adds them), minus every name disputed
+    across mounts. The `machine-setup` change owns the routing-skill renderer
+    (front-matter budget, shards, keywords, launcher commands); it draws triggers
+    only from effective names and filters disputed ones *before* allocating the
+    budget, so a dispute never costs another repository its alias. Disputed names
+    appear only in the body, with the qualified ids they may mean. This change
+    therefore does not modify `Generated routing skill`; it adds `Effective trigger
+    names`, which any renderer must honor.
 
 13. **Unfetched is a normal state.** A fresh clone of a workspace has pins but no
     content. `list`, `search`, `repos` and `validate` warn with the exact remedy
@@ -221,8 +234,11 @@ manifest-less bundles.
     repositories would come from unavailable mounts still gets a `my-repos`: a
     recovery skill whose description says the user's repositories from those mounts
     are not available on this machine yet and whose body gives the exact
-    `cd <root> && npm run -s hub -- mounts fetch <name>` command, so installing
-    from any directory leaves the agent able to recover. The `post-merge` sync hook
+    `mounts fetch <name>` command through the portable entry point `machine-setup`
+    defines (its managed `context-kit` launcher bound to the workspace), never
+    `cd <root>`. Run from any directory it fetches into the workspace, so an agent
+    started anywhere can recover. Fetching stays CLI-only; MCP clients are told the
+    command, not given a tool. The `post-merge` sync hook
     stays offline: it runs `repos sync`, which re-renders this guidance, and never
     fetches.
 

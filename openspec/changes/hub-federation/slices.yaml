@@ -43,7 +43,9 @@ slices:
       - repository-registry / Mounted repositories
       - repository-registry / One repository per upstream
       - repository-registry / Names across mounts
-      - repository-registry / Generated routing skill
+      - repository-registry / Effective trigger names
       - repository-registry / Routing skill guidance
+    # Lands after machine-setup's routing, front-matter and portable-entry slices and
+    # repo-context's open and routing slices (agreed order, after slice-aware-links).
     depends_on: [mounted-reads, mount-upgrade]
     paths: ["lib/repos.mjs", "lib/mounts.mjs", "lib/install.mjs", "test/e2e/repos.test.mjs", "test/e2e/agents.test.mjs", "skills/context-kit/**", "README.md", "docs/**", "openspec/changes/hub-federation/tasks.md"]
