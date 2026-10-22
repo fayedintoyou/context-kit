@@ -130,12 +130,13 @@ This is core Context Kit functionality, like hubs and repositories.
   changes the skill body around `repos open`. The one remaining MODIFIED registry
   requirement, `Routing skill guidance`, rebases onto #49's and #50's text before
   archive. Agreed landing order after `slice-aware-links`: #50's routing,
-  front-matter and portable-entry slices, then #49's open and routing slices, then
+  front-matter and portable-entry slices, then #49's open, routing and fields slices, then
   this change's `mounted-repositories` slice; the other slices of all three can
   land concurrently. slices.yaml can't depend across changes, so that slice's
   first task checks the order (`specs status machine-setup` / `repo-context`).
   This change owns `Effective trigger names` (#50 names its renderer requirement
   differently), including how keywords behave across mounts, and decides that a
-  shared upstream's `context` (#49) comes from the canonical concept.
+  shared upstream's `context` (#49) comes from the canonical concept; this change
+  is the sole owner of that mount-context case.
 - No new dependencies. Uses the `git` CLI, like `repos clone`. Tests use local
   `file://` repositories, so they need no network.

@@ -47,7 +47,7 @@ slices:
       - repository-registry / Effective trigger names
       - repository-registry / Routing skill guidance
     # Lands after machine-setup's routing, front-matter and portable-entry slices and
-    # repo-context's open and routing slices (agreed order, after slice-aware-links);
+    # repo-context's open, routing and fields slices (agreed order, after slice-aware-links);
     # task 5.0 checks this before work starts.
     depends_on: [mounted-reads, mount-upgrade]
     paths: ["lib/repos.mjs", "lib/mounts.mjs", "lib/install.mjs", "test/e2e/repos.test.mjs", "test/e2e/agents.test.mjs", "skills/context-kit/**", "README.md", "docs/**", "openspec/changes/hub-federation/tasks.md"]

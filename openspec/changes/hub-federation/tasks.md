@@ -39,7 +39,7 @@ spec-links requires tests for every scenario here, so no slice can pass `npm tes
 
 ## 5. Mounted repositories (slice `mounted-repositories`)
 
-- [ ] 5.0 Landing check before starting this slice: on a fresh `main`, `specs status machine-setup` shows its routing/front-matter and portable-entry slices `landed`, and `specs status repo-context` shows its `open` and `routing` slices `landed` (or those changes are archived). If not, wait; slices.yaml cannot express a cross-change dependency
+- [ ] 5.0 Landing check before starting this slice: on a fresh `main`, `specs status machine-setup` shows its routing/front-matter and portable-entry slices `landed`, and `specs status repo-context` shows its `open`, `routing` and `fields` slices `landed` (`fields` makes `repos open` return declared `context`, which 5.4a needs) (or those changes are archived). If not, wait; slices.yaml cannot express a cross-change dependency
 
 - [ ] 5.1 Registry reads fetched mounts' Repository concepts as `<mount>:/<id>` with `mount`; `my-repos` lists them with their mount and read command; mount commands refresh installed unchanged copies; link `test/e2e/repos.test.mjs` to "One person's hub on two machines" and "Many people, one hub", and `test/e2e/agents.test.mjs` to "Upgrade brings a new repository"
 - [ ] 5.2 One repository per upstream with `alternateIds` accepted by every `repos` command; link `test/e2e/repos.test.mjs` to "Same upstream twice"
