@@ -6,10 +6,12 @@ slices:
     title: Keyword budget, shards and standard frontmatter for the routing skill
     implements:
       - repository-registry / Generated routing skill
+      - repository-registry / Repository keywords and name bounds
+      - repository-registry / Effective trigger names
       - repository-registry / Routing skill keyword budget
       - repository-registry / Routing skill shards
       - repository-registry / Standard frontmatter for generated skills
-    paths: ["lib/repos.mjs", "lib/install.mjs", "lib/operations.mjs", "test/e2e/repos.test.mjs", "test/e2e/agents.test.mjs", "skills/context-kit/references/repositories.md", "openspec/changes/machine-setup/tasks.md"]
+    paths: ["lib/repos.mjs", "lib/install.mjs", "lib/operations.mjs", "package.json", "docs/format.md", "test/e2e/repos.test.mjs", "test/e2e/agents.test.mjs", "skills/context-kit/references/repositories.md", "openspec/changes/machine-setup/tasks.md"]
   - id: shared-skills
     title: Install into ~/.agents/skills, fewest locations, and move Codex's copies
     implements:
@@ -18,18 +20,21 @@ slices:
       - agent-installation / Codex skills move to the shared location
     paths: ["lib/install.mjs", "test/e2e/agents.test.mjs", "README.md", "skills/context-kit/references/addons-and-install.md", "openspec/changes/machine-setup/tasks.md"]
   - id: harnesses
-    title: Gemini CLI, Copilot CLI, Cursor and OpenCode
+    title: Gemini CLI, Copilot CLI and Cursor, with discovery checks
     implements:
       - agent-installation / Supported harnesses
+      - agent-installation / Copies a harness may see twice
+      - agent-installation / Harness discovery checks
       - agent-installation / Gemini CLI registration
       - agent-installation / Registration through config files
       - agent-installation / Project scope for more harnesses
     depends_on: [shared-skills]
-    paths: ["lib/install.mjs", "bin/hub.mjs", "lib/help.mjs", "test/e2e/agents.test.mjs", "README.md", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
+    paths: ["lib/install.mjs", "bin/hub.mjs", "lib/help.mjs", "test/e2e/agents.test.mjs", "test/e2e/discovery.test.mjs", "test/manual-checks.md", "README.md", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
   - id: portable-entry
     title: Launcher, path-free routing body, and moved-workspace repair
     implements:
       - agent-installation / Launcher
+      - agent-installation / One workspace per user
       - agent-installation / Moved workspace
       - repository-registry / Routing without a workspace path
     depends_on: [skill-frontmatter]
@@ -44,9 +49,11 @@ slices:
       - repository-registry / Which repository over MCP
     paths: ["lib/repos.mjs", "lib/operations.mjs", "lib/mcp/**", "bin/hub.mjs", "test/e2e/repos.test.mjs", "test/e2e/remote.test.mjs", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
   - id: remote-paths
-    title: list_repos over HTTP names the serving machine's paths
+    title: Remote policy - local-only tools and serving-machine paths over HTTP
     implements:
-      - repository-registry / Repository paths over HTTP
+      - remote-access / HTTP transport
+      - remote-access / Local-only tools
+      - remote-access / Serving machine paths
     depends_on: [setup-and-which]
     paths: ["lib/operations.mjs", "lib/mcp/**", "bin/mcp.mjs", "test/e2e/remote.test.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/remote.md", "openspec/changes/machine-setup/tasks.md"]
   - id: global-rule

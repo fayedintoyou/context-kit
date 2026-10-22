@@ -3,7 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Generated routing skill
-The workspace SHALL provide a generated skill named `my-repos` whose description names registered repositories by title and aliases within the routing skill's keyword budget, so agents select it when a request mentions one, and whose `metadata` lists each repository's id, upstream, aliases and local path or `missing`.
+The workspace SHALL provide a generated skill named `my-repos` whose description names registered repositories by their effective trigger names within the routing skill's keyword budget, so agents select it when a request mentions one, and whose `metadata` lists each repository's id, upstream, aliases and local path or `missing`.
 
 #### Scenario: Skill names every repository
 - **WHEN** a workspace registers a repository with aliases and its checkout is located, and the skill is rendered
@@ -22,26 +22,60 @@ The workspace SHALL provide a generated skill named `my-repos` whose description
 
 ## ADDED Requirements
 
+### Requirement: Repository keywords and name bounds
+A Repository concept MAY list `keywords`: topic phrases people use for it that are not names, such as "personal site". `validate` SHALL report `keywords` that is not a list of strings, a title over 80 characters, an alias or keyword over 60, and a keyword equal to another repository's title or alias. Characters are Unicode code points.
+
+#### Scenario: Keywords reach the description
+- **WHEN** a Repository concept lists keywords `personal site` and `portfolio`, and a caller runs `agents install` and later adds a keyword and runs `repos sync`
+- **THEN** the installed skill's description contains both keywords after install and the new one after sync, and `validate` passes
+
+#### Scenario: Invalid keywords and long names
+- **WHEN** one Repository concept has `keywords: portfolio` (not a list), another an 81-character title, and a third a keyword equal to another repository's alias
+- **THEN** `validate` fails naming each concept and field
+
+### Requirement: Effective trigger names
+The routing skill SHALL build its description only from each repository's effective trigger names: the titles, aliases and keywords the registry assigns to that repository for routing. Unless another requirement narrows them, every valid title, alias and keyword is effective. A repository with no effective title SHALL be named by its first effective alias, or else by its id.
+
+#### Scenario: All names are effective by default
+- **WHEN** a workspace's repositories have titles, aliases and keywords within the bounds and the skill is rendered
+- **THEN** the description draws on all of them
+
+#### Scenario: Title not usable
+- **WHEN** one repository's title is over 80 characters and it has an alias, and another's is over 80 with no alias, and the skill is rendered
+- **THEN** the first is named by its alias, the second by its id, and neither long title appears in the description
+
 ### Requirement: Routing skill keyword budget
-The routing skill's description SHALL stay within 1,024 characters by naming every repository's title first, then each repository's aliases one round at a time (every first alias, then every second) in concept order, skipping a keyword that does not fit. `repos sync` and `agents install` SHALL report every skipped alias with its repository.
+Each routing skill description SHALL be at most 1,024 characters (Unicode code points) including its fixed text and separators. It SHALL name each repository's primary name first, then fill rounds in order (every first alias, every second, and so on, then keywords the same way), skipping a name that does not fit. `repos sync` and `agents install` SHALL report every skipped name with its repository.
 
 #### Scenario: Aliases beyond the budget
-- **WHEN** a workspace registers twelve repositories with six long aliases each, and a caller runs `repos sync`
-- **THEN** the description is at most 1,024 characters, names every title and every repository's first alias, the result lists each skipped alias under its repository id, and the skill's body still lists every alias
+- **WHEN** a workspace registers twelve repositories with six long aliases and two keywords each, and a caller runs `repos sync`
+- **THEN** each description is at most 1,024 characters, names every repository and its first alias, the result lists each skipped alias and keyword under its repository id, and the body still lists every alias
+
+#### Scenario: Exact boundary
+- **WHEN** names are chosen so the full description is exactly 1,024 characters, then one keyword grows by one character
+- **THEN** the first render includes every name with nothing skipped, and the second skips exactly that keyword
+
+#### Scenario: Characters, not bytes
+- **WHEN** names contain accented letters and emoji, and the full description is exactly 1,024 code points but more bytes
+- **THEN** nothing is skipped and the description is 1,024 code points
 
 #### Scenario: Everything fits
 - **WHEN** a workspace registers two repositories with short aliases and a caller runs `repos sync`
-- **THEN** the description names every title and alias and the result reports no skipped aliases
+- **THEN** the description names every title and alias and the result reports no skipped names
 
 ### Requirement: Routing skill shards
-When the repositories' titles alone do not fit one description, the workspace SHALL generate numbered routing skills (`my-repos`, `my-repos-2`, and so on), each covering a run of repositories in id order whose titles fit, its body listing only those repositories. Installs and syncs SHALL add and remove shards like other generated skills.
+Repositories SHALL be assigned in id order to `my-repos` while each one's minimal entry (primary name and first effective alias) still fits that description, then to `my-repos-2`, and so on; each shard is then filled under the keyword budget and its body lists only its repositories. Installs and syncs SHALL add and remove shards like other generated skills.
 
-#### Scenario: Too many titles
-- **WHEN** a workspace registers enough repositories with long titles that their titles exceed 1,024 characters, and a caller installs agents
-- **THEN** each agent's skills include `my-repos` and `my-repos-2`, every repository is named by exactly one of them, and each description is at most 1,024 characters
+#### Scenario: Too many repositories for one
+- **WHEN** a workspace registers enough repositories that their minimal entries exceed one description, and a caller installs agents
+- **THEN** each agent's skills include `my-repos` and `my-repos-2`, every repository is named by exactly one of them in id order, and each description is at most 1,024 characters
+
+#### Scenario: Longest allowed names
+- **WHEN** a repository has an 80-character title and twenty 60-character aliases
+- **THEN** its minimal entry fits a description on its own, and its other aliases are reported skipped
 
 #### Scenario: Shards shrink back
-- **WHEN** repositories are then removed until every title fits one description and a caller runs `repos sync`
+- **WHEN** repositories are then removed until every minimal entry fits one description and a caller runs `repos sync`
 - **THEN** the installed `my-repos-2` is removed and `my-repos` names every repository
 
 ### Requirement: Standard frontmatter for generated skills
@@ -52,7 +86,7 @@ Generated skills SHALL use only the Agent Skills frontmatter keys `name`, `descr
 - **THEN** its frontmatter has only standard keys, its name is its directory's name and at most 64 lowercase characters, and every metadata value is a string
 
 ### Requirement: Routing without a workspace path
-The routing skill's body SHALL tell agents to resolve a repository through one workspace operation, named both as a tool of the workspace's MCP server and as a command of the installed launcher, and SHALL NOT tell them to change into the workspace directory. It SHALL name the workspace's resolve-and-load operation when the core offers one, and `list_repos` (`repos`) otherwise.
+The routing skill's body SHALL tell agents to resolve a repository through one workspace operation, named both as a tool of the workspace's MCP server and as a launcher command. Every command it gives, including clone, locate, concept reads and recovery, SHALL run through the launcher, never a `cd` into the workspace. It SHALL name the core's resolve-and-load operation when one exists, else `list_repos` (`repos`).
 
 #### Scenario: Body names the server and the launcher
 - **WHEN** the routing skill is rendered for a workspace whose MCP server is registered as `context-home`
@@ -78,45 +112,46 @@ The routing skill's body SHALL tell agents to resolve a repository through one w
 - **THEN** only that repository is cloned and recorded, and any other missing repository is reported, not cloned
 
 ### Requirement: Worktrees are not recorded checkouts
-When `repos scan` or `repos setup` finds a linked git worktree of a registered repository, it SHALL record that worktree's main checkout when it exists, and never the linked worktree itself.
+When `repos scan` or `repos setup` finds a linked git worktree of a registered repository, it SHALL record the main worktree git reports for it when that is an existing, non-bare directory, and otherwise record nothing for it and say why; it SHALL never record the linked worktree itself.
 
 #### Scenario: Scan finds a worktree
 - **WHEN** the only checkout of a registered repository under the scanned directory is a linked worktree whose main checkout is elsewhere
 - **THEN** the main checkout's path is recorded, not the worktree's
 
+#### Scenario: Worktree of a bare or missing main
+- **WHEN** the only checkout found is a worktree of a bare repository, or of a main checkout that has been deleted
+- **THEN** nothing is recorded, and the result names the worktree and the reason
+
 ### Requirement: Which repository is this
-`repos which [<path>]` SHALL report the repository a path (default: the current directory) belongs to, matched by git remotes: its id, title, hub, concept, the checkout's top, the path inside it, and whether the checkout is the recorded one, a linked worktree of it, or an unrecorded checkout. A path in a hub SHALL report the hub; any other SHALL report none.
+`repos which [<path>]` SHALL report the repository (default: the current directory) that the innermost git checkout containing the path belongs to, by its remotes: id, title, hub, concept, checkout top, path inside it, and `recorded`, `worktree` or `unrecorded`. It SHALL never fall back to an enclosing checkout. A path in a hub SHALL report the hub; any other path SHALL report none.
 
 #### Scenario: Nested subdirectory
 - **WHEN** a caller runs `repos which` from a subdirectory three levels inside a recorded checkout
 - **THEN** it reports that repository's id, hub and concept, the checkout's top, the relative path, and `recorded`
 
 #### Scenario: Linked worktree
-- **WHEN** a caller runs `repos which <path>` on a linked worktree of a recorded checkout
-- **THEN** it reports the repository and `worktree`, with the main checkout's path
+- **WHEN** a caller runs `repos which <path>` on a linked worktree of a recorded checkout, given through a symlinked path
+- **THEN** it reports the repository and `worktree`, with the real paths of the worktree and the main checkout
 
 #### Scenario: Unrecorded checkout
 - **WHEN** a caller runs `repos which` in a second clone of a registered repository that is not the recorded path
 - **THEN** it reports the repository, `unrecorded` and the recorded path, and records nothing
+
+#### Scenario: Innermost checkout decides
+- **WHEN** a recorded checkout contains a submodule that is another registered repository, and an unrelated inner git repository, and a caller runs `repos which` inside each
+- **THEN** the first reports the submodule's repository, and the second reports no repository, not the enclosing one
+
+#### Scenario: Several registered remotes
+- **WHEN** a checkout has two remotes that are two registered repositories, first with `origin` among them and then with neither named `origin`
+- **THEN** the first reports the repository `origin` points to, and the second reports `ambiguous` with both candidates in id order
 
 #### Scenario: Not a repository of the user's
 - **WHEN** a caller runs `repos which` in a directory outside any checkout, in an unrelated checkout, and in a hub directory of the workspace
 - **THEN** the first two report no repository with exit status 0, and the third reports that hub's id
 
 ### Requirement: Which repository over MCP
-The MCP server SHALL offer a read-only `which_repo` tool over stdio that returns what `repos which` returns for a given absolute path, and SHALL NOT offer it over HTTP.
+The MCP server SHALL offer a read-only `which_repo` tool over stdio that returns what `repos which` returns for a given absolute path.
 
 #### Scenario: Agent asks where it is
-- **WHEN** a stdio MCP client calls `which_repo` with a path inside a recorded checkout, and an HTTP client lists tools on a server for the same workspace
-- **THEN** the stdio client receives the same repository as `repos which`, and the HTTP tool list has no `which_repo`
-
-### Requirement: Repository paths over HTTP
-Over HTTP, `list_repos` SHALL name the serving machine (`--machine-name`, default its host name) and return each local checkout as `servingMachinePath` instead of `path`, and its description SHALL say that these paths are on the serving machine. Over stdio it SHALL return `path` as before.
-
-#### Scenario: Remote client sees whose paths they are
-- **WHEN** an HTTP client of a server started with `--machine-name studio` calls `list_repos` on a workspace with a located repository
-- **THEN** the result names machine `studio`, gives that repository's `servingMachinePath` and no `path`, and the tool's description says the paths are on the serving machine
-
-#### Scenario: Local clients unchanged
-- **WHEN** a stdio client calls `list_repos` on the same workspace
-- **THEN** it receives `path` as before and no machine label
+- **WHEN** a stdio MCP client calls `which_repo` with a path inside a recorded checkout
+- **THEN** it receives the same repository as `repos which` for that path

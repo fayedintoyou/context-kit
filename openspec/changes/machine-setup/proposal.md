@@ -28,40 +28,50 @@ its own checkouts. It is fragile today:
 ## What Changes
 
 - **The skill's frontmatter is the mechanism.** The description is rebuilt on every
-  install and sync from the repository list with a keyword budget: every title
-  first, then aliases in rounds, within the Agent Skills limit of 1,024 characters.
-  What doesn't fit is reported by name, never dropped silently. When even the
-  titles don't fit, the routing skill is split into numbered shards. Generated
-  skills use only the six Agent Skills standard frontmatter keys.
+  install and sync from the registry's effective trigger names. Today that is
+  every title, alias and new optional `keywords` entry; `hub-federation` will
+  remove names that mounts dispute. Names are budgeted: primary names first, then
+  aliases in rounds, then keywords, within the Agent Skills limit of 1,024
+  characters. What doesn't fit is reported by name, never dropped silently. When
+  the repositories' minimal entries don't fit together, the routing skill splits
+  into numbered shards. `validate` bounds name lengths. Generated skills use only
+  the six Agent Skills standard frontmatter keys.
 - **One shared skills location.** `agents install` installs into `~/.agents/skills`
   for every harness that reads it, keeps `~/.claude/skills` for Claude Code, and
   writes the fewest locations that cover the selected harnesses. Codex moves from
-  `$CODEX_HOME/skills` to `~/.agents/skills`; unchanged old copies are removed.
-- **More harnesses.** Gemini CLI, GitHub Copilot CLI, Cursor and OpenCode join
-  Claude Code and Codex. Their skill and MCP locations are confirmed from each
-  vendor's documentation (design.md). Antigravity CLI waits until its documented
-  paths agree.
+  `$CODEX_HOME/skills` to `~/.agents/skills`. An old copy is removed only after
+  its replacement is verified. Where a harness reads two copies and doesn't
+  document which wins (Cursor), install warns.
+- **More harnesses.** Gemini CLI, GitHub Copilot CLI and Cursor join Claude Code and
+  Codex. Their skill and MCP locations are confirmed from each vendor's
+  documentation (design.md). Each harness gets a discovery check that proves it
+  lists the skill. OpenCode (two MCP config shapes) and Antigravity CLI
+  (inconsistent documented paths) come later.
 - **A stable entry point.** `agents install` writes a managed `context-kit`
   launcher in the user's bin directory, which stays put when the workspace moves.
   The routing skill points agents to one resolve operation, through the
   workspace's MCP server by name or through the launcher, with no `cd` into the
   workspace. A moved workspace shows up in `agents status`, and one `agents install`
-  fixes it.
+  fixes it. A second workspace on the same machine is refused
+  (`WORKSPACE_CONFLICT`) unless forced.
 - **New-machine flow.** `repos setup` works through every `missing` repository: it
   scans to a configurable depth, records what it finds, offers to locate or clone
   the rest, never clones without being asked, and refreshes the skills. `repos scan`
   gains `--depth`. `repos which [<dir>]` (and read-only `which_repo` over stdio MCP)
   maps any path, including nested subdirectories and linked worktrees, back to its
   repository, concept and hub.
-- **Remote path honesty.** Over HTTP, `list_repos` names the serving machine and
-  labels its paths as that machine's. `which_repo` isn't offered over HTTP.
+- **Remote path honesty.** This change owns the remote policy. It amends
+  `remote-access / HTTP transport` parity: tools that resolve this machine's
+  checkouts are local-only and aren't served over HTTP (`which_repo` here, and
+  `repo-context`'s open tools by the same rule), and `list_repos` over HTTP names
+  the serving machine and returns `servingMachinePath`.
 - **Optional global rule.** `agents install --global-rule` writes a small
   Context Kit-owned rule file into Claude Code's `~/.claude/rules/`. It's off by
   default; harnesses without a rules directory report it unsupported, and nothing
   depends on it.
 
-Out of scope: plugin and marketplace packaging (open question); managed blocks in
-`AGENTS.md`, `GEMINI.md` or `copilot-instructions.md` (open question); what a
+Out of scope: plugin and marketplace packaging (deferred); managed blocks in
+`AGENTS.md`, `GEMINI.md` or `copilot-instructions.md` (off); what a
 resolved repository's context contains (`repo-context`); mounted team hubs
 (`hub-federation`).
 
@@ -73,14 +83,19 @@ None.
 
 ### Modified Capabilities
 
-- `repository-registry`: a keyword budget and shards for the routing skill,
-  standard-only frontmatter, a path-free routing body, `repos setup`, scan depth
-  and worktrees, `repos which`/`which_repo`, and labeled paths over HTTP.
-  MODIFIES `Generated routing skill` (aliases may be budgeted) and
-  `Scan a directory once` (depth becomes an option).
+- `repository-registry`: `keywords` and name bounds, effective trigger names, a
+  keyword budget and shards for the routing skill, standard-only frontmatter, a
+  path-free routing body, `repos setup`, scan depth and worktrees, and `repos
+  which`/`which_repo`. MODIFIES `Generated routing skill` (effective names within
+  the budget) and `Scan a directory once` (depth becomes an option).
+- `remote-access`: MODIFIES `HTTP transport` (parity except local-only tools and
+  labeled paths), and ADDs `Local-only tools` and `Serving machine paths`. It needs
+  `remote-mcp-access` archived first, because `remote-access` isn't canonical yet.
 - `agent-installation`: the shared `~/.agents/skills` location, the harness table
-  (Gemini CLI, Copilot CLI, Cursor, OpenCode), MCP registration by config file,
-  the launcher, moved-workspace detection, and the optional global rule.
+  (Gemini CLI, Copilot CLI, Cursor), MCP registration by config file,
+  the launcher, one workspace per user, moved-workspace detection, discovery
+  checks, warnings for copies a harness reads twice, and the optional global
+  rule.
   MODIFIES `Install into agents` (Codex's user skill directory).
 
 ## Impact
@@ -93,11 +108,13 @@ None.
 - `lib/operations.mjs`, `bin/hub.mjs`, `lib/mcp/server.mjs`, `lib/mcp/http.mjs`:
   `repos setup`, `repos which`, `which_repo`, the transport-aware `list_repos`,
   `--machine-name`.
+- `docs/format.md`: Repository `keywords` and name bounds.
 - Docs: README Install, `skills/context-kit/references/repositories.md`,
   `addons-and-install.md`, `remote.md`, `commands.md`, help topics.
 - Tests: `test/e2e/agents.test.mjs`, `repos.test.mjs`, `remote.test.mjs`, with fake
   harness CLIs and temporary `HOME`, `XDG_*`, `CODEX_HOME`, `COPILOT_HOME` and
-  `CLAUDE_CONFIG_DIR`.
+  `CLAUDE_CONFIG_DIR`; an opt-in `test/e2e/discovery.test.mjs` against real Claude
+  Code and Codex; `test/manual-checks.md` entries for the other harnesses.
 - No new runtime dependency.
 - Depends on the toolkit change `slice-aware-links` (in flight). Today
   `lib/specs/links.mjs` requires a linked test for every scenario of every active
