@@ -1,6 +1,6 @@
 ---
 name: behavior-map
-description: Draft a behavior map (a statechart-like picture of what a person sees and the moves between states) from a repository's OpenSpec specs, citing a spec behind every state, then check and render it with Context Kit. Use when asked to map, diagram or visualize a product journey or user flow from specs, or to keep such a map in step with them.
+description: Draft a behavior map (a statechart-like picture of what a person sees and the moves between states) from a repository's OpenSpec specs or linked-intent development (LID) specs, citing a spec behind every state, then check and render it with Context Kit. Use when asked to map, diagram or visualize a product journey or user flow from specs, or to keep such a map in step with them.
 ---
 
 # Draft a behavior map
@@ -17,7 +17,8 @@ the MCP tools when the server's root is that repository.
 ## 1. Choose the scope
 
 Pick one journey: a capability, or one requirement of it (`<capability> /
-<requirement>`). Ask the user if it's unclear whose journey it is. Keep a map
+<requirement>`), or for linked-intent development specs an ID prefix (`AUTH`,
+`AUTH-UI`). Ask the user if it's unclear whose journey it is. Keep a map
 under about 25 nodes; a bigger journey becomes several maps, one per path a
 person would describe separately ("signing in", "when a teammate posts").
 
@@ -28,6 +29,14 @@ requirements and scenarios in scope. Cite them by the IDs it lists, exactly:
 `<capability> / <requirement>` or `<capability> / <scenario>`. Only canonical
 specs are listed; behavior a pending change adds can't be cited until it is
 archived.
+
+If the repository keeps linked-intent development specs (`docs/intent/**/*-specs.md`
+or `docs/specs/*.md`, entries like `- [x] **AUTH-UI-001**: ...`), use
+`source: { kind: lid }` and `maps behaviors --source lid` instead, and cite entry
+IDs (`AUTH-UI-001`); `scope` lists ID prefixes. Each entry's `marker` says whether
+it is implemented, a gap or deferred; that is the spec author's claim, not
+evidence, so it doesn't belong in a label either. A duplicate ID fails with
+`INVALID_SOURCE`: tell the user, since LID IDs must be unique.
 
 ## 3. Write it in the person's words
 

@@ -28,9 +28,9 @@ upstream, golden diagrams) under `test/e2e/fixtures/maps/`.
 
 ## 3. Slice `lid-source`
 
-- [ ] 3.1 Fixtures from `jszmajda/lid` at `9679360`: `LID-CORE-001`…`004` from `docs/intent/linked-intent-dev/core/core-specs.md` (backticked markers), `AUTH-UI-001`, `AUTH-UI-002`, `AUTH-API-001`, `AUTH-API-002` and `CART-UI-001` from `plugins/linked-intent-dev/skills/linked-intent-dev/references/ears-syntax.md` (plain markers and markerless), laid out as `docs/intent/**/*-specs.md` and `docs/specs/*.md`, with upstream's MIT `LICENSE` and a README naming the source files and commit
-- [ ] 3.2 `lid` source per design decision 4; `INVALID_SOURCE` on duplicate IDs
-- [ ] 3.3 Link tests to "Upstream entry forms" and "Duplicate linked-intent ID"; help and docs list the `lid` source
+- [x] 3.1 Fixtures from `jszmajda/lid` at `9679360`: `LID-CORE-001`…`004` from `docs/intent/linked-intent-dev/core/core-specs.md` (backticked markers), `AUTH-UI-001`, `AUTH-UI-002`, `AUTH-API-001`, `AUTH-API-002` and `CART-UI-001` from `plugins/linked-intent-dev/skills/linked-intent-dev/references/ears-syntax.md` (plain markers and markerless), laid out as `docs/intent/**/*-specs.md` and `docs/specs/*.md`, with upstream's MIT `LICENSE` and a README naming the source files and commit
+- [x] 3.2 `lid` source per design decision 4; `INVALID_SOURCE` on duplicate IDs
+- [x] 3.3 Link tests to "Upstream entry forms" and "Duplicate linked-intent ID"; help and docs list the `lid` source
 
 ## 4. Slice `hub-maps`
 
