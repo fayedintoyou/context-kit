@@ -18,8 +18,6 @@ See proposal.md for why. Today, from the code:
   the merge guard. They are read and written per kind with an
   installed/changed/missing state, and nothing the installer didn't write gets
   overwritten.
-- `lib/mcp/server.mjs` builds one server for both transports. `list_repos`
-  returns `path` the same way on both.
 
 The registry already works the same for one person on several machines as for a
 team: the Repository concepts travel through the workspace's git, and each machine
@@ -189,7 +187,7 @@ assumed harmless (requirement *Copies a harness may see twice*).
 
 **Capacity limits.** The reviewer reports that Codex may shorten skill descriptions
 or leave skills out of its listing when many are installed. I couldn't confirm the
-exact thresholds in Codex's documentation. The discovery checks (decision 12)
+exact thresholds in Codex's documentation. The discovery checks (decision 11)
 record what each harness actually lists, and the install docs state each harness's
 documented limits next to the table, saying "not documented" where they aren't.
 
@@ -323,52 +321,13 @@ Whichever change lands second updates one table entry and its test.
   installed yet (`agents install` next). An agent can run it for the user, but the
   routing skill tells agents to ask before cloning, as it does today.
 
-### 10. `repos which` and `which_repo`
+### 10. Moved: `repos which`, local-only tools and serving-machine paths
 
-A pure lookup: `realpath` the input, take `git rev-parse --show-toplevel` from it,
-which is the innermost checkout (a submodule's own top inside its parent), and
-match its remotes, normalized as in `locate`, against the registry. It never
-retries from the parent directory: an unrelated repository nested in one of yours
-is "not yours", not yours by inheritance. If several remotes match different
-registered repositories, `origin` decides. Without an `origin` match, the result
-is `ambiguous` with the candidates in id order, and an exit status of 0. Status is
-`recorded` (the top equals the recorded path), `worktree` (the main worktree from
-`git worktree list --porcelain` is the recorded path), or `unrecorded`. A bare or
-missing main gives `worktree` with `main: null` and a reason. A path inside `<workspace>/hubs/<hub>` reports the
-hub. Anything else reports `{repository: null}` with exit 0, because "not one of
-mine" is an answer, not an error. `which_repo` takes an absolute path and is offered
-only over stdio: over HTTP the path would be the client's, which the server can't
-see (decision 11).
+These are planned in the separate change `local-only-tools`, which carries the
+`remote-access` delta and so waits for `remote-mcp-access` to archive. Nothing in
+this change depends on it.
 
-### 11. Remote path honesty (this change owns the remote policy)
-
-`serverFactory` already knows its transport (`bin/mcp.mjs` picks one). It passes
-`transport: 'http'` in the selection, plus `machine` from `--machine-name` or
-`os.hostname()`. Operations gain a `localOnly: true` flag beside `cliOnly`, and
-`operations()` drops every local-only tool over HTTP, so a call to one is an
-unknown tool. This generic foundation (the flag, transport
-filtering and `which_repo` as its first user) is the dependency-free `local-only`
-slice, so `repo-context`'s open slice can build on it early. `servingMachinePath`
-follows in `remote-paths`. The rule is "tools that resolve a path or checkout on this machine
-are local-only". `which_repo` is the first. `repo-context`'s `open_repo` and
-`context_pack` declare the flag in that change; this one doesn't depend on their
-names. `list_repos` over HTTP returns `machine` and `servingMachinePath`, and its
-description says so. Renaming the key, rather than adding a label beside `path`,
-means a client that reads `path` gets nothing instead of a wrong directory.
-Omitting paths was considered, but the owner on another device sometimes wants to
-know where a checkout lives on the home machine.
-
-This MODIFIES `remote-access / HTTP transport` and its parity scenario, and ADDs
-`Local-only tools` and `Serving machine paths` to `remote-access`. Tying the
-behavior to an option (`--machine-name`) would have kept strict parity, but an HTTP
-server started without it would silently send unlabeled paths, which is the
-failure this fixes. **Ordering:** `remote-access` becomes canonical when
-`remote-mcp-access` archives (its last task is the owner's live deploy check).
-Changes archive by name, so until then the archive rehearsal reports
-`machine-setup` as unarchivable. This change can't merge to `main` before
-`remote-mcp-access` is archived.
-
-### 12. Discovery checks
+### 11. Discovery checks
 
 Files on disk aren't proof that a harness sees a skill. Each harness gets a
 discovery check: install into an isolated home, start a session in a temporary
@@ -389,22 +348,22 @@ landed slice needs tests only for the scenarios it implements.
 
 **Landing order across the sibling plans** (coordinator, 2026-10-22):
 1. `slice-aware-links` (#51, landed);
-2. this change's `skill-frontmatter`, `portable-entry` and `local-only` slices;
+2. this change's `skill-frontmatter` and `portable-entry` slices, and the
+   `local-only` slice of the separate change `local-only-tools`;
 3. `repo-context`'s open/routing slices, which plug `repos open`/`open_repo` into
-   decision 8 and mark them local-only;
+   decision 8 and mark them local-only under `local-only-tools`' rule;
 4. `hub-federation`'s `mounted-repositories`, which narrows the effective trigger
    names.
 
-The other slices here are independent of 3 and 4. **Pre-main gate:** no part of
-this change merges to `main` until `remote-mcp-access` has archived, because
-this change's `remote-access` delta fails the archive rehearsal before then
-(decision 11, task 0.1). Of the routing requirements, this change MODIFIES
+The other slices here are independent of 3 and 4. This change has no
+`remote-access` delta, so it doesn't wait for `remote-mcp-access`; the gate is in
+`local-only-tools`. Of the routing requirements, this change MODIFIES
 `Generated routing skill` and `hub-federation` MODIFIES `Routing skill guidance`.
 Whichever archives later rebases on the canonical text before it.
 
 ### Testing
 
-Everything is end-to-end through the CLI and stdio/HTTP MCP clients, with an
+Everything is end-to-end through the CLI and stdio MCP clients, with an
 isolated machine as in `test/e2e/agents.test.mjs`: temporary `HOME`,
 `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, `XDG_CONFIG_HOME`,
 `XDG_BIN_HOME`, and a `PATH` with fake `claude`, `codex` and `gemini` CLIs that log

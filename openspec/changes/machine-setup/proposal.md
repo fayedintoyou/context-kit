@@ -19,11 +19,8 @@ its own checkouts. It is fragile today:
   read. Claude Code doesn't.
 - Its body says `cd /abs/workspace && npm run -s hub -- repos`, which breaks when
   the workspace moves and costs every agent a `cd`.
-- A new machine has every repository `missing`, and `repos scan` looks only one
-  level deep. There is no guided flow, and no way to ask "which repository is
-  this directory?" from a nested subdirectory or a worktree.
-- `list_repos` served over HTTP returns the serving machine's paths unlabeled, so
-  a remote client can be sent to a path that doesn't exist where it runs.
+- A new machine has every repository `missing`, `repos scan` looks only one level
+  deep, and a scan can record a linked worktree. There is no guided flow.
 
 ## What Changes
 
@@ -57,14 +54,10 @@ its own checkouts. It is fragile today:
 - **New-machine flow.** `repos setup` works through every `missing` repository: it
   scans to a configurable depth, records what it finds, offers to locate or clone
   the rest, never clones without being asked, and refreshes the skills. `repos scan`
-  gains `--depth`. `repos which [<dir>]` (and read-only `which_repo` over stdio MCP)
-  maps any path, including nested subdirectories and linked worktrees, back to its
-  repository, concept and hub.
-- **Remote path honesty.** This change owns the remote policy. It amends
-  `remote-access / HTTP transport` parity: tools that resolve this machine's
-  checkouts are local-only and aren't served over HTTP (`which_repo` here, and
-  `repo-context`'s open tools by the same rule), and `list_repos` over HTTP names
-  the serving machine and returns `servingMachinePath`.
+  gains `--depth`, and a linked worktree is recorded as its main checkout.
+- **Moved to `local-only-tools`:** `repos which`/`which_repo`, the local-only tool
+  rule over HTTP and serving-machine paths. That change carries the
+  `remote-access` delta and waits for `remote-mcp-access` to archive.
 - **Optional global rule.** `agents install --global-rule` writes a small
   Context Kit-owned rule file into Claude Code's `~/.claude/rules/`. It's off by
   default; harnesses without a rules directory report it unsupported, and nothing
@@ -73,7 +66,7 @@ its own checkouts. It is fragile today:
 Out of scope: plugin and marketplace packaging (deferred); managed blocks in
 `AGENTS.md`, `GEMINI.md` or `copilot-instructions.md` (off); what a
 resolved repository's context contains (`repo-context`); mounted team hubs
-(`hub-federation`).
+(`hub-federation`); `repos which` and the remote policy (`local-only-tools`).
 
 ## Capabilities
 
@@ -85,12 +78,8 @@ None.
 
 - `repository-registry`: `keywords` and name bounds, effective trigger names, a
   keyword budget and shards for the routing skill, standard-only frontmatter, a
-  path-free routing body, `repos setup`, scan depth and worktrees, and `repos
-  which`/`which_repo`. MODIFIES `Generated routing skill` (effective names within
+  path-free routing body, `repos setup`, and scan depth and worktrees. MODIFIES `Generated routing skill` (effective names within
   the budget) and `Scan a directory once` (depth becomes an option).
-- `remote-access`: MODIFIES `HTTP transport` (parity except local-only tools and
-  labeled paths), and ADDs `Local-only tools` and `Serving machine paths`. It needs
-  `remote-mcp-access` archived first, because `remote-access` isn't canonical yet.
 - `agent-installation`: the shared `~/.agents/skills` location, the harness table
   (Gemini CLI, Copilot CLI, Cursor), MCP registration by config file,
   the launcher, one workspace per user, moved-workspace detection, discovery
@@ -104,20 +93,16 @@ None.
   JSON config file) and rule support; the launcher and rule record kinds; Codex
   migration.
 - `lib/repos.mjs`: keyword budget, shards, path-free body, scan depth and
-  worktrees, `setupRepositories`, `whichRepository`.
-- `lib/operations.mjs`, `bin/hub.mjs`, `lib/mcp/server.mjs`, `lib/mcp/http.mjs`:
-  `repos setup`, `repos which`, `which_repo`, the transport-aware `list_repos`,
-  `--machine-name`.
+  worktrees, `setupRepositories`.
+- `lib/operations.mjs`, `bin/hub.mjs`: `repos setup`, `repos scan --depth`.
 - `docs/format.md`: Repository `keywords` and name bounds.
 - Docs: README Install, `skills/context-kit/references/repositories.md`,
-  `addons-and-install.md`, `remote.md`, `commands.md`, help topics.
-- Tests: `test/e2e/agents.test.mjs`, `repos.test.mjs`, `remote.test.mjs`, with fake
+  `addons-and-install.md`, `commands.md`, help topics.
+- Tests: `test/e2e/agents.test.mjs`, `repos.test.mjs`, with fake
   harness CLIs and temporary `HOME`, `XDG_*`, `CODEX_HOME`, `COPILOT_HOME` and
   `CLAUDE_CONFIG_DIR`; an opt-in `test/e2e/discovery.test.mjs` against real Claude
   Code and Codex; `test/manual-checks.md` entries for the other harnesses.
 - No new runtime dependency.
-- Slices merge to `main` one at a time. No part of this change merges to `main`
-  before `remote-mcp-access` has archived, because the `remote-access` delta needs
-  that spec to be canonical (tasks.md 0.1).
+- Slices merge to `main` one at a time.
 - The owner's machine, after upgrading: `npm run agents -- install --agent
   claude,codex` (moves Codex's copies), then `repos setup` on any other machine.

@@ -1,5 +1,4 @@
-# Slices merge to main one at a time (spec links wait for a slice to start). No part of
-# this change merges to main before remote-mcp-access has archived (tasks.md 0.1).
+# Slices merge to main one at a time (spec links wait for a slice to start).
 slices:
   - id: skill-frontmatter
     title: Keyword budget, shards and standard frontmatter for the routing skill
@@ -38,14 +37,6 @@ slices:
       - repository-registry / Routing without a workspace path
     depends_on: [skill-frontmatter]
     paths: ["lib/install.mjs", "lib/repos.mjs", "lib/operations.mjs", "test/e2e/agents.test.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
-  - id: local-only
-    title: Local-only tools - repos which, which_repo, and withholding local-only tools over HTTP
-    implements:
-      - repository-registry / Which repository is this
-      - repository-registry / Which repository over MCP
-      - remote-access / Local-only tools
-      - remote-access / HTTP transport
-    paths: ["lib/repos.mjs", "lib/operations.mjs", "lib/mcp/**", "bin/mcp.mjs", "bin/hub.mjs", "test/e2e/repos.test.mjs", "test/e2e/remote.test.mjs", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
   - id: setup-flow
     title: repos setup, scan depth and worktrees
     implements:
@@ -53,13 +44,6 @@ slices:
       - repository-registry / Machine setup
       - repository-registry / Worktrees are not recorded checkouts
     paths: ["lib/repos.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
-  - id: remote-paths
-    title: list_repos over HTTP names the serving machine's paths
-    implements:
-      - remote-access / HTTP transport
-      - remote-access / Serving machine paths
-    depends_on: [local-only]
-    paths: ["lib/operations.mjs", "lib/mcp/**", "bin/mcp.mjs", "test/e2e/remote.test.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/remote.md", "openspec/changes/machine-setup/tasks.md"]
   - id: global-rule
     title: Optional Claude Code user rule
     implements:
