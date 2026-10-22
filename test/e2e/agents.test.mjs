@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, chmod, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, rename, rm, realpath, symlink, utimes } from 'node:fs/promises';
+import { access, chmod, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, link, rename, rm, realpath, symlink, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -723,11 +723,16 @@ test('records are replaced by rename, never rewritten in place', async t => {
   const { workspace, agents } = await fixture(t);
   assert.equal((await agents('install', '--agent', 'claude')).code, 0);
   const file = join(workspace, '.state/agents.json');
-  const first = (await lstat(file)).ino;
+  // A hard link keeps the old file: a rename leaves it whole, an in-place write would change it.
+  const probe = join(workspace, '.state/probe.json');
+  await link(file, probe);
+  const before = await readFile(probe, 'utf8');
+  await workspaceAddon(workspace);
   assert.equal((await agents('install', '--agent', 'claude')).code, 0);
-  assert.notEqual((await lstat(file)).ino, first);
+  assert.equal(await readFile(probe, 'utf8'), before);
+  assert.notEqual(await readFile(file, 'utf8'), before);
+  assert.ok(JSON.parse(await readFile(file, 'utf8')).items.some(item => item.name === 'house-style'));
   assert.deepEqual((await readdir(join(workspace, '.state'))).filter(name => name.startsWith('agents.json.')), []);
-  assert.ok(JSON.parse(await readFile(file, 'utf8')).items.length);
 });
 
 // spec: agent-installation / Existing hooks are kept
@@ -754,4 +759,27 @@ test('an invalid server name fails before anything is written', async t => {
   assert.equal(await exists(join(base, 'claude/skills')), false);
   assert.equal(await exists(join(env.HOME, '.agents')), false);
   assert.equal(await exists(join(workspace, '.state/agents.json')), false);
+});
+
+// spec: agent-installation / Upgrade an existing Codex install
+test('an install interrupted before saving its records is completed by the next, without --force', async t => {
+  const machine = await fixture(t);
+  const { base, env, workspace, agents } = machine;
+  const legacy = await legacyCodexInstall(machine, join(base, 'codex'));
+  // The interrupted install had swapped in shared copies but not yet recorded them.
+  const shared = join(env.HOME, '.agents/skills');
+  await rm(join(env.HOME, '.agents'), { recursive: true, force: true });
+  await mkdir(shared, { recursive: true });
+  for (const name of BUNDLED) await promisify(execFile)('cp', ['-R', join(legacy, name), join(shared, name)]);
+  // And one differs from what would be installed: that one is not adopted.
+  await writeFile(join(shared, 'reflect/SKILL.md'), 'mine');
+  const recovered = await agents('install', '--agent', 'codex');
+  assert.equal(recovered.code, 0, JSON.stringify(recovered.error));
+  const skills = Object.fromEntries(recovered.json.results.filter(item => item.kind === 'skill' && item.path.startsWith(shared)).map(item => [item.name, item]));
+  assert.deepEqual([skills.reflect.action, skills.reflect.code], ['conflict', 'SKILL_FOREIGN']);
+  for (const name of BUNDLED.filter(name => name !== 'reflect')) assert.deepEqual([skills[name].action, skills[name].adopted], ['unchanged', true], name);
+  assert.deepEqual(await readdir(legacy), ['reflect']);
+  assert.equal(await readFile(join(shared, 'reflect/SKILL.md'), 'utf8'), 'mine');
+  assert.deepEqual((await records(workspace)).map(item => item.path).sort(),
+    [join(legacy, 'reflect'), ...BUNDLED.filter(name => name !== 'reflect').map(name => join(shared, name))].sort());
 });
