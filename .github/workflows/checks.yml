@@ -21,7 +21,11 @@ jobs:
       matrix:
         node: [22, 24]
     steps:
+      # Full history: the link check reads which slices have landed from commit trailers, and in a
+      # shallow clone it can't, so it requires every scenario of a sliced change.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}

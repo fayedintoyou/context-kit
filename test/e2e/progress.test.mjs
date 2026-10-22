@@ -164,7 +164,7 @@ test('a valid plan lists every slice and requirement with nothing landed', async
   assert.deepEqual(states(status), { storage: 'ready', api: 'blocked', client: 'blocked' });
   assert.deepEqual(status.slices[1].blockedBy, ['storage']);
   assert.deepEqual(requirementStates(status), { 'locations / Radius': 'unstarted', 'locations / Ordering': 'unstarted', 'locations / Search': 'unstarted' });
-  assert.deepEqual(status.base, { ref: 'main', refs: ['main'], commit: status.base.commit });
+  assert.deepEqual(status.base, { ref: 'main', refs: ['refs/heads/main'], commit: status.base.commit });
   assert.deepEqual(status.totals, { slices: { landed: 0, total: 3 }, requirements: { landed: 0, total: 3 }, readyToReconcile: false });
 });
 
