@@ -538,7 +538,7 @@ test('every job of the openspec workflow runs on the runner its caller names, an
 });
 
 // spec: change-archival / Archived on merge
-test('the openspec archive job reads merged pull requests with the workflow token, so a squashed slice still archives', async t => {
+test('the openspec archive job reads merged pull requests with the workflow token, so a squashed slice still archives, and pull request jobs are read-only', async t => {
   const workflow = parse(readFileSync(join(kit, '.github/workflows/openspec.yml'), 'utf8'));
   const job = workflow.jobs.archive;
   assert.deepEqual(job.permissions, { contents: 'write', 'pull-requests': 'read' });
@@ -547,6 +547,15 @@ test('the openspec archive job reads merged pull requests with the workflow toke
   assert.deepEqual(caller.permissions, { contents: 'write', 'pull-requests': 'read' });
   const step = job.steps.find(item => item.run?.includes('specs archive --ready'));
   assert.equal(step.env?.GH_TOKEN, '${{ github.token }}');
+  // The pull request jobs, one of which runs the pull request's own code, are read-only whatever the
+  // caller grants, and leave no credentials in the checkout.
+  for (const name of ['canonical-guard', 'archive-rehearsal']) {
+    const pullRequestJob = workflow.jobs[name];
+    assert.deepEqual(pullRequestJob.permissions, { contents: 'read' }, name);
+    const checkouts = pullRequestJob.steps.filter(item => item.uses?.startsWith('actions/checkout@'));
+    assert.ok(checkouts.length, name);
+    for (const checkout of checkouts) assert.equal(checkout.with?.['persist-credentials'], false, name);
+  }
   // The slice landed by a squash whose message lost its trailers; only the pull request description
   // carries them. The fake gh, like gh in a workflow, answers only with a token.
   const { base, root, env, git, change, commit } = await fixture(t);
