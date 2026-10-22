@@ -89,7 +89,7 @@ transition as `from -> to`, `scope`, `diagram` or a behavior ID.
 | `uncited_state` | error | A `state` cites nothing (start, choice and end nodes may) |
 | `unknown_citation` | error | A citation, or a scope entry, names no behavior |
 | `ambiguous_citation` | error | A citation names more than one behavior (a requirement and a scenario, or two scenarios, sharing a name), listing them |
-| `label` | error | A node label over 70 characters or a `when` over 50, or a token that reads as code or spec language: a backtick, an underscore, an inner capital (`unreadCount`, also `GitHub` unless in `vocabulary`), a file path, `::`, `()`, `=>`, `==`, a spec ID such as `AUTH-UI-001`, or SHALL, MUST, WHEN, THEN |
+| `label` | error | A node label over 70 characters or a `when` over 50, or a token that reads as code or spec language: a backtick, an underscore, an inner capital (`unreadCount`, also `GitHub` unless in `vocabulary`), a file path, `::`, `()`, `=>`, `==`, diagram or web markup (`<`, `>`, `{`, `}`, `%%`, `:::`, `->`, `[[`, `]]`), a spec ID such as `AUTH-UI-001`, or SHALL, MUST, WHEN, THEN |
 | `uncovered` | warning | A scenario in scope that no element cites, directly or through its requirement |
 | `diagram_outdated` | warning | The generated diagram differs from a fresh rendering |
 
@@ -103,7 +103,12 @@ source can't be read fails the whole check with the source's code (such as
 
 `maps render` draws a map that has no errors (otherwise `INVALID_INPUT`: check it
 first) as a Mermaid `flowchart TD`: start `(("…"))`, state `("…")`, choice
-`{"…"}`, end `(["…"])`, labels as written, exits labelled with their `when`.
+`{"…"}`, end `(["…"])`, exits labelled with their `when`. Labels are always
+drawn as text, reading exactly as written: every character other than letters,
+digits, spaces and `,.'!?@()/+-` becomes a Mermaid entity code (`#37;` for `%`,
+`#quot;` for `"`), and words Mermaid reads as statements (`click`, `style`,
+`class`, `end`, ...) never appear verbatim, so no label can become a directive,
+style, link or markup.
 `--format json` returns the map's model: `map`, `title`, `source`, `scope`, `nodes`
 and `transitions` in file order with their kinds and labels, and each element's
 `cites` resolved to `id`, `kind`, `title` and `fingerprint`. The same map and specs

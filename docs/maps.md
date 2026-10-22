@@ -15,7 +15,8 @@ which behaviors in scope no state covers, whether labels are in plain words, and
 how the map is drawn. Context Kit never runs tests, checkers or models, and reads
 specs only through the pinned OpenSpec CLI.
 
-The `maps` addon provides the operations and the skill. The `maps` help topic
+The `maps` addon provides the operations and the skill. It is opt-in: enable it
+with `init --addons maps,...` or in `context-kit.json`. The `maps` help topic
 (`context-kit help maps`) has the full format and every check code.
 
 ## The journey
@@ -56,7 +57,10 @@ requirements behind each. Its written diagram is what GitHub shows on that page.
 Labels are checked mechanically and small: node labels up to 70 characters, `when`
 labels up to 50, and no token that reads as code or spec language (backticks,
 underscores, inner capitals such as `unreadCount`, file paths, `::`, `()`, `=>`,
-`==`, spec IDs such as `AUTH-UI-001`, or SHALL, MUST, WHEN, THEN). Product words
+`==`, diagram or web markup such as `<`, `{` or `%%`, spec IDs such as
+`AUTH-UI-001`, or SHALL, MUST, WHEN, THEN). Whatever passes is drawn as plain
+text: characters Mermaid treats specially become entity codes, so a label can
+never turn into a directive, a style or a link. Product words
 that look like code, such as `GitHub` or `iPhone`, go in the map's `vocabulary`.
 Whether a label is really in the person's words is judgment, left to the skill and
 to review.

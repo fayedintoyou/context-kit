@@ -95,7 +95,7 @@ test('install puts enabled skills and the MCP server into both agents', async t 
   const installed = await agents('install');
   assert.equal(installed.code, 0, JSON.stringify(installed.error));
   for (const [dir, agent] of [[join(base, 'claude/skills'), 'claude'], [join(base, 'home/.agents/skills'), 'codex']]) {
-    assert.deepEqual((await readdir(dir)).sort(), ['audit-canonical-specs', 'behavior-map', 'context-kit', 'garden-canonical-specs', 'independent-review', 'reconcile-change', 'reflect', 'slice-change'], agent);
+    assert.deepEqual((await readdir(dir)).sort(), ['audit-canonical-specs', 'context-kit', 'garden-canonical-specs', 'independent-review', 'reconcile-change', 'reflect', 'slice-change'], agent);
   }
   assert.equal(await exists(join(base, 'codex/skills')), false, 'nothing under $CODEX_HOME/skills');
   assert.match(await readFile(join(base, 'claude/skills/reflect/SKILL.md'), 'utf8'), /^disable-model-invocation: true$/m);
@@ -110,7 +110,7 @@ test('install puts enabled skills and the MCP server into both agents', async t 
     ['claude', ['mcp', 'add', '-s', 'user', 'context-workspace', '--', ...server]],
     ['codex', ['mcp', 'add', 'context-workspace', '--', ...server]]]);
   const status = await agents('status');
-  assert.equal(status.json.items.length, 20);
+  assert.equal(status.json.items.length, 18);
   assert.ok(status.json.items.every(item => item.state === 'installed'), JSON.stringify(status.json.items));
 
   const again = await agents('install');
@@ -484,7 +484,7 @@ test('a repository with the longest allowed title and twenty longest aliases fit
   assert.equal(await exists(join(base, 'claude/skills/my-repos-2')), false);
 });
 
-const BUNDLED = ['audit-canonical-specs', 'behavior-map', 'context-kit', 'garden-canonical-specs', 'independent-review', 'reconcile-change', 'reflect', 'slice-change'];
+const BUNDLED = ['audit-canonical-specs', 'context-kit', 'garden-canonical-specs', 'independent-review', 'reconcile-change', 'reflect', 'slice-change'];
 const STANDARD_KEYS = ['name', 'description', 'license', 'compatibility', 'metadata', 'allowed-tools'];
 const skillResults = (results, name) => results.filter(item => item.kind === 'skill' && item.name === name);
 

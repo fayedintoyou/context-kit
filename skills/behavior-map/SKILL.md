@@ -36,11 +36,20 @@ archived.
 - A **choice** is a question they would recognize: "What kind of post is it?",
   "Where are you?".
 - A **`when`** on a transition is the condition in their words: "A DM or an
-  @mention", not "event.type == mention".
+  @mention", not "event.type == mention". Every exit from a choice needs one;
+  other transitions may carry one too, which is the place for something that
+  happens out of the person's sight and moves them on ("The barista marks it
+  ready").
 - **start** and **end** frame the journey: "A teammate posts", "You've seen it".
+- A transition may lead back to an earlier node when the person tries again
+  ("You try another way to pay"); make sure each loop also has a way on to an
+  end.
+- Something true before the journey starts that no scenario describes (being
+  signed in, say) belongs in the map's prose, not in an uncited state.
 
 Keep node labels to 70 characters and `when` labels to 50. Leave out code,
-spec IDs, file paths and spec words (SHALL, MUST, WHEN, THEN). When the person
+markup (`<`, `{`, `%%`, `->`), spec IDs, file paths and spec words (SHALL,
+MUST, WHEN, THEN). When the person
 really says a product word that looks like code, such as `GitHub`, `iPhone` or
 `DM`, list it in `vocabulary` rather than rewording it.
 
@@ -68,8 +77,8 @@ person experiences. Then `maps render <name> --write` puts the diagram in the
 file so GitHub shows it; never edit that block by hand. `maps check` warns
 `diagram_outdated` when the map changes later; render with `--write` again.
 
-For a map others will rely on, hand it to `independent-review` with the specs in
-scope: the reviewer checks that the labels are plain and that each state really
+For a map others will rely on (committed to a shared repository, or used to plan
+or report work), hand it to `independent-review` with the specs in scope: the reviewer checks that the labels are plain and that each state really
 is what its citations describe.
 
 ## Example

@@ -77,14 +77,15 @@ after its replacement is in place and matches; one you edited is kept and report
 |---|---|
 | `core` (always) | OKF hubs, progressive `browse`/`read`, `search`, `capture`, skills |
 | `specs` | OpenSpec specs from repositories and shared stores, structural audits, gardening signals, change progress and review skills |
-| `maps` | Behavior maps: journeys of what a person sees, citing specs, checked and rendered as Mermaid |
+| `maps` (opt-in) | Behavior maps: journeys of what a person sees, citing specs, checked and rendered as Mermaid |
 | `reflect` | Turn a conversation's learnings into reviewed edits on skills and hubs |
 | `review` | Independent plan and output review |
 
 Your own skills are addons too: put `addons/<name>/addon.json` (`name`,
 `description`, `skills`) and `addons/<name>/skills/<skill>/SKILL.md` in your
 workspace and enable it. Enabled addons live in `context-kit.json`; `--addons
-none` gives just the core.
+none` gives just the core, and opt-in addons such as `maps` are enabled only when
+named (`--addons maps,specs`).
 
 From inside a workspace:
 

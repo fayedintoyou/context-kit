@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, readFile, readdir, rm, realpath, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -64,7 +64,8 @@ test('default server is read-only and no tool accepts a root', async t => {
 
 // spec: behavior-maps / No write tools over MCP
 test('map tools over MCP are read-only, even with writes allowed', async t => {
-  const { connect } = await fixture(t);
+  const { connect, workspace } = await fixture(t);
+  await writeFile(join(workspace, 'context-kit.json'), JSON.stringify({ version: 1, addons: ['maps', 'reflect', 'review', 'specs'] }));
   const client = await connect('--allow-write');
   const { tools } = await client.listTools();
   const names = tools.map(tool => tool.name);
