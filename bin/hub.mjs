@@ -20,7 +20,8 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   read-skill <hub-id> <reference> [--file <path>]
   capture <hub-id> <title> [--by <actor>]   (UTF-8 body on stdin)
   repos add <hub-id> [<upstream>] [--path <checkout>] [--alias a,b] [--title <t>] [--concept <id>] [--description <d>]
-  repos | repos locate <repo> <path> | repos clone <repo> [<path>] | repos scan <directory> | repos sync
+  repos | repos locate <repo> <path> | repos clone <repo> [<path>] | repos scan <directory> [--depth <n>] | repos sync
+  repos setup [--scan <directory>]... [--depth <n>] [--clone a,b] [--ask]   (scan, then clone only what is named or answered)
   specs stores | specs list | specs read <spec-id> | specs audit | specs garden   [--store <id>]
   specs parties --store <id>
   specs status <change> | specs next <change> | specs slice <change> <slice> | specs reconcile <change>   [--store <id>]
@@ -30,7 +31,7 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
   const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--allow-write', '--global-mcp', '--name', '--help', '--path', '--alias', '--title', '--concept', '--description', '--ready', '--rehearse',
-    '--sha', '--repo', '--wait', '--timeout', '--method', '--skip-review', '--no-checks', '--bootstrap-policy']);
+    '--sha', '--repo', '--wait', '--timeout', '--method', '--skip-review', '--no-checks', '--bootstrap-policy', '--depth', '--scan', '--clone', '--ask'], ['--scan']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
     const [command, ...args] = positional;
@@ -72,6 +73,10 @@ try {
       const store = options['--store'] ? { store: options['--store'] } : {};
       const addFlags = ['--path', '--alias', '--title', '--concept', '--description'];
       if (addFlags.some(flag => options[flag]) && !(command === 'repos' && args[0] === 'add')) fail('INVALID_INPUT', `${addFlags.join(', ')} apply only to repos add`);
+      const setupFlags = ['--scan', '--clone', '--ask'];
+      if (setupFlags.some(flag => options[flag]) && !(command === 'repos' && args[0] === 'setup')) fail('INVALID_INPUT', `${setupFlags.join(', ')} apply only to repos setup`);
+      if (options['--depth'] !== undefined && !(command === 'repos' && ['scan', 'setup'].includes(args[0]))) fail('INVALID_INPUT', '--depth applies only to repos scan and repos setup');
+      const depth = options['--depth'] === undefined ? {} : { depth: Number(options['--depth']) };
       if (command === 'repos') {
         if (args[0] === 'add' && [2, 3].includes(args.length)) {
           const fields = { id: args[1], ...(args[2] ? { upstream: args[2] } : {}), aliases: list(options['--alias']) ?? [],
@@ -81,7 +86,10 @@ try {
         else if (args[0] === 'locate' && args.length === 3) result = await execute(selection, 'locate_repo', { repository: args[1], path: args[2] });
         else if (args[0] === 'clone' && [2, 3].includes(args.length)) result = await execute(selection, 'clone_repo', { repository: args[1], ...(args[2] ? { path: args[2] } : {}) });
         else if (args[0] === 'sync' && args.length === 1) result = await execute(selection, 'sync_repos');
-        else if (args[0] === 'scan' && args.length === 2) result = await execute(selection, 'scan_repos', { directory: args[1] });
+        else if (args[0] === 'scan' && args.length === 2) result = await execute(selection, 'scan_repos', { directory: args[1], ...depth });
+        else if (args[0] === 'setup' && args.length === 1) {
+          result = await execute(selection, 'setup_repos', { scan: options['--scan'] ?? [], clone: list(options['--clone']) ?? [], ask: Boolean(options['--ask']), ...depth });
+        }
         else fail('INVALID_INPUT', help);
       } else if (command === 'specs') {
         if (args[0] === 'stores' && args.length === 1) result = await execute(selection, 'list_spec_stores');

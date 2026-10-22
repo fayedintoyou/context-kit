@@ -61,10 +61,50 @@ untracked `.state/checkouts.json`:
   upstream (SSH or HTTPS, any case).
 - `repos clone <repo> [<path>]` clones the upstream, by default into `~/<name>`,
   and records it.
-- `repos scan <directory>` records every matching checkout in the directory or its
-  immediate subdirectories, e.g. `repos scan ~` on a new machine.
+- `repos scan <directory> [--depth <n>]` records every matching checkout of a
+  repository with no recorded path, in the directory and its subdirectories down to
+  `<n>` levels (default 1, at most 6; 0 is the directory alone). It never enters
+  hidden directories, `node_modules`, a symlink or a checkout below the directory, and never
+  replaces a recorded path that still exists.
+- `repos setup` sets up a new machine, below.
 
 Recording and cloning are CLI-only; agents run them when you ask.
+
+### A new machine
+
+Once the workspace is on the machine (`git clone` it, `npm install`), one command
+makes every listed repository active:
+
+```sh
+npm run hub -- repos setup                       # scan ~ two levels deep, report the rest
+npm run hub -- repos setup --scan ~/code --scan ~/work --depth 3
+npm run hub -- repos setup --clone room,studio   # also clone these two
+npm run hub -- repos setup --ask                 # ask about each one still missing
+```
+
+It scans each `--scan` directory (default your home directory) to `--depth`
+(default 2), then clones the repositories `--clone` names. On a terminal, or with
+`--ask`, it then asks about each repository still missing: type a path to record
+that checkout, `clone` to clone it into `~/<name>`, `clone <path>` to clone it
+there, or nothing to skip it. A wrong path is reported and asked again. It never
+clones a repository you didn't name or answer `clone` for. Prompts go to stderr and
+the JSON result to stdout: what was `recorded`, `cloned`, `located`, `skipped` or
+`failed`, and each repository still `missing` with its `repos locate` and
+`repos clone` commands. Remotes are shown only as host/owner/name, so a token in
+a remote URL never reaches the output, and a failed clone says only whether it was
+authentication, not found, the network or git. It ends by refreshing the installed `my-repos` skill; if
+none is installed yet, it says to run `agents install`.
+
+### Worktrees
+
+A linked worktree (`git worktree add`) is never recorded. When `repos scan` or
+`repos setup` finds one, it records the main checkout `git worktree list` reports
+(the result names the worktree as `worktree`). When there's no main checkout to
+record, it records nothing and lists the worktree under `skipped` with the reason:
+a worktree of a bare repository, of a main checkout that was deleted, or of a
+`--separate-git-dir` checkout (git reports its git directory, not its checkout, as
+the main worktree; record that checkout with `repos locate`). A path answered at a
+`repos setup` prompt is treated the same way.
 
 ## The my-repos skill
 
@@ -72,8 +112,8 @@ When any repositories are registered, core generates a `my-repos` skill and
 `agents install` installs it. Agents choose skills by their descriptions, so the
 description names your repositories, and agents pick it up when you mention one
 from any directory. Its body gives each upstream, alias, keyword and local path
-and tells agents not to search the filesystem. `repos locate`, `clone` and `scan`
-update installed copies at once.
+and tells agents not to search the filesystem. `repos locate`, `clone`, `scan` and
+`setup` update installed copies at once.
 
 A skill description holds at most 1,024 characters, counted as Unicode code points,
 fixed text included. The description names every repository first, by its title

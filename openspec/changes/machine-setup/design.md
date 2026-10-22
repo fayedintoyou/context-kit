@@ -313,10 +313,27 @@ Whichever change lands second updates one table entry and its test.
   because home directories are large.
 - A linked worktree is detected by `git rev-parse --git-common-dir` differing from
   `--git-dir`. Its main worktree is the first entry of `git worktree list
-  --porcelain`, not the common directory's parent, which is wrong for a
-  `--separate-git-dir` checkout. An entry marked `bare`, or a path that no longer
-  exists (`prunable`), means there's nothing to record, and the result says why.
+  --porcelain -z` (NUL-separated, so a path keeps every character), never a
+  parent directory computed by hand. That entry is recorded only when it is an
+  existing directory and the top of a checkout. An entry marked `bare`, a path
+  that no longer exists, or a git error means there's nothing to record, and the
+  result says why; resolution fails closed, so a worktree is never recorded instead.
   Every path is `realpath`-normalized before it's compared or recorded.
+- Limitation: git (2.56) reports a `--separate-git-dir` checkout's git directory,
+  not its checkout, as the main worktree, and `core.worktree` doesn't change that.
+  Such a worktree is skipped with that reason; the remedy is `repos locate <repo>
+  <checkout>` by hand. Deleting an ordinary main checkout deletes the git directory
+  its worktrees point to, so git can't read them at all. Scan detects that from the
+  worktree's `.git` file and reports the path and reason without a repository id.
+- Reported text never carries credentials. Errors, prompts, derived titles and
+  results name a remote only by its normalized identity (host/owner/name, which has
+  no userinfo, port, query or fragment), never the URL as given. Everything up to a
+  URL's last `@` is userinfo and is dropped before any other parsing; the rest must
+  be a host (hostname or `[IPv6]`, optional port) and a path. Userinfo holding a raw
+  `/`, `?` or `#` (or an `@` in a path or query) is ambiguous, so the remote is
+  unrecognized rather than guessed at. A failed clone
+  reports a fixed category (authentication failed, not found, network error, git
+  failed) with that identity, not git's stderr.
 - `repos setup`: CLI-only, a write (`cliOnly: true, write: true`). Steps: scan (default
   `$HOME`, depth 2), then a missing list. Prompts happen when `process.stdin.isTTY`
   or `--ask`, reading one line per missing repository: a path (locate), `clone`,

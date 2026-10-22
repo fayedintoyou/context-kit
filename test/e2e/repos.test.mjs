@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { appendFile, cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,8 +37,32 @@ async function fixture(t, ...initArgs) {
     for (const [name, url] of Object.entries(remotes)) await exec('git', ['remote', 'add', name, url], { cwd: path });
     return realpath(path);
   };
-  return { base, env, workspace, cli, register, checkout };
+  // The CLI with stdin piped from input (never a terminal), for setup's prompts.
+  const cliInput = (input, ...args) => new Promise((done, failed) => {
+    const child = spawn(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, ...args], { env });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('error', failed);
+    child.on('close', code => done(code === 0 ? { code, json: JSON.parse(stdout), stderr } : { code, error: JSON.parse(stderr.trim().split('\n').pop()).error, stderr }));
+    child.stdin.end(input);
+  });
+  // A bare upstream with one commit, to clone from without a network.
+  const upstream = async name => {
+    const source = join(base, 'sources', name);
+    await mkdir(source, { recursive: true });
+    await exec('git', ['init', '-q', '-b', 'main'], { cwd: source });
+    await writeFile(join(source, 'README.md'), `${name}\n`);
+    await exec('git', ['add', '.'], { cwd: source });
+    await exec('git', ['commit', '-qm', 'start'], { cwd: source, env });
+    const bare = join(base, 'upstreams', `${name}.git`);
+    await exec('git', ['clone', '-q', '--bare', source, bare]);
+    return `file://${bare}`;
+  };
+  const commit = path => exec('git', ['commit', '-q', '--allow-empty', '-m', 'start'], { cwd: path, env });
+  return { base, env, workspace, cli, cliInput, register, checkout, upstream, commit };
 }
+const exists = path => stat(path).then(() => true, () => false);
 
 const STANDARD_KEYS = ['name', 'description', 'license', 'compatibility', 'metadata', 'allowed-tools'];
 const points = text => [...text].length;
@@ -168,6 +192,267 @@ test('scan records matching checkouts one level down only', async t => {
   assert.equal(scanned.code, 0, JSON.stringify(scanned.error));
   assert.deepEqual(scanned.json.recorded, [{ id: 'personal/main/room', path: room }]);
   assert.deepEqual(scanned.json.missing, ['personal/main/deep']);
+});
+
+// spec: repository-registry / Deeper scan
+test('scan --depth reaches deeper checkouts but never nested or hidden ones', async t => {
+  const { base, cli, register, checkout } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await register('personal', 'deep', { title: 'deep', resource: 'https://github.com/me/deep' });
+  await register('personal', 'studio', { title: 'studio', resource: 'https://github.com/me/studio' });
+  const room = await checkout(join(base, 'code/room'), { upstream: 'git@github.com:me/room.git' });
+  await checkout(join(base, 'code/unrelated'), { origin: 'https://github.com/someone/else' });
+  const deep = await checkout(join(base, 'code/a/b/deep'), { origin: 'https://github.com/me/deep' });
+  await checkout(join(base, 'code/room/vendor/studio'), { origin: 'https://github.com/me/studio' });
+  await checkout(join(base, 'code/.cache/studio'), { origin: 'https://github.com/me/studio' });
+  const tooDeep = await cli('repos', 'scan', join(base, 'code'), '--depth', '7');
+  assert.equal(tooDeep.error.code, 'INVALID_INPUT');
+  assert.deepEqual((await cli('repos')).json.repositories.map(item => item.status), ['missing', 'missing', 'missing']);
+  const scanned = await cli('repos', 'scan', join(base, 'code'), '--depth', '3');
+  assert.equal(scanned.code, 0, JSON.stringify(scanned.error));
+  assert.equal(scanned.json.depth, 3);
+  assert.deepEqual(scanned.json.recorded, [{ id: 'personal/main/room', path: room }, { id: 'personal/main/deep', path: deep }]);
+  assert.deepEqual(scanned.json.missing, ['personal/main/studio']);
+});
+
+// spec: repository-registry / Scan finds a worktree
+test('scan records a linked worktree\'s main checkout, not the worktree', async t => {
+  const { base, cli, register, checkout, commit } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const main = await checkout(join(base, 'elsewhere/room'), { origin: 'https://github.com/me/room' });
+  await commit(main);
+  await exec('git', ['worktree', 'add', '-q', join(base, 'code/room-fix')], { cwd: main });
+  const scanned = await cli('repos', 'scan', join(base, 'code'));
+  assert.equal(scanned.code, 0, JSON.stringify(scanned.error));
+  assert.deepEqual(scanned.json.recorded, [{ id: 'personal/main/room', path: main, worktree: await realpath(join(base, 'code/room-fix')) }]);
+  assert.equal((await cli('repos')).json.repositories[0].path, main);
+});
+
+// spec: repository-registry / Worktree of a bare or missing main
+test('scan records nothing for a worktree of a bare repository or of a deleted main checkout, and says why', async t => {
+  const { base, cli, register, checkout, commit, upstream } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await register('personal', 'studio', { title: 'studio', resource: 'https://github.com/me/studio' });
+  await register('personal', 'garden', { title: 'garden', resource: 'https://github.com/me/garden' });
+  // A worktree of a bare repository.
+  const bare = (await upstream('room')).slice('file://'.length);
+  await exec('git', ['remote', 'set-url', 'origin', 'https://github.com/me/room'], { cwd: bare });
+  await exec('git', ['worktree', 'add', '-q', join(base, 'code/room-wt')], { cwd: bare });
+  // A worktree whose main checkout, and with it the git directory, was deleted.
+  const studio = await checkout(join(base, 'elsewhere/studio'), { origin: 'https://github.com/me/studio' });
+  await commit(studio);
+  await exec('git', ['worktree', 'add', '-q', join(base, 'code/studio-wt')], { cwd: studio });
+  await rm(studio, { recursive: true, force: true });
+  // A --separate-git-dir checkout, whose git directory git reports as the main worktree.
+  await mkdir(join(base, 'gitdirs'));
+  await exec('git', ['init', '-q', '--separate-git-dir', join(base, 'gitdirs/garden.git'), join(base, 'elsewhere/garden')]);
+  const garden = await realpath(join(base, 'elsewhere/garden'));
+  await exec('git', ['remote', 'add', 'origin', 'https://github.com/me/garden'], { cwd: garden });
+  await commit(garden);
+  await exec('git', ['worktree', 'add', '-q', join(base, 'code/garden-wt')], { cwd: garden });
+  const scanned = await cli('repos', 'scan', join(base, 'code'));
+  assert.equal(scanned.code, 0, JSON.stringify(scanned.error));
+  assert.deepEqual(scanned.json.recorded, []);
+  const code = await realpath(join(base, 'code'));
+  const skipped = Object.fromEntries(scanned.json.skipped.map(item => [item.path, item]));
+  assert.deepEqual(Object.keys(skipped).sort(), [join(code, 'garden-wt'), join(code, 'room-wt'), join(code, 'studio-wt')]);
+  assert.equal(skipped[join(code, 'room-wt')].id, 'personal/main/room');
+  assert.match(skipped[join(code, 'room-wt')].reason, /bare repository/);
+  assert.match(skipped[join(code, 'studio-wt')].reason, /no longer exists/);
+  assert.match(skipped[join(code, 'garden-wt')].reason, /not a checkout/);
+  assert.deepEqual(scanned.json.missing, ['personal/main/garden', 'personal/main/room', 'personal/main/studio']);
+  assert.ok((await cli('repos')).json.repositories.every(item => item.status === 'missing'));
+});
+
+// spec: repository-registry / Scan finds a worktree
+test('a main checkout whose path holds a newline is recorded through its worktree, by scan and at a setup prompt', async t => {
+  const { base, cli, cliInput, register, checkout, commit } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await register('personal', 'studio', { title: 'studio', resource: 'https://github.com/me/studio' });
+  const room = await checkout(join(base, 'elsewhere/ro\nom'), { origin: 'https://github.com/me/room' });
+  await commit(room);
+  await exec('git', ['worktree', 'add', '-q', join(base, 'code/room-wt')], { cwd: room });
+  const studio = await checkout(join(base, 'elsewhere/stu\ndio '), { origin: 'https://github.com/me/studio' });
+  await commit(studio);
+  await exec('git', ['worktree', 'add', '-q', join(base, 'other/studio-wt')], { cwd: studio });
+  const scanned = await cli('repos', 'scan', join(base, 'code'));
+  assert.equal(scanned.code, 0, JSON.stringify(scanned.error));
+  assert.deepEqual(scanned.json.recorded.map(item => [item.id, item.path]), [['personal/main/room', room]]);
+  assert.deepEqual(scanned.json.skipped, []);
+  const setup = await cliInput(`${join(base, 'other/studio-wt')}\n`, 'repos', 'setup', '--ask', '--scan', join(base, 'code'));
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  assert.deepEqual(setup.json.located, [{ id: 'personal/main/studio', path: studio }]);
+  assert.deepEqual((await cli('repos')).json.repositories.map(item => item.path), [room, studio]);
+});
+
+test('setup never reports the credentials in a wrong checkout\'s remote, on stderr or in its result', async t => {
+  const { base, cliInput, register, checkout } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const token = 'ghp_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8';
+  const wrong = await checkout(join(base, 'wrong'), { origin: `https://faye:${token}@github.com/me/other.git`, mirror: `https://github.com/me/other?access_token=${token}` });
+  const setup = await cliInput(`${wrong}\n\n`, 'repos', 'setup', '--ask');
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  assert.equal(setup.json.failed[0].code, 'REMOTE_MISMATCH');
+  assert.equal(setup.json.failed[0].message, `${wrong} has remotes github.com/me/other, not github.com/me/room`);
+  assert.match(setup.stderr, /REMOTE_MISMATCH/);
+  for (const text of [setup.stderr, JSON.stringify(setup.json)]) {
+    assert.ok(!text.includes(token) && !text.includes('faye:'), text);
+  }
+});
+
+test('setup shows remotes only by their normalized identity, whatever credentials their URLs hold', async t => {
+  const { base, cli, cliInput, register, checkout } = await fixture(t);
+  const secrets = ['SECRET-ACCESS', 'SECRET-ENCODED', 'SECRET-OAUTH', 'p@ss-SECRET', 'SECRET-CLONE', 'SECRET-SLASH', 'SECRET-FILE', 'SECRET-SCP', 'SECRET-VAULT', 'SECRET-QUERY', 'SECRET-SPLIT'];
+  const lower = secrets.map(secret => secret.toLowerCase());
+  // A derived title, from an upstream carrying a token.
+  await register('personal', 'room', { resource: 'https://github.com/me/room?access_token=SECRET-ACCESS' });
+  // A clone that fails, from an upstream with a password holding an unescaped @.
+  await register('personal', 'garden', { title: 'garden', resource: 'https://faye:p@ss-SECRET@127.0.0.1:1/me/garden.git?oauth_token=SECRET-CLONE' });
+  const wrong = await checkout(join(base, 'wrong'), {
+    origin: 'https://github.com/me/other?%74oken=SECRET-ENCODED',
+    mirror: 'https://gitlab.com/me/other?oauth_token=SECRET-OAUTH',
+    backup: 'https://faye:p@ss-SECRET@github.com/me/other.git',
+    slash: 'https://faye:pa/SECRET-SLASH@github.com/me/room',
+    local: 'file://u:SECRET-FILE@host/srv/room',
+    scp: 'git@github.com:me/garden?token=SECRET-SCP',
+    // A password whose start reads as a port, holding # or ? before its @.
+    vault: 'https://faye:2024/vault/SECRET-VAULT#1@github.com/me/room',
+    query: 'https://faye:2024/vault/SECRET-QUERY?x@github.com/me/other',
+    split: 'https://fa/ye:x/SECRET-SPLIT#@github.com/me/room' });
+  // A password holding an unescaped / leaves no valid upstream: it isn't registered at all.
+  await register('personal', 'studio', { title: 'studio', resource: 'https://faye:pa/SECRET-SLASH@github.com/me/studio' });
+  // Prompts in id order: garden (clone fails, then skip), then the room (a wrong checkout, then skip).
+  const setup = await cliInput(`clone\n\n${wrong}\n\n`, 'repos', 'setup', '--ask', '--scan', join(base, 'wrong'), '--depth', '0');
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  assert.match(setup.stderr, /^room \(personal\/main\/room, github\.com\/me\/room\) is missing/m);
+  const failed = Object.fromEntries(setup.json.failed.map(item => [item.id, item]));
+  assert.equal(failed['personal/main/garden'].code, 'CLONE_FAILED');
+  assert.equal(failed['personal/main/garden'].message, 'Could not clone 127.0.0.1/me/garden: network error');
+  assert.equal(failed['personal/main/room'].message, `${wrong} has remotes file:host/srv/room, github.com/me/garden, github.com/me/other, gitlab.com/me/other and 4 unrecognized, not github.com/me/room`);
+  assert.deepEqual(setup.json.missing.map(item => item.upstream), ['127.0.0.1/me/garden', 'github.com/me/room']);
+  const locate = await cli('repos', 'locate', 'room', wrong);
+  assert.equal(locate.error.code, 'REMOTE_MISMATCH');
+  const clone = await cli('repos', 'clone', 'garden');
+  assert.deepEqual(clone.error.details, { reason: 'network error', upstream: '127.0.0.1/me/garden' });
+  const validate = await cli('validate');
+  assert.match(validate.error.message, /personal\/main\/studio: resource must be/);
+  for (const text of [setup.stderr, JSON.stringify(setup.json), JSON.stringify(locate.error), JSON.stringify(clone.error), JSON.stringify(validate.error)]) {
+    for (const secret of [...secrets, ...lower]) assert.ok(!text.includes(secret), `${secret} in ${text}`);
+    assert.ok(!text.includes('faye'), text);
+  }
+});
+
+test('no secret placed anywhere in a remote URL reaches setup, locate or validate output', async t => {
+  const { base, cli, cliInput, register, checkout } = await fixture(t);
+  const secrets = ['S3CR3T-ALPHA', 'tok_SECRETbeta', 'Zq9SECRETgamma'];
+  const separators = ['/', '?', '#', ':', '@', '%2F'];
+  const placements = [(s, x) => `${x}${s}`, (s, x) => `${s}${x}`, (s, x) => `pre${x}${s}${x}post`, (s, x) => `${x}${x}${s}`, (s, x) => `2024${x}${s}`];
+  // The host part stays intact in each; well-formed userinfo has no raw / ? or #, and a query
+  // or fragment holding an @ makes the URL ambiguous. Either way, never shown.
+  const families = [
+    [pw => `https://user:${pw}@github.com/o/r`, pw => /[/?#]/.test(pw)],
+    [pw => `ssh://git:${pw}@github.com/o/r.git`, pw => /[/?#]/.test(pw)],
+    [pw => `https://github.com/o/r?${pw}`, pw => pw.includes('@')],
+    [pw => `git@github.com:o/r#${pw}`, pw => pw.includes('@')]];
+  const cases = [];
+  for (const secret of secrets) for (const separator of separators) for (const place of placements) for (const [build, ambiguous] of families) {
+    const pw = place(secret, separator);
+    cases.push({ id: `personal/main/c${cases.length}`, url: build(pw), expected: ambiguous(pw) ? null : 'github.com/o/r' });
+  }
+  for (const [i, item] of cases.entries()) await register('personal', `c${i}`, { title: `c${i}`, resource: item.url });
+  await register('personal', 'target', { title: 'target', resource: 'https://github.com/x/target' });
+  // One checkout with every URL as a remote; quoted, so git reads # and ; literally.
+  const wrong = await checkout(join(base, 'wrong'));
+  const urls = [...new Set(cases.map(item => item.url))];
+  await appendFile(join(wrong, '.git/config'), urls.map((url, i) => `[remote "r${i}"]\n\turl = "${url}"\n`).join(''));
+  await mkdir(join(base, 'empty'));
+  const setup = await cliInput('', 'repos', 'setup', '--ask', '--scan', join(base, 'empty'));
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  assert.equal(setup.json.missing.length, cases.filter(item => item.expected).length + 1);
+  const shown = new Map(setup.json.missing.map(item => [item.id, item.upstream]));
+  for (const item of cases) assert.equal(shown.get(item.id) ?? null, item.expected, item.url);
+  const locate = await cli('repos', 'locate', 'target', wrong);
+  assert.equal(locate.error.code, 'REMOTE_MISMATCH');
+  const unrecognized = urls.filter(url => cases.find(item => item.url === url).expected === null).length;
+  assert.equal(locate.error.message, `${wrong} has remotes github.com/o/r and ${unrecognized} unrecognized, not github.com/x/target`);
+  const validate = await cli('validate');
+  assert.equal(validate.error.code, 'INVALID_REPOSITORY');
+  // The routing skill and repos listing show a hub concept's resource as written; that is
+  // their own requirement's output, not this one's.
+  for (const text of [setup.stderr, JSON.stringify(setup.json), JSON.stringify(locate.error), JSON.stringify(validate.error)].map(text => text.toLowerCase())) {
+    for (const secret of secrets) assert.ok(!text.includes(secret.toLowerCase()), `${secret} shown in ${text.slice(Math.max(0, text.indexOf(secret.toLowerCase()) - 200), text.indexOf(secret.toLowerCase()) + 50)}`);
+  }
+});
+
+test('a scan survives a directory with tens of thousands of subdirectories', async t => {
+  const { base, env, workspace, register, checkout } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const wide = join(base, 'wide');
+  await mkdir(wide);
+  // A small stack makes 20,000 entries overflow a spread the way ~130,000 do by default.
+  for (let i = 0; i < 20000; i += 500) await Promise.all(Array.from({ length: 500 }, (_, j) => mkdir(join(wide, `d${i + j}`))));
+  const room = await checkout(join(wide, 'room'), { origin: 'https://github.com/me/room' });
+  const { stdout } = await exec(process.execPath, ['--stack-size=100', join(kit, 'bin/hub.mjs'), '--root', workspace, 'repos', 'scan', wide], { env, maxBuffer: 16 * 1024 * 1024 });
+  assert.deepEqual(JSON.parse(stdout).recorded, [{ id: 'personal/main/room', path: room }]);
+});
+
+// spec: repository-registry / Fresh machine without prompts
+test('repos setup records what it finds under home, reports the rest with remedies and clones nothing', async t => {
+  const { env, cliInput, register, checkout, upstream } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await register('personal', 'studio', { title: 'studio', resource: await upstream('studio') });
+  await register('personal', 'garden', { title: 'garden', resource: await upstream('garden') });
+  const room = await checkout(join(env.HOME, 'code/room'), { origin: 'https://github.com/me/room' });
+  const setup = await cliInput('clone\nclone\n', 'repos', 'setup');
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  assert.equal(setup.stderr, '', 'no prompts without a terminal or --ask');
+  assert.deepEqual(setup.json.scanned, [await realpath(env.HOME)]);
+  assert.equal(setup.json.depth, 2);
+  assert.deepEqual(setup.json.recorded, [{ id: 'personal/main/room', path: room }]);
+  assert.deepEqual(setup.json.cloned, []);
+  assert.deepEqual(setup.json.missing.map(item => [item.id, item.remedies]), [
+    ['personal/main/garden', ['repos locate personal/main/garden <path>', 'repos clone personal/main/garden [<path>]']],
+    ['personal/main/studio', ['repos locate personal/main/studio <path>', 'repos clone personal/main/studio [<path>]']]]);
+  assert.ok(!await exists(join(env.HOME, 'garden')) && !await exists(join(env.HOME, 'studio')), 'nothing cloned');
+});
+
+// spec: repository-registry / Approved at a prompt
+test('repos setup --ask locates and clones what the answers say, then refreshes the installed routing skill', async t => {
+  const { base, env, workspace, cli, cliInput, register, checkout, upstream } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await register('personal', 'garden', { title: 'garden', resource: await upstream('garden') });
+  const room = await checkout(join(base, 'elsewhere/deeper/still/room'), { origin: 'https://github.com/me/room' });
+  const claude = join(base, 'claude');
+  const bin = join(base, 'bin');
+  await mkdir(bin);
+  await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, 'agents', 'install', '--agent', 'claude'],
+    { env: { HOME: env.HOME, CLAUDE_CONFIG_DIR: claude, PATH: `${bin}:/usr/bin:/bin` } });
+  // Prompts come in id order: garden, then the room.
+  const setup = await cliInput(`clone\n${room}\n`, 'repos', 'setup', '--ask');
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  assert.match(setup.stderr, /garden \(personal\/main\/garden, file:\/.*\/garden\) is missing/);
+  assert.match(setup.stderr, /the room \(personal\/main\/room, github\.com\/me\/room\) is missing/);
+  const garden = await realpath(join(env.HOME, 'garden'));
+  assert.deepEqual(setup.json.cloned, [{ id: 'personal/main/garden', path: garden }]);
+  assert.deepEqual(setup.json.located, [{ id: 'personal/main/room', path: room }]);
+  assert.deepEqual(setup.json.missing, []);
+  assert.deepEqual((await cli('repos')).json.repositories.map(item => [item.id, item.path]), [['personal/main/garden', garden], ['personal/main/room', room]]);
+  const installed = await readFile(join(claude, 'skills/my-repos/SKILL.md'), 'utf8');
+  assert.ok(installed.includes(garden) && installed.includes(room), 'the installed skill gives both paths');
+});
+
+// spec: repository-registry / Named clone
+test('repos setup --clone clones only the named repository', async t => {
+  const { env, cliInput, register, upstream } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: await upstream('room'), aliases: ['room'] });
+  await register('personal', 'studio', { title: 'studio', resource: await upstream('studio') });
+  const setup = await cliInput('', 'repos', 'setup', '--clone', 'room');
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  const room = await realpath(join(env.HOME, 'room'));
+  assert.deepEqual(setup.json.cloned, [{ id: 'personal/main/room', path: room }]);
+  assert.equal(await readFile(join(room, 'README.md'), 'utf8'), 'room\n');
+  assert.deepEqual(setup.json.missing.map(item => item.id), ['personal/main/studio']);
+  assert.ok(!await exists(join(env.HOME, 'studio')), 'studio is not cloned');
 });
 
 // spec: repository-registry / Skill names every repository
