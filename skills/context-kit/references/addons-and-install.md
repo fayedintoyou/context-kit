@@ -6,6 +6,7 @@
 |---|---|
 | `core` (always) | Hubs, browse, read, search, capture, skills, help, and this skill |
 | `specs` | OpenSpec specs and audits, and the `audit-canonical-specs` skill |
+| `maps` | Behavior maps checked and rendered from specs, and the `behavior-map` skill |
 | `reflect` | The `reflect` skill |
 | `review` | The `independent-review` skill |
 

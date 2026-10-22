@@ -62,6 +62,23 @@ test('default server is read-only and no tool accepts a root', async t => {
   assert.equal(parse(await client.callTool({ name: 'nope', arguments: {} })).error.code, 'UNKNOWN_OPERATION');
 });
 
+// spec: behavior-maps / No write tools over MCP
+test('map tools over MCP are read-only, even with writes allowed', async t => {
+  const { connect } = await fixture(t);
+  const client = await connect('--allow-write');
+  const { tools } = await client.listTools();
+  const names = tools.map(tool => tool.name);
+  assert.ok(names.includes('capture_note'));
+  for (const name of ['list_behaviors', 'list_maps', 'check_map', 'render_map']) {
+    const tool = tools.find(item => item.name === name);
+    assert.ok(tool, name);
+    assert.equal(tool.annotations.readOnlyHint, true, name);
+  }
+  assert.ok(!names.some(name => /map/.test(name) && !['list_maps', 'check_map', 'render_map'].includes(name)), names.join(', '));
+  const write = await client.callTool({ name: 'write_map_diagram', arguments: { map: 'alerts' } });
+  assert.equal(parse(write).error.code, 'UNKNOWN_OPERATION');
+});
+
 // spec: context-workspaces / Captured note records its author
 test('--allow-write exposes capture_note and captures are found via search', async t => {
   const { connect, workspace } = await fixture(t);

@@ -26,6 +26,7 @@ To help, read the topic that fits. The same topics are available as
 | `addons-and-install` | Choosing addons, installing into Claude Code or Codex |
 | `remote` | Reaching a workspace from ChatGPT, Claude or a phone: origin, tunnel, edge, credentials, connecting hosts |
 | `specs` | OpenSpec specs, shared stores and audits (specs addon) |
+| `maps` | Behavior maps: drafting, checking and rendering journeys from specs (maps addon) |
 | `skills` | Bundled and workspace skills, reflect and review |
 | `commands` | Every CLI command and MCP tool |
 | `troubleshooting` | Error codes and common problems |

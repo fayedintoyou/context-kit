@@ -33,14 +33,15 @@ async function fixture(t, addons) {
 // spec: change-progress / Specs addon lists the delivery skills
 test('addons list core, kit addons and workspace skill-only addons', async t => {
   const { workspace, init, cli } = await fixture(t);
-  assert.deepEqual(init.json.addons, ['reflect', 'review', 'specs']);
-  assert.deepEqual(JSON.parse(await readFile(join(workspace, 'context-kit.json'), 'utf8')), { version: 1, addons: ['reflect', 'review', 'specs'] });
+  assert.deepEqual(init.json.addons, ['maps', 'reflect', 'review', 'specs']);
+  assert.deepEqual(JSON.parse(await readFile(join(workspace, 'context-kit.json'), 'utf8')), { version: 1, addons: ['maps', 'reflect', 'review', 'specs'] });
   await mkdir(join(workspace, 'addons/drafting/skills/house-style'), { recursive: true });
   await writeFile(join(workspace, 'addons/drafting/addon.json'), JSON.stringify({ name: 'drafting', description: 'My writing skills.', skills: ['house-style'] }));
   await writeFile(join(workspace, 'addons/drafting/skills/house-style/SKILL.md'), '---\nname: house-style\ndescription: How I write.\n---\n\n# House style\n');
   const { json } = await cli('addons');
   assert.deepEqual(json.addons.map(({ name, source, enabled, skills }) => [name, source, enabled, skills]), [
     ['core', 'kit', true, ['context-kit']],
+    ['maps', 'kit', true, ['behavior-map']],
     ['reflect', 'kit', true, ['reflect']],
     ['review', 'kit', true, ['independent-review']],
     ['specs', 'kit', true, ['audit-canonical-specs', 'garden-canonical-specs', 'slice-change', 'reconcile-change']],
@@ -88,6 +89,27 @@ test('a core-only workspace has knowledge tools and no addon operations or skill
   assert.ok(!tools.some(name => /spec/.test(name)));
   assert.deepEqual((await client.listPrompts()).prompts.map(prompt => prompt.name), ['context-kit']);
   const refused = await client.callTool({ name: 'audit_specs', arguments: {} });
+  assert.equal(JSON.parse(refused.content[0].text).error.code, 'ADDON_DISABLED');
+});
+
+// spec: behavior-maps / Maps addon disabled
+test('without the maps addon, map commands fail and map tools are absent', async t => {
+  const { env, workspace, cli } = await fixture(t, 'specs');
+  const listed = await cli('maps', 'list');
+  assert.equal(listed.error.code, 'ADDON_DISABLED');
+  assert.match(listed.error.message, /maps addon/);
+  assert.equal((await cli('maps', 'behaviors', '--source', 'openspec')).error.code, 'ADDON_DISABLED');
+  const maps = (await cli('addons')).json.addons.find(addon => addon.name === 'maps');
+  assert.deepEqual([maps.enabled, maps.skills], [false, ['behavior-map']]);
+  assert.ok(!(await cli('skills')).json.skills.some(skill => skill.name === 'behavior-map'));
+
+  const client = new Client({ name: 'addons-test', version: '1.0.0' });
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', workspace], env, stderr: 'pipe' }));
+  t.after(() => client.close());
+  const tools = (await client.listTools()).tools.map(tool => tool.name);
+  assert.ok(tools.includes('list_specs'));
+  for (const name of ['list_behaviors', 'list_maps', 'check_map', 'render_map']) assert.ok(!tools.includes(name), name);
+  const refused = await client.callTool({ name: 'list_maps', arguments: {} });
   assert.equal(JSON.parse(refused.content[0].text).error.code, 'ADDON_DISABLED');
 });
 

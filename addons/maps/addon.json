@@ -1,0 +1,6 @@
+{
+  "name": "maps",
+  "description": "Behavior maps: draw what a person sees as a journey of states citing the specs behind them, then check and render it deterministically.",
+  "skills": ["behavior-map"],
+  "operations": "maps"
+}

@@ -20,7 +20,11 @@ Each step is its own OpenSpec change with linked end-to-end tests.
 Also done: addons with an agent installer for Claude Code and Codex, the `reflect`
 skill, canonical spec auditing and gardening (read-only signals plus reviewed
 maintenance changes), delivering changes in slices with derived progress and
-reconciliation ([delivery](delivery.md)), and help through the core `context-kit` skill.
+reconciliation ([delivery](delivery.md)), help through the core `context-kit` skill,
+and behavior maps drafted from OpenSpec specs, checked and rendered as Mermaid
+([maps](maps.md)). Next for maps (`behavior-maps`): pinned fingerprints with stale
+warnings, a linked-intent development source, hub maps of a team's working states,
+and declared and test-derived status in the diagram.
 
 ## Decisions
 

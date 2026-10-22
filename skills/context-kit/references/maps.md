@@ -1,0 +1,119 @@
+# Behavior maps (maps addon)
+
+A behavior map draws what a person experiences as a journey: the states they see
+and the moves between them, each state citing the specs behind it. They resemble
+statecharts, but a map is a picture with citations, not a model to run. A model
+or a person drafts a map (the `behavior-map` skill says how); Context Kit checks
+and renders it deterministically, and never runs tests, checkers or models.
+
+Maps are read from the selected root (`--root <repository>`, as for `specs`).
+
+| Task | CLI | MCP tool |
+|---|---|---|
+| What a map can cite | `maps behaviors --source openspec [--store <id>]` | `list_behaviors` |
+| The repository's maps | `maps list` | `list_maps` |
+| Check one map, or all | `maps check [<map>] [--strict]` | `check_map` |
+| Draw a map | `maps render <map> [--format mermaid/json]` | `render_map` |
+| Write the diagram into the map file | `maps render <map> --write` | CLI only (`write_map_diagram`) |
+
+## Behavior sources
+
+`--source openspec` reads the canonical specs of the workspace repository, or of a
+shared store readable under the same rule as `specs list --store` (declared by a
+hub or referenced by the repository; otherwise `UNKNOWN_STORE`). Requirements are
+`<capability> / <requirement>`, as in `slices.yaml`; scenarios are
+`<capability> / <scenario>`, as in test links, each naming its requirement as
+`parent`. Pending change deltas are not listed. Each behavior has a `kind`
+(`requirement` or `scenario`), `title`, `text`, `file` and `fingerprint`: the first
+12 hex characters of the SHA-256 of its normalized text (Unicode NFKC, line endings
+and trailing whitespace normalized). A requirement's text includes its scenarios.
+Any other source name fails with `INVALID_INPUT` naming the supported sources.
+
+## Map files
+
+A repository's maps are `maps/<name>.md` (kebab-case names; other files there, such
+as `README.md`, are ignored): an OKF concept with `type: BehaviorMap` and exactly
+one fenced `yaml map` block. Prose around it is free. A fictional example:
+
+````markdown
+---
+type: BehaviorMap
+title: When a teammate posts
+---
+
+```yaml map
+version: 1
+source: { kind: openspec }
+scope: [alerts]
+vocabulary: [DM, "@mention"]
+nodes:
+  - { id: posted, kind: start, label: A teammate posts }
+  - { id: what-kind, kind: choice, label: What kind of post is it? }
+  - id: dot
+    label: A quiet dot appears next to the room
+    cites: [alerts / Room post without a mention]
+  - id: badge
+    label: The room shows a number badge
+    cites: [alerts / Mention badge]
+  - { id: seen, kind: end, label: You've seen it }
+transitions:
+  - { from: posted, to: what-kind }
+  - { from: what-kind, to: dot, when: "A post in a room, no @mention" }
+  - { from: what-kind, to: badge, when: A DM or an @mention }
+  - { from: dot, to: seen }
+  - { from: badge, to: seen }
+```
+````
+
+- `source`: `{ kind: openspec }`, optionally with `store: <id>`.
+- `scope`: capabilities or `<capability> / <requirement>`, the behaviors the map
+  should cover.
+- `nodes`: `id` (kebab-case), `label`, `kind` (`start`, `state`, `choice`, `end`;
+  `state` when omitted) and `cites`, a list of behavior IDs.
+- `transitions`: `from`, `to`, `when` (needed when leaving a choice) and `cites`.
+- `vocabulary`: product words the label lint should accept as written.
+
+Every key is checked; an unknown one is an error. In YAML flow style (`{ ... }`),
+quote a label that contains a comma or starts with `@`.
+
+## Check report
+
+`maps check` returns `{ root, valid, maps: [{ map, valid, errors, warnings }] }`,
+each entry `{ code, element, message }`, where the element is a node ID, a
+transition as `from -> to`, `scope`, `diagram` or a behavior ID.
+
+| Code | Kind | Means |
+|---|---|---|
+| `schema` | error | Frontmatter, block or key problem (including a symlinked map file, which is never read) |
+| `structure` | error | Duplicate node IDs, a transition naming an unknown node, not exactly one start, a node unreachable from the start, a choice with fewer than two exits or an exit without `when`, an end with exits |
+| `uncited_state` | error | A `state` cites nothing (start, choice and end nodes may) |
+| `unknown_citation` | error | A citation, or a scope entry, names no behavior |
+| `ambiguous_citation` | error | A citation names more than one behavior (a requirement and a scenario, or two scenarios, sharing a name), listing them |
+| `label` | error | A node label over 70 characters or a `when` over 50, or a token that reads as code or spec language: a backtick, an underscore, an inner capital (`unreadCount`, also `GitHub` unless in `vocabulary`), a file path, `::`, `()`, `=>`, `==`, a spec ID such as `AUTH-UI-001`, or SHALL, MUST, WHEN, THEN |
+| `uncovered` | warning | A scenario in scope that no element cites, directly or through its requirement |
+| `diagram_outdated` | warning | The generated diagram differs from a fresh rendering |
+
+The CLI exits 1 when any map has an error, and with `--strict` also on any
+warning; the report is the same either way. MCP returns the report. A map whose
+source can't be read fails the whole check with the source's code (such as
+`UNKNOWN_STORE`). `maps check <name>` for a name with no file fails with
+`UNKNOWN_MAP`. For CI, add `context-kit maps check --strict`.
+
+## Rendering
+
+`maps render` draws a map that has no errors (otherwise `INVALID_INPUT`: check it
+first) as a Mermaid `flowchart TD`: start `(("…"))`, state `("…")`, choice
+`{"…"}`, end `(["…"])`, labels as written, exits labelled with their `when`.
+`--format json` returns the map's model: `map`, `title`, `source`, `scope`, `nodes`
+and `transitions` in file order with their kinds and labels, and each element's
+`cites` resolved to `id`, `kind`, `title` and `fingerprint`. The same map and specs
+give byte-identical output; nothing depends on the clock.
+
+`maps render <map> --write` (CLI only, never over MCP) puts the diagram in the map
+file between `<!-- context-kit:diagram:start ... -->` and
+`<!-- context-kit:diagram:end -->`, replacing only that block or adding it after the
+map block, so GitHub shows the diagram. It needs an explicit root (`--root` or
+`CONTEXT_KIT_ROOT`; otherwise `WRITE_DISABLED`), refuses a map with errors before
+writing, replaces the file atomically, never follows a symlink, and reports
+`SNAPSHOT_CHANGED` without writing if the file changed while it rendered. Don't
+edit the block by hand: `--write` overwrites it and the check flags it.

@@ -29,12 +29,15 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   specs parties --store <id>
   specs status <change> | specs next <change> | specs slice <change> <slice> | specs reconcile <change>   [--store <id>]
   specs archivable | specs archive --ready | specs archive --rehearse   [--store <id>]
+  maps behaviors --source openspec [--store <id>] | maps list | maps check [<map>] [--strict]
+  maps render <map> [--format mermaid/json] [--write]   (--write puts the diagram in the map file; CLI only)
   pr land <number> --sha <tested-sha> [--repo owner/name] [--wait] [--timeout <minutes>] [--method squash/rebase/merge]
       [--skip-review "<reason>"] [--no-checks "<reason>"] [--bootstrap-policy]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
   const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--adopt', '--allow-write', '--global-mcp', '--global-rule', '--no-global-rule', '--name', '--help', '--path', '--ref', '--to', '--check', '--alias', '--title', '--concept', '--description', '--ready', '--rehearse',
-    '--sha', '--repo', '--wait', '--timeout', '--method', '--skip-review', '--no-checks', '--bootstrap-policy', '--depth', '--scan', '--clone', '--ask'], ['--scan']);
+    '--sha', '--repo', '--wait', '--timeout', '--method', '--skip-review', '--no-checks', '--bootstrap-policy', '--depth', '--scan', '--clone', '--ask',
+    '--source', '--strict', '--format', '--write'], ['--scan']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
     const [command, ...args] = positional;
@@ -74,7 +77,11 @@ try {
       const count = { help: [0, 1], addons: [0], skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [1, 2], search: [1], 'read-skill': [2], capture: [2] };
       if (options['--inbox'] && !['context', 'search', 'browse', 'read'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context, search, browse and read');
       const storeCommands = ['list', 'read', 'audit', 'garden', 'parties', 'status', 'next', 'slice', 'reconcile', 'archivable', 'archive'];
-      if (options['--store'] && (command !== 'specs' || !storeCommands.includes(args[0]))) fail('INVALID_INPUT', `--store applies only to specs ${storeCommands.join('/')}`);
+      const mapsBehaviors = command === 'maps' && args[0] === 'behaviors';
+      if (options['--store'] && !mapsBehaviors && (command !== 'specs' || !storeCommands.includes(args[0]))) fail('INVALID_INPUT', `--store applies only to specs ${storeCommands.join('/')} and maps behaviors`);
+      if (options['--source'] && !mapsBehaviors) fail('INVALID_INPUT', '--source applies only to maps behaviors');
+      if (options['--strict'] && !(command === 'maps' && args[0] === 'check')) fail('INVALID_INPUT', '--strict applies only to maps check');
+      if ((options['--format'] || options['--write']) && !(command === 'maps' && args[0] === 'render')) fail('INVALID_INPUT', '--format and --write apply only to maps render');
       const store = options['--store'] ? { store: options['--store'] } : {};
       const addFlags = ['--path', '--alias', '--title', '--concept', '--description'];
       const mountAdd = command === 'mounts' && args[0] === 'add';
@@ -126,6 +133,19 @@ try {
         }
         else if (args[0] === 'reconcile' && args.length === 2) result = await execute(selection, 'reconcile_change', { change: args[1], ...store });
         else fail('INVALID_INPUT', help);
+      } else if (command === 'maps') {
+        if (mapsBehaviors && args.length === 1) {
+          if (!options['--source']) fail('INVALID_INPUT', 'maps behaviors needs --source <name> (openspec)');
+          result = await execute(selection, 'list_behaviors', { source: options['--source'], ...store });
+        }
+        else if (args[0] === 'list' && args.length === 1) result = await execute(selection, 'list_maps');
+        else if (args[0] === 'check' && [1, 2].includes(args.length)) result = await execute(selection, 'check_map', args[1] === undefined ? {} : { map: args[1] });
+        else if (args[0] === 'render' && args.length === 2) {
+          if (options['--write'] && options['--format'] && options['--format'] !== 'mermaid') fail('INVALID_INPUT', 'maps render --write writes the Mermaid diagram; drop --format');
+          result = options['--write'] ? await execute(selection, 'write_map_diagram', { map: args[1] })
+            : await execute(selection, 'render_map', { map: args[1], ...(options['--format'] ? { format: options['--format'] } : {}) });
+        }
+        else fail('INVALID_INPUT', help);
       } else if (command === 'pr') {
         if (!(args[0] === 'land' && args.length === 2 && /^[1-9][0-9]*$/.test(args[1]))) fail('INVALID_INPUT', help);
         if (!options['--sha']) fail('INVALID_INPUT', 'pr land needs --sha <the tested head SHA>');
@@ -168,7 +188,9 @@ try {
       }
     }
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-    if (result.valid === false || (command === 'mounts' && result.failed?.length) || ['structurally_invalid', 'no_canonical_specs'].includes(result.status)) process.exitCode = 1;
+    // maps check --strict fails on warnings too; the report itself is the same.
+    const strictWarnings = command === 'maps' && options['--strict'] && result.maps?.some(map => map.warnings.length);
+    if (result.valid === false || strictWarnings || (command === 'mounts' && result.failed?.length) || ['structurally_invalid', 'no_canonical_specs'].includes(result.status)) process.exitCode = 1;
   }
 } catch (error) {
   process.stderr.write(JSON.stringify({ error: errorData(error) }) + '\n');

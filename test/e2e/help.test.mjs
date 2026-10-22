@@ -32,7 +32,7 @@ test('help lists and shows topics over CLI and MCP, even with broken addon confi
   const { env, root, cli } = await workspace(t);
   const listed = await cli('help');
   assert.deepEqual(listed.json.topics.map(topic => topic.topic), ['addons-and-install', 'capturing', 'commands', 'getting-started',
-    'knowledge', 'mounts', 'navigating', 'remote', 'repositories', 'skills', 'specs', 'troubleshooting']);
+    'knowledge', 'maps', 'mounts', 'navigating', 'remote', 'repositories', 'skills', 'specs', 'troubleshooting']);
   assert.ok(listed.json.topics.every(topic => topic.title && topic.summary));
   const shown = await cli('help', 'getting-started');
   assert.equal(shown.json.content, await readFile(join(references, 'getting-started.md'), 'utf8'));
@@ -81,17 +81,19 @@ test('help mentions every CLI command, MCP tool and error code', async () => {
     for (const part of line.trim().split('|')) {
       const words = part.trim().split(/\s+/).filter(word => /^[a-z][a-z-]*$/.test(word));
       if (!words.length || line.startsWith('Root')) continue;
-      commands.add(words[0] === 'agents' || words[0] === 'specs' ? `${words[0]} ${words[1] ?? ''}`.trim() : words[0]);
+      commands.add(['agents', 'specs', 'maps'].includes(words[0]) ? `${words[0]} ${words[1] ?? ''}`.trim() : words[0]);
     }
   }
-  assert.ok(commands.size >= 20 && commands.has('agents install') && commands.has('specs audit') && commands.has('help'), [...commands].join(', '));
+  assert.ok(commands.size >= 20 && commands.has('agents install') && commands.has('specs audit') && commands.has('maps render') && commands.has('help'), [...commands].join(', '));
   for (const command of commands) assert.ok(help.includes(`\`${command}`), `help is missing the ${command} command`);
 
   const { operations } = await import('../../lib/operations.mjs');
-  for (const [name] of operations(true)) assert.ok(help.includes(`\`${name}\``), `help is missing the ${name} tool`);
+  const tools = operations(true, new Set(['core', 'specs', 'maps']));
+  assert.ok(tools.some(([name]) => name === 'render_map'));
+  for (const [name] of tools) assert.ok(help.includes(`\`${name}\``), `help is missing the ${name} tool`);
 
   const codes = new Set();
-  for (const directory of ['lib', 'lib/specs', 'bin']) {
+  for (const directory of ['lib', 'lib/specs', 'lib/behavior', 'bin']) {
     for (const file of (await readdir(join(kit, directory))).filter(name => name.endsWith('.mjs'))) {
       for (const match of (await readFile(join(kit, directory, file), 'utf8')).matchAll(/fail\('([A-Z_]+)'/g)) codes.add(match[1]);
     }
