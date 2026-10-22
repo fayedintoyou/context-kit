@@ -1,6 +1,5 @@
-# Until slice-aware-links lands, slices merge into the integration branch `machine-setup`
-# (npm test's spec-link gate needs every scenario linked); afterwards drop `base` and merge to main.
-base: machine-setup
+# Slices merge to main one at a time (spec links wait for a slice to start). No part of
+# this change merges to main before remote-mcp-access has archived (tasks.md 0.1).
 slices:
   - id: skill-frontmatter
     title: Keyword budget, shards and standard frontmatter for the routing skill

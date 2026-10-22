@@ -116,11 +116,8 @@ None.
   `CLAUDE_CONFIG_DIR`; an opt-in `test/e2e/discovery.test.mjs` against real Claude
   Code and Codex; `test/manual-checks.md` entries for the other harnesses.
 - No new runtime dependency.
-- Depends on the toolkit change `slice-aware-links` (in flight). Today
-  `lib/specs/links.mjs` requires a linked test for every scenario of every active
-  change, so a sliced plan can't keep CI green slice by slice. Once that change
-  lands, each slice can merge to `main` on its own and slices.yaml drops its
-  `base: machine-setup`. Until then the slices use an integration branch. No
-  placeholder tests either way.
+- Slices merge to `main` one at a time. No part of this change merges to `main`
+  before `remote-mcp-access` has archived, because the `remote-access` delta needs
+  that spec to be canonical (tasks.md 0.1).
 - The owner's machine, after upgrading: `npm run agents -- install --agent
   claude,codex` (moves Codex's copies), then `repos setup` on any other machine.

@@ -384,14 +384,11 @@ Both forms link the scenario *Routing skill is discovered*.
 
 ### Delivery
 
-The slices are meant to merge to `main` one at a time once the prerequisite change
-`slice-aware-links` makes the spec-link gate check only the scenarios of landed or
-in-progress slices. Then the `base` line comes out of slices.yaml. Until that
-lands, the slices merge into an integration branch, `machine-setup`, which merges
-to `main` once every scenario is linked (the `remote-mcp-access` precedent).
+Slices merge to `main` one at a time. Spec links wait for a slice to start, so a
+landed slice needs tests only for the scenarios it implements.
 
 **Landing order across the sibling plans** (coordinator, 2026-10-22):
-1. `slice-aware-links` (#51);
+1. `slice-aware-links` (#51, landed);
 2. this change's `skill-frontmatter`, `portable-entry` and `local-only` slices;
 3. `repo-context`'s open/routing slices, which plug `repos open`/`open_repo` into
    decision 8 and mark them local-only;
@@ -401,9 +398,9 @@ to `main` once every scenario is linked (the `remote-mcp-access` precedent).
 The other slices here are independent of 3 and 4. **Pre-main gate:** no part of
 this change merges to `main` until `remote-mcp-access` has archived, because
 this change's `remote-access` delta fails the archive rehearsal before then
-(decision 11, task 0.1). Whichever change archives later rebases
-its MODIFIED routing requirements (`Generated routing skill`, `Routing skill
-guidance`) on the one before.
+(decision 11, task 0.1). Of the routing requirements, this change MODIFIES
+`Generated routing skill` and `hub-federation` MODIFIES `Routing skill guidance`.
+Whichever archives later rebases on the canonical text before it.
 
 ### Testing
 

@@ -62,10 +62,10 @@
 
 ## 8. Integration
 
-- [ ] 8.1 After the gate in 0.1 holds, run `npm test` (every scenario linked), `node bin/hub.mjs validate`, `npx openspec validate machine-setup --strict` and `specs archive --rehearse` on the integration branch
-- [ ] 8.2 Upgrade the owner's workspace, run `agents install --agent claude,codex`, and check from a session started in `~` that naming a repository routes to its checkout in Claude Code and Codex; record the outcome on the integration PR
+- [ ] 8.1 After the gate in 0.1 holds, run `npm test` (every scenario linked), `node bin/hub.mjs validate`, `npx openspec validate machine-setup --strict` and `specs archive --rehearse` on `main` after the last slice
+- [ ] 8.2 Upgrade the owner's workspace, run `agents install --agent claude,codex`, and check from a session started in `~` that naming a repository routes to its checkout in Claude Code and Codex; record the outcome on the last slice's PR
 
 ## Workflow follow-up
 
-- Merge the integration branch `machine-setup` into `main`, or the slices one by one once `slice-aware-links` lands; the openspec workflow archives the change.
+- Once every slice and task has landed, the openspec workflow archives the change on `main`.
 - On a second machine: `repos setup`, then `agents install`.
