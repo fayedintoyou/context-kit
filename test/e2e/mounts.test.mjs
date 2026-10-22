@@ -1096,3 +1096,68 @@ test('reads running during upgrades back and forth never fail', async t => {
   assert.deepEqual(failures, [], `${failures.length}/${reads} reads failed`);
   assert.ok((await exportsOf(join(workspace, '.state/mounts/shared'))).length <= 2);
 });
+
+// Exports verified before reuse (follow-up to review of #68).
+
+// The export directory holding the given commit, made writable so a test can damage it.
+async function exportAt(workspace, commit) {
+  const parent = join(workspace, '.state/mounts/shared');
+  for (const key of await exportsOf(parent)) {
+    const descriptor = JSON.parse(await readFile(join(parent, key, '.mount.json'), 'utf8'));
+    if (descriptor.commit === commit) { await exec('chmod', ['-R', 'u+w', join(parent, key)]); return join(parent, key); }
+  }
+  throw new Error(`no export of ${commit}`);
+}
+
+// spec: hub-federation / Failed upgrade keeps the pin
+test('an export with its descriptor but missing files is rebuilt by upgrade, not reused', async t => {
+  const f = await fixture(t);
+  const { workspace, cli, config, repository } = f;
+  const source = await repository('shared-context', { ...hub('team/data'), 'tables/orders.md': guide('Orders'), 'tables/customers.md': guide('Customers') });
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  const next = await source.commit({ 'two.md': guide('Two') });
+  assert.equal((await cli('mounts', 'upgrade', 'shared')).code, 0);
+  // The previous pin's export, as an interrupted delete could leave it: descriptor kept, files gone.
+  const previous = await exportAt(workspace, source.first);
+  await rm(join(previous, 'tables/orders.md'));
+  await writeFile(join(previous, 'tables/customers.md'), guide('Customerz'));
+  const back = await cli('mounts', 'upgrade', 'shared', '--to', source.first);
+  assert.equal(back.code, 0, back.output);
+  assert.equal((await config()).mounts.shared.commit, source.first);
+  const orders = await cli('read', 'shared:/tables/orders');
+  assert.equal(orders.code, 0, orders.output);
+  assert.match((await cli('read', 'shared:/tables/customers')).json.content, /# Customers\n/);
+  assert.equal((await cli('mounts')).json.mounts[0].status, 'fetched');
+  assert.notEqual(next, source.first);
+});
+
+// spec: hub-federation / Fresh machine fetches its mounts
+test('fetch repairs an export at the pin whose files are missing or changed', async t => {
+  const f = await fixture(t);
+  const { workspace, cli, repository } = f;
+  const source = await repository('shared-context', { ...hub('team/data'), 'tables/orders.md': guide('Orders') });
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  assert.equal((await cli('mounts', 'fetch', 'shared')).json.mounts[0].outcome, 'unchanged');
+  for (const damage of [dir => rm(join(dir, 'tables/orders.md')), dir => writeFile(join(dir, 'tables/orders.md'), guide('Orderz'))]) {
+    await damage(await exportAt(workspace, source.first));
+    const fetched = await cli('mounts', 'fetch', 'shared');
+    assert.equal(fetched.code, 0, fetched.output);
+    assert.equal(fetched.json.mounts[0].outcome, 'fetched');
+    const read = await cli('read', 'shared:/tables/orders');
+    assert.equal(read.code, 0, read.output);
+    assert.match(read.json.content, /# Orders\n/);
+    assert.equal((await cli('mounts', 'fetch', 'shared')).json.mounts[0].outcome, 'unchanged');
+  }
+});
+
+// spec: hub-federation / Fresh machine fetches its mounts
+test('a mount with thousands of files is fetched and verified, its long descriptor read', async t => {
+  const { cli, repository } = await fixture(t);
+  const assets = Object.fromEntries(Array.from({ length: 4000 }, (_, i) => [`assets/a${i}.txt`, `asset ${i}\n`]));
+  const source = await repository('shared-context', { ...hub('team/data'), ...assets });
+  const added = await cli('mounts', 'add', 'shared', source.url);
+  assert.equal(added.code, 0, added.output);
+  assert.equal(added.json.mount.status, 'fetched');
+  assert.equal((await cli('read', 'shared:/README')).code, 0);
+  assert.equal((await cli('mounts', 'fetch', 'shared')).json.mounts[0].outcome, 'unchanged');
+});

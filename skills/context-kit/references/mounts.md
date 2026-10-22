@@ -154,6 +154,14 @@ most 1,024 characters; otherwise `TOO_LARGE`. A fetch only ever reads the commit
 the pin names; a pin that names a tag object instead of a commit fails, and
 `--ref` with an annotated tag pins the commit it points at.
 
+Each export's `.mount.json` records the git tree it was made from and every file
+with its blob id. `mounts fetch` and `mounts upgrade` reuse an export only when
+every listed file is present with exactly those bytes (and, for an upgrade, the
+tree is the candidate's); otherwise they rebuild it, so a damaged or partly
+deleted export is repaired rather than reported `unchanged`. Removing an export
+deletes its `.mount.json` first, so an interrupted removal reads as unfetched.
+Reads don't re-verify: they trust a present descriptor.
+
 Everything lives under `.state/mounts/` in the workspace. If any directory on the
 way there is a symlink, mount commands stop with `PATH_ESCAPE` before changing
 anything, and `mounts` shows the mount `broken`. Commands on one mount, and every
