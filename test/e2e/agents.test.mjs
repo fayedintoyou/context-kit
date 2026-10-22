@@ -761,25 +761,69 @@ test('an invalid server name fails before anything is written', async t => {
   assert.equal(await exists(join(workspace, '.state/agents.json')), false);
 });
 
+// Runs the CLI with a preload that kills it right after the first skill is swapped into the
+// shared directory: before its records are saved, as a power cut or a SIGKILL would.
+async function killedAfterFirstSwap(machine, args) {
+  const preload = join(machine.base, 'kill-after-swap.mjs');
+  await writeFile(preload, `import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+import { basename } from 'node:path';
+const rename = fs.rename;
+fs.rename = async (from, to) => {
+  const result = await rename(from, to);
+  if (String(to).includes('/.agents/skills/') && !basename(String(to)).startsWith('.')) process.kill(process.pid, 'SIGKILL');
+  return result;
+};
+syncBuiltinESMExports();
+`);
+  return promisify(execFile)(process.execPath, ['--import', preload, join(kit, 'bin/hub.mjs'), '--root', machine.workspace, ...args], { env: machine.env })
+    .then(() => 'finished', error => error.signal);
+}
+
 // spec: agent-installation / Upgrade an existing Codex install
-test('an install interrupted before saving its records is completed by the next, without --force', async t => {
+test('an install killed right after a swap is completed by the next, without --force', async t => {
   const machine = await fixture(t);
   const { base, env, workspace, agents } = machine;
   const legacy = await legacyCodexInstall(machine, join(base, 'codex'));
-  // The interrupted install had swapped in shared copies but not yet recorded them.
+  assert.equal(await killedAfterFirstSwap(machine, ['agents', 'install', '--agent', 'codex']), 'SIGKILL');
   const shared = join(env.HOME, '.agents/skills');
-  await rm(join(env.HOME, '.agents'), { recursive: true, force: true });
-  await mkdir(shared, { recursive: true });
-  for (const name of BUNDLED) await promisify(execFile)('cp', ['-R', join(legacy, name), join(shared, name)]);
-  // And one differs from what would be installed: that one is not adopted.
-  await writeFile(join(shared, 'reflect/SKILL.md'), 'mine');
+  const placed = (await readdir(shared)).filter(name => !name.startsWith('.'));
+  assert.equal(placed.length, 1);
+  assert.equal((await agents('status')).json.items.find(item => item.path === join(shared, placed[0])).state, 'installed');
   const recovered = await agents('install', '--agent', 'codex');
   assert.equal(recovered.code, 0, JSON.stringify(recovered.error));
-  const skills = Object.fromEntries(recovered.json.results.filter(item => item.kind === 'skill' && item.path.startsWith(shared)).map(item => [item.name, item]));
-  assert.deepEqual([skills.reflect.action, skills.reflect.code], ['conflict', 'SKILL_FOREIGN']);
-  for (const name of BUNDLED.filter(name => name !== 'reflect')) assert.deepEqual([skills[name].action, skills[name].adopted], ['unchanged', true], name);
-  assert.deepEqual(await readdir(legacy), ['reflect']);
-  assert.equal(await readFile(join(shared, 'reflect/SKILL.md'), 'utf8'), 'mine');
-  assert.deepEqual((await records(workspace)).map(item => item.path).sort(),
-    [join(legacy, 'reflect'), ...BUNDLED.filter(name => name !== 'reflect').map(name => join(shared, name))].sort());
+  const first = recovered.json.results.find(item => item.path === join(shared, placed[0]));
+  assert.deepEqual([first.action, first.recovered], ['unchanged', true]);
+  assert.ok(recovered.json.results.filter(item => item.kind === 'skill').every(item => !item.code), JSON.stringify(recovered.json.results));
+  assert.deepEqual(await readdir(legacy), []);
+  assert.deepEqual((await records(workspace)).map(item => item.path).sort(), BUNDLED.map(name => join(shared, name)));
+  assert.ok((await agents('status')).json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+});
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('an identical copy Context Kit never placed is not claimed, and survives install and uninstall', async t => {
+  const { env, agents } = await fixture(t);
+  const shared = join(env.HOME, '.agents/skills');
+  await mkdir(shared, { recursive: true });
+  await promisify(execFile)('cp', ['-R', join(kit, 'skills/independent-review'), join(shared, 'independent-review')]);
+  const installed = await agents('install', '--agent', 'codex');
+  const mine = skillResults(installed.json.results, 'independent-review')[0];
+  assert.deepEqual([mine.action, mine.code], ['conflict', 'SKILL_FOREIGN']);
+  const removed = await agents('uninstall');
+  assert.equal(skillResults(removed.json.results, 'independent-review').length, 0);
+  assert.deepEqual(await readdir(shared), ['independent-review']);
+});
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('a second workspace does not claim the first one\'s shared copies', async t => {
+  const machine = await fixture(t);
+  const { base, env, run, agents } = machine;
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  const second = join(base, 'second');
+  await run(['init', second]);
+  const theirs = await run(['--root', second, 'agents', 'install', '--agent', 'codex']);
+  assert.ok(theirs.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'conflict' && item.code === 'SKILL_FOREIGN'));
+  await run(['--root', second, 'agents', 'uninstall']);
+  assert.deepEqual((await readdir(join(env.HOME, '.agents/skills'))).sort(), BUNDLED);
+  assert.ok((await agents('status')).json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
 });

@@ -69,9 +69,11 @@ npm run agents -- uninstall [--agent claude,codex]
   can't be read is never replaced. The records (`.state/agents.json`) are written
   by temporary file and rename, and `install`, `uninstall` and `repos sync` first
   check they can be written: if not, they fail with `RECORDS_UNWRITABLE` before
-  changing anything. An invalid `--name` fails before anything is written. An
-  unrecorded copy identical to what would be installed, left by an interrupted
-  install, is adopted (`unchanged`, `adopted: true`) rather than called foreign.
+  changing anything. An invalid `--name` fails before anything is written. Before
+  swapping a copy in, install records it as `pending` with the hash it is about to
+  write, so an install interrupted after the swap is completed by the next one
+  (`unchanged`, `recovered: true`). A copy with no record is never claimed, even if
+  identical: it stays `SKILL_FOREIGN`.
 - `--link` symlinks skills so edits apply immediately (not possible in the shared
   location when a skill needs adapted frontmatter).
 - Project scope keeps Claude Code's server private to the project; Codex needs
