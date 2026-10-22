@@ -1,0 +1,48 @@
+slices:
+  - id: open
+    title: repos open resolves a repository and returns its instruction files, concept and default pack
+    implements:
+      - repository-context / Open a repository
+      - repository-context / Layered resolution
+      - repository-context / Unmapped repository
+      - repository-context / Instruction file pointers
+      - repository-context / Default pack
+    paths: ["lib/repos.mjs", "lib/repo-context.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/repo-context.test.mjs", "skills/context-kit/references/**", "README.md", "openspec/changes/repo-context/tasks.md"]
+  - id: routing
+    title: my-repos tells agents to open a repository first
+    implements:
+      - repository-context / Routing skill opens repositories
+    depends_on: [open]
+    paths: ["lib/repos.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/repositories.md", "openspec/changes/repo-context/tasks.md"]
+  - id: fields
+    title: The context field, its validation, and declared pointers and areas in repos open
+    implements:
+      - repository-context / Repository context field
+      - repository-context / Concept references
+      - repository-context / Skill and MCP references
+      - repository-context / Area declarations
+      - repository-context / Pack declarations
+      - repository-context / Declared pointers when opening
+      - repository-context / Areas and packs summarized
+      - repository-context / Open at a directory
+      - repository-context / Lenient context reads
+    depends_on: [open]
+    paths: ["lib/repos.mjs", "lib/repo-context.mjs", "lib/globs.mjs", "lib/landing.mjs", "lib/specs/progress.mjs", "lib/workspace.mjs", "test/e2e/repo-context.test.mjs", "docs/format.md", "skills/context-kit/references/**", "openspec/changes/repo-context/tasks.md"]
+  - id: packs
+    title: Deterministic, budgeted pack manifests with roles and seeded front matter
+    implements:
+      - repository-context / Build a pack
+      - repository-context / Packs are deterministic
+      - repository-context / Packs only read tracked files inside the checkout
+      - repository-context / Pack budgets
+      - repository-context / Pack roles
+      - repository-context / Packs need a checkout
+      - repository-context / Seeded front matter
+    depends_on: [fields]
+    paths: ["lib/repo-context.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/repo-context.test.mjs", "skills/context-kit/references/**", "openspec/changes/repo-context/tasks.md"]
+  - id: mcp-check
+    title: Report declared MCP servers against what each agent has registered
+    implements:
+      - repository-context / MCP server availability
+    depends_on: [packs]
+    paths: ["lib/repo-context.mjs", "lib/install.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/repo-context.test.mjs", "skills/context-kit/references/**", "openspec/changes/repo-context/tasks.md"]
