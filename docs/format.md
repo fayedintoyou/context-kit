@@ -50,10 +50,15 @@ files move. Broken links, unknown types and extra keys are allowed.
 
 A concept with `type: Repository` registers one of your repositories. Its
 `resource` must be the git upstream (`https://github.com/<owner>/<name>`, an SSH
-URL, or `file://` for a local one) and optional `aliases` lists other names for it.
+URL, or `file://` for a local one), optional `aliases` lists other names for it,
+and optional `keywords` lists topic phrases that aren't names ("personal site").
+Keywords only help agents pick the routing skill; commands never accept them.
 `validate` rejects a Repository without a git upstream, with `aliases` that is not
-a list of names, or sharing an alias or title with another. Local checkout paths
-are never stored in hubs (see the `repositories` help topic).
+a list of names or `keywords` that is not a list of strings, sharing an alias or
+title with another, with a title over 80 characters or an alias or keyword over
+60 (Unicode code points), or with a keyword equal to another repository's title
+or alias. Local checkout paths are never stored in hubs (see the `repositories`
+help topic).
 
 `index.md` files carry no frontmatter, except `okf_version` in the hub-root index.
 Every `##` heading in a `log.md` is a `YYYY-MM-DD` date.

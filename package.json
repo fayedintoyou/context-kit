@@ -16,7 +16,8 @@
     "hub": "node bin/hub.mjs",
     "validate": "node bin/hub.mjs validate",
     "test": "node --test",
-    "spec-links": "node scripts/spec-links.mjs"
+    "spec-links": "node scripts/spec-links.mjs",
+    "skills-ref": "node scripts/skills-ref.mjs"
   },
   "dependencies": {
     "@fission-ai/openspec": "1.14.3",
