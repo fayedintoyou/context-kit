@@ -47,7 +47,7 @@ async function fixture(t) {
       for (const [file, content] of Object.entries(changes)) {
         await mkdir(join(path, file, '..'), { recursive: true });
         if (content === null) await rm(join(path, file), { force: true });
-        else if (typeof content === 'object') await symlink(content.symlink, join(path, file));
+        else if (content.symlink) await symlink(content.symlink, join(path, file));
         else await writeFile(join(path, file), content);
       }
       await git(path, 'add', '-A');
@@ -81,7 +81,7 @@ const listing = async path => (await readdir(path, { recursive: true }).catch(()
 
 // spec: hub-federation / Invalid mount declaration
 test('validate rejects badly shaped mounts and a mount named like a workspace hub', async t => {
-  const { workspace, cli, config, writeConfig } = await fixture(t);
+  const { workspace, run, cli, config, writeConfig } = await fixture(t);
   const original = await config();
   const commit = '0123456789abcdef0123456789abcdef01234567';
   await writeConfig({ ...original, mounts: {
@@ -100,6 +100,10 @@ test('validate rejects badly shaped mounts and a mount named like a workspace hu
   const clash = await cli('validate');
   assert.equal(clash.error.code, 'MOUNT_EXISTS');
   assert.match(clash.error.message, /shared/);
+  // A write to the clashing name says so, rather than calling the workspace hub a mount.
+  const captured = await run(['--root', workspace, 'capture', 'shared', 'A note'], {}, 'Body.\n');
+  assert.equal(captured.error?.code, 'MOUNT_EXISTS', captured.output);
+  assert.match(captured.error.message, /mounts remove shared/);
 });
 
 // spec: hub-federation / Credentials in a source
@@ -384,6 +388,9 @@ test('symlinked state never lets mount commands write or delete outside the work
   await rm(join(workspace, '.state/mounts/shared'), { recursive: true });
   await symlink(outside, join(workspace, '.state/mounts/shared'));
   assert.equal((await cli('mounts')).json.mounts[0].status, 'broken');
+  const unsafe = await cli('read', 'shared:/README');
+  assert.equal(unsafe.error?.code, 'MOUNT_BROKEN');
+  assert.match(unsafe.error.message, /replace the symlinked path under \.state with a real directory/);
   assert.equal((await cli('mounts', 'remove', 'shared')).error?.code, 'PATH_ESCAPE');
   assert.deepEqual(await readdir(outside), ['keep.txt']);
   assert.ok((await config()).mounts.shared);
@@ -731,13 +738,25 @@ test('symlinks are never followed in a mounted tree or a workspace hub', async t
 // spec: knowledge-format / Nonconformant mount
 test('validate passes with warnings naming the mount and each nonconformant file', async t => {
   const { cli, repository } = await fixture(t);
-  const source = await repository('shared-context', { ...hub('team/data'), 'notes.md': '# No frontmatter\n', 'log.md': '# Log\n\n## yesterday\n' });
+  const note = name => `inbox/1700000000000-0000000${name}-0000-0000-0000-000000000000.md`;
+  const source = await repository('shared-context', { ...hub('team/data'), 'notes.md': '# No frontmatter\n', 'log.md': '# Log\n\n## yesterday\n',
+    // Inbox notes that cannot be read: not UTF-8, and over the 128 KiB file limit.
+    [note(1)]: Buffer.from([0x2d, 0x2d, 0x2d, 0x0a, 0xff, 0xfe, 0x0a]), [note(2)]: `---\ntype: Note\n---\n\n${'x'.repeat(140 * 1024)} Personal context\n` });
   assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
   const validated = await cli('validate');
   assert.equal(validated.code, 0, validated.output);
   assert.equal(validated.json.valid, true);
-  for (const file of ['notes.md', 'log.md']) assert.ok(validated.json.warnings.some(warning => warning.startsWith(`shared: ${file}:`)), file);
+  for (const file of ['notes.md', 'log.md', note(1), note(2)]) assert.ok(validated.json.warnings.some(warning => warning.startsWith(`shared: ${file}:`)), file);
   assert.equal((await cli('read', 'shared', 'notes')).error.code, 'NOT_A_CONCEPT');
+  // Unreadable mounted notes never break inbox reads of the other hubs, or of the mount itself.
+  const found = await cli('search', 'Personal context', '--inbox');
+  assert.equal(found.code, 0, found.output);
+  assert.ok(found.json.results.some(result => result.hub === 'personal/main'));
+  for (const file of [note(1), note(2)]) assert.ok(found.json.warnings.some(warning => warning === `mount shared: ${file} skipped: not a readable note`), file);
+  assert.doesNotMatch(found.output, /\.state/);
+  const context = await cli('context', 'shared', '--inbox');
+  assert.equal(context.code, 0, context.output);
+  assert.deepEqual(context.json.inbox.notes, []);
 });
 
 // spec: hub-federation / Manifest fields that point elsewhere
