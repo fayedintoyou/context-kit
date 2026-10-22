@@ -216,6 +216,37 @@ test('scan --depth reaches deeper checkouts but never nested or hidden ones', as
   assert.deepEqual(scanned.json.missing, ['personal/main/studio']);
 });
 
+// spec: repository-registry / Scan from inside a checkout
+test('scanning a registered checkout records it and never enters it', async t => {
+  const { base, cli, register, checkout } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await register('personal', 'studio', { title: 'studio', resource: 'https://github.com/me/studio' });
+  const room = await checkout(join(base, 'code/room'), { origin: 'https://github.com/me/room' });
+  await checkout(join(base, 'code/room/studio'), { origin: 'https://github.com/me/studio' });
+  await checkout(join(base, 'code/room/vendor/studio'), { origin: 'https://github.com/me/studio' });
+  const scanned = await cli('repos', 'scan', join(base, 'code/room'), '--depth', '3');
+  assert.equal(scanned.code, 0, JSON.stringify(scanned.error));
+  assert.deepEqual(scanned.json.recorded, [{ id: 'personal/main/room', path: room }]);
+  assert.deepEqual(scanned.json.missing, ['personal/main/studio']);
+  // Already recorded, the room's checkout is still not entered.
+  const again = await cli('repos', 'scan', join(base, 'code/room'), '--depth', '3');
+  assert.deepEqual([again.json.recorded, again.json.missing], [[], ['personal/main/studio']]);
+});
+
+// spec: repository-registry / Home directory kept in git
+test('setup searches a home directory that is itself a checkout, but not the checkouts in it', async t => {
+  const { env, cliInput, register, checkout } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await register('personal', 'studio', { title: 'studio', resource: 'https://github.com/me/studio' });
+  await checkout(env.HOME, { origin: 'https://github.com/me/dotfiles' });
+  const room = await checkout(join(env.HOME, 'code/room'), { origin: 'https://github.com/me/room' });
+  await checkout(join(env.HOME, 'code/room/studio'), { origin: 'https://github.com/me/studio' });
+  const setup = await cliInput('', 'repos', 'setup', '--depth', '3');
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  assert.deepEqual(setup.json.recorded, [{ id: 'personal/main/room', path: room }]);
+  assert.deepEqual(setup.json.missing.map(item => item.id), ['personal/main/studio']);
+});
+
 // spec: repository-registry / Scan finds a worktree
 test('scan records a linked worktree\'s main checkout, not the worktree', async t => {
   const { base, cli, register, checkout, commit } = await fixture(t);
@@ -305,7 +336,7 @@ test('setup shows remotes only by their normalized identity, whatever credential
   const { base, cli, cliInput, register, checkout } = await fixture(t);
   const secrets = ['SECRET-ACCESS', 'SECRET-ENCODED', 'SECRET-OAUTH', 'p@ss-SECRET', 'SECRET-CLONE', 'SECRET-SLASH', 'SECRET-FILE', 'SECRET-SCP', 'SECRET-VAULT', 'SECRET-QUERY', 'SECRET-SPLIT'];
   const lower = secrets.map(secret => secret.toLowerCase());
-  // A derived title, from an upstream carrying a token.
+  // No title: the prompt names the id and the upstream carrying a token, cleaned.
   await register('personal', 'room', { resource: 'https://github.com/me/room?access_token=SECRET-ACCESS' });
   // A clone that fails, from an upstream with a password holding an unescaped @.
   await register('personal', 'garden', { title: 'garden', resource: 'https://faye:p@ss-SECRET@127.0.0.1:1/me/garden.git?oauth_token=SECRET-CLONE' });
@@ -325,7 +356,7 @@ test('setup shows remotes only by their normalized identity, whatever credential
   // Prompts in id order: garden (clone fails, then skip), then the room (a wrong checkout, then skip).
   const setup = await cliInput(`clone\n\n${wrong}\n\n`, 'repos', 'setup', '--ask', '--scan', join(base, 'wrong'), '--depth', '0');
   assert.equal(setup.code, 0, JSON.stringify(setup.error));
-  assert.match(setup.stderr, /^room \(personal\/main\/room, github\.com\/me\/room\) is missing/m);
+  assert.match(setup.stderr, /personal\/main\/room \(github\.com\/me\/room\) is missing/);
   const failed = Object.fromEntries(setup.json.failed.map(item => [item.id, item]));
   assert.equal(failed['personal/main/garden'].code, 'CLONE_FAILED');
   assert.equal(failed['personal/main/garden'].message, 'Could not clone 127.0.0.1/me/garden: network error');
@@ -534,6 +565,36 @@ test('the routing body names the MCP server\'s resolve tool and the launcher com
   assert.deepEqual(status.items.filter(item => item.name === 'my-repos').map(item => item.state), ['installed']);
 });
 
+// spec: repository-registry / Launcher unavailable
+test('without this workspace\'s launcher in place, the routing body runs the core by absolute path with the workspace root', async t => {
+  const context = await fixture(t);
+  const { base, env, workspace, cli, register } = context;
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const direct = `${process.execPath} ${join(kit, 'bin/hub.mjs')} --root ${workspace}`;
+  const body = async () => (await agentSkill(join(workspace, '.state/generated/my-repos'))).body;
+  const runs = async text => {
+    const command = text.match(/or run\n`([^`]+)`/)[1];
+    const { stdout } = await exec('/bin/sh', ['-c', command], { cwd: base, env: { HOME: env.HOME, PATH: '/usr/bin:/bin' } });
+    return JSON.parse(stdout).repositories.map(item => item.id);
+  };
+  // Never installed: no launcher at all.
+  await cli('agents', 'status');
+  let text = await body();
+  assert.ok(text.includes(`or run\n\`${direct} repos\``), text);
+  assert.ok(text.includes(`\`${direct} repos clone personal/main/room\``) && text.includes(`\`${direct} read personal/main room\``), text);
+  assert.doesNotMatch(text, /\bcd\s|npm run/);
+  assert.deepEqual(await runs(text), ['personal/main/room']);
+  // Installed, then the launcher replaced by someone else's file: back to the core by path.
+  await installFor(context);
+  const launcher = join(env.HOME, '.local/bin/context-kit');
+  assert.ok((await body()).includes(`or run\n\`${launcher} repos\``));
+  await writeFile(launcher, '#!/bin/sh\necho mine\n');
+  assert.equal((await cli('repos', 'sync')).code, 0);
+  text = await body();
+  assert.ok(text.includes(`or run\n\`${direct} repos\``) && !text.includes(launcher), text);
+  assert.deepEqual(await runs(text), ['personal/main/room']);
+});
+
 // spec: repository-registry / Remedies use the launcher
 test('clone, locate and concept read commands for a missing repository run through the launcher', async t => {
   const context = await fixture(t);
@@ -650,6 +711,19 @@ test('a repository with a blank title is named by its first alias, or else its i
   const synced = await cli('repos', 'sync');
   assert.equal(synced.code, 0, JSON.stringify(synced.error));
   assert.ok((await description(workspace)).includes(': personal/main/garden; room (fayelore.com).'), await description(workspace));
+  assert.equal((await cli('validate')).code, 0);
+});
+
+// spec: repository-registry / No title
+test('a repository with no title is named by its first alias, or else its id, never its upstream\'s name', async t => {
+  const { workspace, cli, register } = await fixture(t);
+  await register('personal', 'room', { resource: 'https://github.com/me/room-site', aliases: ['room', 'fayelore.com'] });
+  await register('personal', 'garden', { resource: 'https://github.com/me/garden-notes' });
+  const synced = await cli('repos', 'sync');
+  assert.equal(synced.code, 0, JSON.stringify(synced.error));
+  const text = await description(workspace);
+  assert.ok(text.includes(': personal/main/garden; room (fayelore.com).'), text);
+  assert.ok(!text.includes('room-site') && !text.includes('garden-notes'), 'no upstream name');
   assert.equal((await cli('validate')).code, 0);
 });
 

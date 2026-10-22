@@ -46,7 +46,7 @@ credentials, a query or a fragment (without echoing it), `aliases` that is not a
 list of names, `keywords` that is not a list of strings, an alias or title used by
 two repositories, a keyword that is another repository's title or alias, and names
 over their bounds: a title over 80 characters, an alias or keyword over 60. A
-blank title counts as none, so the repository is named by its first alias, or by
+blank or absent title counts as none (never the upstream's name), so the repository is named by its first alias, or by
 its id; an id over 80 characters with no usable title or alias fails `validate`,
 `repos sync` and `agents install` until you give it one. `repos add` refuses names
 over the bounds, including a title that defaults to a long upstream name. The list
@@ -68,7 +68,9 @@ untracked `.state/checkouts.json`:
   repository with no recorded path, in the directory and its subdirectories down to
   `<n>` levels (default 1, at most 6; 0 is the directory alone). It never enters
   hidden directories, `node_modules`, a symlink or a checkout below the directory, and never
-  replaces a recorded path that still exists.
+  replaces a recorded path that still exists. The directory itself is searched even
+  when it is a checkout, such as a home directory kept in git, unless it is a
+  registered repository's checkout: that one is recorded, not entered.
 - `repos setup` sets up a new machine, below.
 
 Recording and cloning are CLI-only; agents run them when you ask.
