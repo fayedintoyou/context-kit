@@ -31,6 +31,7 @@ repos` works anywhere (see `repositories`).
 | `mounts` | `list_mounts` | Mounted hubs from other repositories: pin, status and trust counts (see `mounts`) |
 | `mounts add <name> <source>` | | Pins and fetches a hub from another repository (`--ref`, `--path`; CLI only) |
 | `mounts fetch [<name>]` | | Fetches mounts at their pinned commits (CLI only) |
+| `mounts upgrade <name>` | | Moves a mount's pin to its ref's commit (`--to <rev>`), reporting concepts and repositories changed; `--check` only reports (CLI only) |
 | `mounts remove <name>` | | Removes a mount and its fetched content (CLI only) |
 | `skills` | `list_skills` | Declared skills |
 | `read-skill <hub> <reference>` | `read_skill` | A skill or its files (`--file`) |

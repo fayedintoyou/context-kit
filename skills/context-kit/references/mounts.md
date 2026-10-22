@@ -10,6 +10,8 @@ Nothing fetches or moves a pin on its own.
 npm run hub -- mounts add shared https://github.com/example/shared-context --path hubs/data
 npm run hub -- mounts                 # name, source, path, ref, commit, status, trust counts
 npm run hub -- mounts fetch           # on another machine, after pulling the workspace
+npm run hub -- mounts upgrade shared --check   # what moving the pin would change
+npm run hub -- mounts upgrade shared  # move the pin to what its ref names now
 npm run hub -- mounts remove shared
 ```
 
@@ -68,6 +70,24 @@ error, the ref or commit is not available there, timed out, git failed).
   place. A mount already fetched at its pin is `unchanged`. A failure reports
   `FETCH_FAILED` for that mount, keeps what it had, still fetches the others and
   makes the command exit nonzero; `failed` lists them.
+- `mounts upgrade <name> [--to <rev>] [--check]` is the only way a pin moves.
+  It resolves the mount's `ref` (or `rev`: a branch, a tag, peeled to its commit,
+  or a full 40-hex commit) to a commit, fetches exactly that commit, prepares its
+  export aside and checks it is a loadable hub. Only then does it switch the
+  export in and rewrite the pin in `context-kit.json`, and remove the old
+  commit's export. A branch or tag `rev` also becomes the mount's `ref`; a commit
+  keeps it. The result gives `from` and `to` (commit and ref), `outcome`
+  (`upgraded`, or `current` when the pin already names that commit) and
+  `changes`: `concepts` and `repositories` (Repository concepts, matched by
+  upstream), each `added`, `removed` and `changed` (by content), as references
+  such as `shared:/tables/orders`. When the pinned commit is not fetched or is
+  broken on this machine, `changes` is null and `baseline` says why.
+  `--check` reports the same (`outcome` `available` or `current`) and changes
+  no pin, export or read. A candidate that is not a hub fails with
+  `MOUNT_BROKEN`; an unknown commit, ref or unreachable source with
+  `FETCH_FAILED`. Either way, and on any other failure, the old pin and content
+  stay exactly as they were. Upgrading never happens on its own, and reads keep
+  using the old pin until it succeeds.
 - `mounts remove <name>` deletes the declaration and the fetched content
   (`UNKNOWN_MOUNT` when no mount has that name).
 - `mounts` (MCP `list_mounts`, read-only) lists each mount's `name`, `source`,
@@ -145,5 +165,5 @@ missing. That makes a lost change very unlikely, not impossible: two commands ca
 still pass the check at the same moment, and a later one can overwrite after the
 read-back. Run `mounts` after concurrent changes if in doubt.
 
-Adding, fetching and removing are CLI-only and need an explicit workspace outside
+Adding, fetching, upgrading and removing are CLI-only and need an explicit workspace outside
 the toolkit checkout; no MCP tool changes mounts, even with `--allow-write`.
