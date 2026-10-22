@@ -19,10 +19,12 @@ the failure explains itself.
 - Which scenarios are required is unchanged.
 - When a sliced change's scenario is required only by slices that landed on the base, and HEAD
   reaches none of that landing (no trailer commit naming the slice, no merge commit of a merged
-  pull request naming it), the failure says so: `… has no linked test — slice <x> landed on <base>
-  after this tree; update the branch (rebase/merge <base>) and re-run`, and `npm run spec-links`
-  marks the scenario `behind`. A merged pull request whose merge commit `gh` doesn't give is never
-  called behind.
+  pull request naming it), the failure says what is known: `… has no linked test — slice <x> has
+  landed on <base>, but this tree has no record of that landing; if the branch is behind <base>,
+  update it (rebase/merge <base>) and re-run; otherwise link the test`, and `npm run spec-links`
+  marks the scenario `no landing record`. It doesn't conclude the branch is behind: a tree may
+  carry the code through an amended or cherry-picked commit without trailers. A merged pull
+  request whose merge commit `gh` doesn't give gets no such hint.
 - `docs/delivery.md`: after a slice lands, update open pull requests' branches before landing them;
   re-running an old `pull_request` run reuses its old merge ref.
 
@@ -34,11 +36,11 @@ None.
 
 ### Modified Capabilities
 
-- `change-progress`: new requirement "Test links say when a branch is behind".
+- `change-progress`: new requirement "Test links name a landing the tree has no record of".
 
 ## Impact
 
 - `lib/specs/links.mjs`, `lib/specs/landing.mjs` (`behindSlices`; merged pull requests keep their
-  merge commit), `scripts/spec-links.mjs` (the `behind` mark)
+  merge commit), `scripts/spec-links.mjs` (the `no landing record` mark)
 - `docs/testing.md`, `docs/delivery.md`
 - `test/e2e/spec-links.test.mjs`

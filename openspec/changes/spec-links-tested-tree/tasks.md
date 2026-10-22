@@ -1,8 +1,8 @@
 # Tasks
 
-## 1. Say when a branch is behind
+## 1. Name a landing the tree has no record of
 
-- [x] 1.1 `lib/specs/landing.mjs`: `behindSlices` names landed slices whose trailer commits and merged pull requests' merge commits HEAD doesn't reach; `lib/specs/links.mjs` reports a scenario required only by those as behind, still failing; `scripts/spec-links.mjs` marks it
+- [x] 1.1 `lib/specs/landing.mjs`: `behindSlices` names landed slices whose trailer commits and merged pull requests' merge commits HEAD doesn't reach; `lib/specs/links.mjs` reports a scenario required only by those as having no landing record, still failing; `scripts/spec-links.mjs` marks it
 - [x] 1.2 `docs/testing.md` and `docs/delivery.md`: the report, and updating open branches after a slice lands
 
 ## 2. Tests

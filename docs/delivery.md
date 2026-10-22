@@ -33,8 +33,8 @@ proposal (target truth) ─accepted→ slices.yaml ─→ PRs, in parallel where
    Once a slice lands, its scenarios are required everywhere, so update every
    open pull request's branch (rebase onto or merge the default branch) before
    landing it. Re-running an old `pull_request` run reuses its old merge ref, so
-   push the updated branch instead; the link check names a slice that landed
-   after the tree it tests.
+   push the updated branch instead; the link check names a landed slice that
+   the tree it tests has no record of.
 
 3. **Review.** Review each PR against its slice with `reconcile-change` and
    `independent-review`, using `specs slice <change> <slice>` as the brief.

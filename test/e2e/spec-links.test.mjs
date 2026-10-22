@@ -89,7 +89,8 @@ async function fixture(t, { unplanned = false, plain = false, gh = false } = {})
   return { base, root, env, git, gitIn, link, land, detachedClone, check, cli, pulls };
 }
 const missing = (stderr, name) => stderr.includes(`scenario "locations / Use ${name}" has no linked test`);
-const behind = (stderr, name) => stderr.includes(`scenario "locations / Use ${name}" has no linked test — slice storage landed on main after this tree; update the branch (rebase/merge main) and re-run`);
+const unrecorded = 'slice storage has landed on main, but this tree has no record of that landing; if the branch is behind main, update it (rebase/merge main) and re-run; otherwise link the test';
+const behind = (stderr, name) => stderr.includes(`scenario "locations / Use ${name}" has no linked test — ${unrecorded}`);
 const commitAll = async (git, message) => { await git('add', '.'); await git('commit', '-qm', message); };
 
 // spec: change-progress / Unstarted slices are pending
@@ -157,7 +158,7 @@ test('a landed slice must link its scenarios', async t => {
 });
 
 // spec: change-progress / Branch behind a landed slice
-test('a branch behind a landed slice still fails, saying to update the branch', async t => {
+test('a branch behind a landed slice still fails, saying the tree has no record of the landing', async t => {
   const { root, git, gitIn, link, land, detachedClone, check } = await fixture(t);
   await git('checkout', '-qb', 'work');
   await put(root, 'docs/work.md', 'Unrelated work.\n');
@@ -170,7 +171,7 @@ test('a branch behind a landed slice still fails, saying to update the branch', 
   assert.equal(result.code, 1, result.stdout);
   assert.ok(behind(result.stderr, 'Radius'), result.stderr);
   assert.ok(!missing(result.stderr, 'Ordering'), result.stderr);
-  assert.match(result.stdout, /^✖ locations \/ Use Radius {2}behind: deliver slice storage landed on main after this tree; update the branch$/m);
+  assert.match(result.stdout, /^✖ locations \/ Use Radius {2}no landing record: deliver slice storage landed on main; if the branch is behind, update it$/m);
   // A re-run of a pull request's merge ref made before storage landed.
   const ci = await detachedClone(before);
   await gitIn(ci, 'merge', '-q', '--no-ff', '-m', 'Merge work into main', 'origin/work');
@@ -182,7 +183,7 @@ test('a branch behind a landed slice still fails, saying to update the branch', 
   await git('rebase', '-q', 'main');
   result = await check();
   assert.equal(result.code, 1, result.stdout);
-  assert.ok(missing(result.stderr, 'Radius') && !result.stderr.includes('after this tree'), result.stderr);
+  assert.ok(missing(result.stderr, 'Radius') && !result.stderr.includes('no record of that landing'), result.stderr);
   await git('checkout', '-q', '-b', 'fresh', 'main');
   await link('Radius');
   await commitAll(git, 'Link radius');
@@ -203,7 +204,8 @@ test('a branch that rewrites a landed slice without trailers and drops its test 
   await assert.rejects(git('merge-base', '--is-ancestor', 'main', 'HEAD'));
   let result = await check();
   assert.equal(result.code, 1, result.stdout);
-  assert.ok(missing(result.stderr, 'Radius'), result.stderr);
+  // The tree has the code, so the report states only what it knows, and says to link the test.
+  assert.ok(behind(result.stderr, 'Radius'), result.stderr);
   // The same with the code cherry-picked, without trailers, onto a branch from before the landing.
   await git('checkout', '-q', '-b', 'picked', 'main~1');
   await git('cherry-pick', '-n', 'main');
@@ -215,7 +217,7 @@ test('a branch that rewrites a landed slice without trailers and drops its test 
 });
 
 // spec: change-progress / Squashed landing without a merge commit
-test('a squashed landing gh gives no merge commit for still fails, without calling the branch behind', async t => {
+test('a squashed landing gh gives no merge commit for still fails, without the missing-record hint', async t => {
   const { root, git, check, pulls } = await fixture(t, { gh: true });
   await put(root, 'src/storage.mjs', 'export const storage = true;\n');
   await commitAll(git, 'Build storage (#7)');
@@ -224,7 +226,7 @@ test('a squashed landing gh gives no merge commit for still fails, without calli
   const result = await check();
   assert.equal(result.code, 1, result.stdout);
   assert.ok(missing(result.stderr, 'Radius'), result.stderr);
-  assert.ok(!result.stderr.includes('after this tree'), result.stderr);
+  assert.ok(!result.stderr.includes('no record of that landing'), result.stderr);
   assert.ok(!missing(result.stderr, 'Ordering'), result.stderr);
 });
 
