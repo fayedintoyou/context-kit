@@ -7,7 +7,7 @@ slices:
     implements:
       - repository-registry / Generated routing skill
       - repository-registry / Repository keywords and name bounds
-      - repository-registry / Effective trigger names
+      - repository-registry / Routing skill renders effective trigger names
       - repository-registry / Routing skill keyword budget
       - repository-registry / Routing skill shards
       - repository-registry / Standard frontmatter for generated skills
@@ -39,22 +39,27 @@ slices:
       - repository-registry / Routing without a workspace path
     depends_on: [skill-frontmatter]
     paths: ["lib/install.mjs", "lib/repos.mjs", "lib/operations.mjs", "test/e2e/agents.test.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
-  - id: setup-and-which
-    title: repos setup, scan depth and worktrees, repos which and which_repo
+  - id: local-only
+    title: Local-only tools - repos which, which_repo, and withholding local-only tools over HTTP
+    implements:
+      - repository-registry / Which repository is this
+      - repository-registry / Which repository over MCP
+      - remote-access / Local-only tools
+      - remote-access / HTTP transport
+    paths: ["lib/repos.mjs", "lib/operations.mjs", "lib/mcp/**", "bin/mcp.mjs", "bin/hub.mjs", "test/e2e/repos.test.mjs", "test/e2e/remote.test.mjs", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
+  - id: setup-flow
+    title: repos setup, scan depth and worktrees
     implements:
       - repository-registry / Scan a directory once
       - repository-registry / Machine setup
       - repository-registry / Worktrees are not recorded checkouts
-      - repository-registry / Which repository is this
-      - repository-registry / Which repository over MCP
-    paths: ["lib/repos.mjs", "lib/operations.mjs", "lib/mcp/**", "bin/hub.mjs", "test/e2e/repos.test.mjs", "test/e2e/remote.test.mjs", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
+    paths: ["lib/repos.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
   - id: remote-paths
-    title: Remote policy - local-only tools and serving-machine paths over HTTP
+    title: list_repos over HTTP names the serving machine's paths
     implements:
       - remote-access / HTTP transport
-      - remote-access / Local-only tools
       - remote-access / Serving machine paths
-    depends_on: [setup-and-which]
+    depends_on: [local-only]
     paths: ["lib/operations.mjs", "lib/mcp/**", "bin/mcp.mjs", "test/e2e/remote.test.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/remote.md", "openspec/changes/machine-setup/tasks.md"]
   - id: global-rule
     title: Optional Claude Code user rule

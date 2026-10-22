@@ -91,9 +91,15 @@ separators and the tail.
 
 **Input: effective trigger names.** The renderer asks the registry for each
 repository's effective names (titles, aliases, keywords), never the raw concept
-fields. Until another change narrows them, every valid name is effective.
-`hub-federation` will narrow them with an ADDED requirement: workspace hubs win
-over mounts, and a name two mounts claim is excluded, reachable by qualified id.
+fields. The registry contract is `hub-federation`'s requirement
+`repository-registry / Effective trigger names`: workspace hubs win over mounts,
+and a name two mounts claim, keywords included, is dropped with a warning and
+reachable by qualified id. This change's renderer requirement, *Routing skill
+renders effective trigger names*, only consumes it. Until #48 lands, effective
+means every valid name. Keywords are triggers only, never identifiers.
+Workspace-local collisions (a keyword equal to another repository's title or
+alias) fail `validate` here. #48 owns mount collisions (warning and drop). Either
+way a filtered keyword never reaches the budget.
 This change only depends on the registry returning, per repository,
 `{title|null, aliases[], keywords[]}`, already filtered. A name over its length
 bound (see below) is never effective. A repository's **primary name** is its
@@ -339,7 +345,10 @@ see (decision 11).
 `transport: 'http'` in the selection, plus `machine` from `--machine-name` or
 `os.hostname()`. Operations gain a `localOnly: true` flag beside `cliOnly`, and
 `operations()` drops every local-only tool over HTTP, so a call to one is an
-unknown tool. The rule is "tools that resolve a path or checkout on this machine
+unknown tool. This generic foundation (the flag, transport
+filtering and `which_repo` as its first user) is the dependency-free `local-only`
+slice, so `repo-context`'s open slice can build on it early. `servingMachinePath`
+follows in `remote-paths`. The rule is "tools that resolve a path or checkout on this machine
 are local-only". `which_repo` is the first. `repo-context`'s `open_repo` and
 `context_pack` declare the flag in that change; this one doesn't depend on their
 names. `list_repos` over HTTP returns `machine` and `servingMachinePath`, and its
@@ -381,16 +390,17 @@ lands, the slices merge into an integration branch, `machine-setup`, which merge
 to `main` once every scenario is linked (the `remote-mcp-access` precedent).
 
 **Landing order across the sibling plans** (coordinator, 2026-10-22):
-1. `slice-aware-links`;
-2. this change's routing and frontmatter slices (`skill-frontmatter`,
-   `portable-entry`);
+1. `slice-aware-links` (#51);
+2. this change's `skill-frontmatter`, `portable-entry` and `local-only` slices;
 3. `repo-context`'s open/routing slices, which plug `repos open`/`open_repo` into
    decision 8 and mark them local-only;
 4. `hub-federation`'s `mounted-repositories`, which narrows the effective trigger
    names.
 
-The other slices here are independent of 3 and 4. `remote-mcp-access` must archive
-before this change archives (decision 11). Whichever change archives later rebases
+The other slices here are independent of 3 and 4. **Pre-main gate:** no part of
+this change merges to `main` until `remote-mcp-access` has archived, because
+this change's `remote-access` delta fails the archive rehearsal before then
+(decision 11, task 0.1). Whichever change archives later rebases
 its MODIFIED routing requirements (`Generated routing skill`, `Routing skill
 guidance`) on the one before.
 

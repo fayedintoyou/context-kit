@@ -1,9 +1,13 @@
 # Tasks
 
+## 0. Landing gate
+
+- [ ] 0.1 Before any part of this change (plan or slice) merges to `main`, confirm `remote-mcp-access` is archived (`openspec/specs/remote-access/spec.md` exists on `main`) and `node bin/hub.mjs --root . specs archive --rehearse` reports no issue for `machine-setup`; until then this change's `remote-access` delta makes the rehearsal fail
+
 ## 1. Routing skill frontmatter (slice `skill-frontmatter`)
 
 - [ ] 1.1 Add optional `keywords` and name bounds (title 80, alias and keyword 60 code points; no keyword equal to another repository's name) to the registry and `validate`, and document them in `docs/format.md`; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Invalid keywords and long names`
-- [ ] 1.2 Have the registry return each repository's effective trigger names (all valid names by default) and its primary name with the fallbacks; verify `test/e2e/repos.test.mjs` linked to `repository-registry / All names are effective by default` and `Title not usable`
+- [ ] 1.2 Render only the registry's effective trigger names (all valid names until `hub-federation` defines its registry contract), with the primary-name fallbacks; verify `test/e2e/repos.test.mjs` linked to `repository-registry / All names are effective by default`, `Title not usable` and `Invalid keyword never rendered`
 - [ ] 1.3 Implement the single partition-and-fill algorithm (code points, fixed text and separators counted, reserved shard marker) and return `skipped` names from `generatedSkills`, `repos sync` and `agents install`; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Aliases beyond the budget`, `Exact boundary`, `Characters, not bytes`, `Everything fits`, `Skill names every repository` and `Keywords reach the description`
 - [ ] 1.4 Generate, install and remove shards; verify `test/e2e/agents.test.mjs` linked to `repository-registry / Too many repositories for one`, `Longest allowed names` and `Shards shrink back`
 - [ ] 1.5 Emit only standard frontmatter keys and check the Agent Skills rules in the test; add an optional `npm run skills-ref` script that runs a pinned `skills-ref validate` on rendered skills when `uv` is available; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Standard keys only`
@@ -33,19 +37,23 @@
 - [ ] 4.4 Report `moved` in `agents status` for records naming another root, make the launcher fail with `WORKSPACE_MOVED`, and repair on install; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Move and repair`
 - [ ] 4.5 Document the launcher, one workspace per user, and moving a workspace in `repositories.md`, `troubleshooting.md` and `commands.md`; verify `node bin/hub.mjs validate`
 
-## 5. New-machine flow (slice `setup-and-which`)
+## 5. Local-only tools (slice `local-only`, no dependencies)
 
-- [ ] 5.1 Add `repos scan --depth` (default 1, at most 6), pruning hidden directories, `node_modules` and found checkouts; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Scan finds checkouts` and `Deeper scan`
-- [ ] 5.2 Record a linked worktree's main worktree from `git worktree list --porcelain` (realpath-normalized), and nothing for a bare or missing main; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Scan finds a worktree` and `Worktree of a bare or missing main`
-- [ ] 5.3 Add `repos setup [--scan <dir>]... [--depth <n>] [--clone <repos>] [--ask]` (CLI only) with prompts on a terminal or `--ask`, then refresh skills; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Fresh machine without prompts`, `Approved at a prompt` and `Named clone`
-- [ ] 5.4 Add `repos which [<path>]` and stdio `which_repo` (innermost checkout, no fallback to an enclosing one, `origin` breaking ties, else `ambiguous`); verify `test/e2e/repos.test.mjs` linked to `repository-registry / Nested subdirectory`, `Linked worktree`, `Unrecorded checkout`, `Innermost checkout decides`, `Several registered remotes`, `Not a repository of the user's` and `Agent asks where it is`
-- [ ] 5.5 Document setup, depth, worktrees and `which` in `repositories.md`, `commands.md` and the `bin/hub.mjs` usage; verify `test/e2e/help.test.mjs` passes
+- [ ] 5.1 Add `repos which [<path>]` and stdio `which_repo` (innermost checkout via `git rev-parse --show-toplevel`, main worktree via `git worktree list --porcelain`, realpath-normalized, no fallback to an enclosing checkout, `origin` breaking ties, else `ambiguous`); verify `test/e2e/repos.test.mjs` linked to `repository-registry / Nested subdirectory`, `Linked worktree`, `Unrecorded checkout`, `Innermost checkout decides`, `Several registered remotes`, `Not a repository of the user's` and `Agent asks where it is`
+- [ ] 5.2 Add the `localOnly` operation flag (set on `which_repo`), pass the transport into the selection, and withhold local-only tools over HTTP, so `repo-context` can flag its tools on top; verify `test/e2e/remote.test.mjs` linked to `remote-access / Same tools over HTTP`, `Local-only tools stay local` and `Every local-only tool is withheld`
+- [ ] 5.3 Document `which` and the local-only rule in `repositories.md`, `remote.md`, `commands.md` and the `bin/hub.mjs` usage; verify `test/e2e/help.test.mjs` passes
 
-## 6. Remote policy (slice `remote-paths`)
+## 6. New-machine flow (slice `setup-flow`)
 
-- [ ] 6.1 Add the `localOnly` operation flag, pass the transport into the selection, and withhold local-only tools over HTTP; verify `test/e2e/remote.test.mjs` linked to `remote-access / Same tools over HTTP`, `Local-only tools stay local` and `Every local-only tool is withheld`
-- [ ] 6.2 Over HTTP, return `machine` (`--machine-name`, default the host name) and `servingMachinePath` from `list_repos`, with the HTTP description; verify `test/e2e/remote.test.mjs` linked to `remote-access / Remote client sees whose paths they are` and `test/e2e/repos.test.mjs` linked to `remote-access / Local clients unchanged`
-- [ ] 6.3 Document the local-only rule and labeled paths in `skills/context-kit/references/remote.md`; verify `node bin/hub.mjs validate`
+- [ ] 6.1 Add `repos scan --depth` (default 1, at most 6), pruning hidden directories, `node_modules` and found checkouts; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Scan finds checkouts` and `Deeper scan`
+- [ ] 6.2 Record a linked worktree's main worktree from `git worktree list --porcelain` (realpath-normalized), and nothing for a bare or missing main; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Scan finds a worktree` and `Worktree of a bare or missing main`
+- [ ] 6.3 Add `repos setup [--scan <dir>]... [--depth <n>] [--clone <repos>] [--ask]` (CLI only) with prompts on a terminal or `--ask`, then refresh skills; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Fresh machine without prompts`, `Approved at a prompt` and `Named clone`
+- [ ] 6.4 Document setup, depth and worktrees in `repositories.md`, `commands.md` and the `bin/hub.mjs` usage; verify `test/e2e/help.test.mjs` passes
+
+## 6b. Serving-machine paths (slice `remote-paths`, after `local-only`)
+
+- [ ] 6.5 Over HTTP, return `machine` (`--machine-name`, default the host name) and `servingMachinePath` from `list_repos`, with the HTTP description; verify `test/e2e/remote.test.mjs` linked to `remote-access / Remote client sees whose paths they are` and `test/e2e/repos.test.mjs` linked to `remote-access / Local clients unchanged`
+- [ ] 6.6 Document labeled paths in `skills/context-kit/references/remote.md`; verify `node bin/hub.mjs validate`
 
 ## 7. Optional global rule (slice `global-rule`)
 
@@ -54,7 +62,7 @@
 
 ## 8. Integration
 
-- [ ] 8.1 After `remote-mcp-access` is archived, run `npm test` (every scenario linked), `node bin/hub.mjs validate`, `npx openspec validate machine-setup --strict` and `specs archive --rehearse` on the integration branch
+- [ ] 8.1 After the gate in 0.1 holds, run `npm test` (every scenario linked), `node bin/hub.mjs validate`, `npx openspec validate machine-setup --strict` and `specs archive --rehearse` on the integration branch
 - [ ] 8.2 Upgrade the owner's workspace, run `agents install --agent claude,codex`, and check from a session started in `~` that naming a repository routes to its checkout in Claude Code and Codex; record the outcome on the integration PR
 
 ## Workflow follow-up

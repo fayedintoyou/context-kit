@@ -33,8 +33,8 @@ A Repository concept MAY list `keywords`: topic phrases people use for it that a
 - **WHEN** one Repository concept has `keywords: portfolio` (not a list), another an 81-character title, and a third a keyword equal to another repository's alias
 - **THEN** `validate` fails naming each concept and field
 
-### Requirement: Effective trigger names
-The routing skill SHALL build its description only from each repository's effective trigger names: the titles, aliases and keywords the registry assigns to that repository for routing. Unless another requirement narrows them, every valid title, alias and keyword is effective. A repository with no effective title SHALL be named by its first effective alias, or else by its id.
+### Requirement: Routing skill renders effective trigger names
+The routing skill SHALL build its description only from each repository's effective trigger names as the registry defines them (until a registry requirement narrows them, every valid title, alias and keyword), never from raw concept fields, so a name the registry filters out never reaches the budget. A repository with no effective title SHALL be named by its first effective alias, or else by its id.
 
 #### Scenario: All names are effective by default
 - **WHEN** a workspace's repositories have titles, aliases and keywords within the bounds and the skill is rendered
@@ -43,6 +43,10 @@ The routing skill SHALL build its description only from each repository's effect
 #### Scenario: Title not usable
 - **WHEN** one repository's title is over 80 characters and it has an alias, and another's is over 80 with no alias, and the skill is rendered
 - **THEN** the first is named by its alias, the second by its id, and neither long title appears in the description
+
+#### Scenario: Invalid keyword never rendered
+- **WHEN** a repository lists a 61-character keyword and a keyword equal to another repository's alias, and a caller runs `repos sync`
+- **THEN** `validate` fails naming both, neither keyword appears in the description, and neither is reported as skipped by the budget
 
 ### Requirement: Routing skill keyword budget
 Each routing skill description SHALL be at most 1,024 characters (Unicode code points) including its fixed text and separators. It SHALL name each repository's primary name first, then fill rounds in order (every first alias, every second, and so on, then keywords the same way), skipping a name that does not fit. `repos sync` and `agents install` SHALL report every skipped name with its repository.
