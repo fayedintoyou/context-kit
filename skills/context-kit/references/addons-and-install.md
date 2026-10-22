@@ -23,7 +23,7 @@ Workspace addons carry skills only, never code.
 
 ```sh
 npm run agents -- install [--agent claude,codex] [--scope user|project] [--project <dir>]
-                          [--name <server>] [--link] [--allow-write] [--force] [--global-mcp]
+                          [--name <server>] [--link] [--allow-write] [--force] [--adopt] [--global-mcp]
 npm run agents -- status
 npm run agents -- uninstall [--agent claude,codex]
 ```
@@ -75,15 +75,21 @@ npm run agents -- uninstall [--agent claude,codex]
   completed by the next one (`unchanged`, `recovered: true`) only when that very
   file is in place. A copy with no record, or one an equal hash alone would match,
   is never claimed: it stays `SKILL_FOREIGN`.
-- Each record remembers which copy it installed: device, inode and, where the
-  platform reports it, birth time (macOS; Linux through statx on file systems such
-  as ext4). If you delete a copy and something else puts one there, even an
-  identical one or another workspace's, status reports it `replaced`; install
-  treats it as foreign, and uninstall and cleanup leave it (`skipped`,
-  `SKILL_FOREIGN`), even with `--force`. Without a birth time, a reused inode
-  can't be told apart. Records from older cores are judged by content until the
-  next install adds an identity. Moving your home to another disk changes every
-  identity; reinstall with `--force` to take the copies back.
+- Each record remembers which copy it installed: inode and birth time where the
+  platform reports one (macOS; Linux through statx on file systems such as ext4),
+  otherwise device and inode. A path that now holds another file is `replaced`,
+  and its record is kept, so status and every install name it with the remedy:
+  - The installed content (a Time Machine or Migration Assistant restore, `cp -R`,
+    a sync service, a dotfile manager's symlink to it) is taken back by the
+    workspace that owns the launcher: `unchanged`, `readopted: true`. Since one
+    workspace per user owns it, another workspace's copies are never claimed.
+    Without the launcher, it is reported `SKILL_REPLACED` until `install --adopt`
+    takes back such copies (never edited ones, and never the launcher itself).
+  - Different content stays foreign (`SKILL_REPLACED`): remove it and reinstall,
+    or `--force` to replace it. Uninstall and cleanup leave it, even with `--force`.
+  - A replaced legacy Codex copy is left in place and its record dropped.
+  Without a birth time, a reused inode can't be told apart. Records from older
+  cores are judged by content until the next install adds an identity.
 - `--link` symlinks skills so edits apply immediately (not possible in the shared
   location when a skill needs adapted frontmatter).
 - Project scope keeps Claude Code's server private to the project; Codex needs

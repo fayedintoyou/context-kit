@@ -1142,25 +1142,101 @@ async function editRecords(workspace, edit) {
   await writeFile(recordsFile(workspace), JSON.stringify(state));
 }
 
+// A restore from a backup, a migration or `cp -R` recreates every skill directory: new
+// inodes, the installed content.
+async function restoreCopies(base, directory) {
+  const backup = join(base, `backup-${Date.now()}`);
+  await promisify(execFile)('cp', ['-R', directory, backup]);
+  await rm(directory, { recursive: true });
+  await promisify(execFile)('cp', ['-R', backup, directory]);
+}
+
 // spec: agent-installation / Foreign and edited skills are preserved
-test('copies put back after the installed ones were deleted are not this install\'s, even when identical', async t => {
+test('restored copies with the installed content are taken back by the workspace that owns the launcher', async t => {
+  const { base, env, workspace, run, agents } = await fixture(t);
+  const shared = join(env.HOME, '.agents/skills');
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  await restoreCopies(base, shared);
+  const status = await agents('status');
+  const skills = status.json.items.filter(item => item.kind === 'skill');
+  assert.ok(skills.every(item => item.state === 'replaced' && /agents install takes it back/.test(item.reason)), JSON.stringify(skills));
+  const before = await records(workspace);
+  const again = await agents('install', '--agent', 'codex');
+  const results = again.json.results.filter(item => item.kind === 'skill');
+  assert.ok(results.every(item => item.action === 'unchanged' && item.readopted), JSON.stringify(results));
+  // The records are kept, now naming the restored copies.
+  const after = await records(workspace);
+  assert.deepEqual(after.map(item => item.path).sort(), before.map(item => item.path).sort());
+  assert.ok((await agents('status')).json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+  // And they keep updating.
+  await repository(workspace, 'garden', { title: 'the garden', resource: 'https://github.com/me/garden' });
+  const synced = await run(['--root', workspace, 'repos', 'sync']);
+  assert.equal(byAction(synced.json.results)['codex:skill:my-repos'], 'updated');
+  assert.match(await readFile(join(shared, 'my-repos/SKILL.md'), 'utf8'), /the garden/);
+});
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('a replaced copy with other content stays foreign, named on every install, and --adopt does not take it', async t => {
   const { base, env, workspace, agents } = await fixture(t);
   const shared = join(env.HOME, '.agents/skills');
   assert.equal((await agents('install', '--agent', 'codex')).code, 0);
-  // The user deletes the installed copies and puts identical ones of their own in their place.
-  const theirs = join(base, 'theirs');
-  await promisify(execFile)('cp', ['-R', shared, theirs]);
-  await rm(shared, { recursive: true });
-  await promisify(execFile)('cp', ['-R', theirs, shared]);
-  const status = await agents('status');
-  assert.ok(status.json.items.filter(item => item.kind === 'skill').every(item => item.state === 'replaced'), JSON.stringify(status.json.items));
+  await restoreCopies(base, shared);
+  await writeFile(join(shared, 'reflect/SKILL.md'), 'mine');
+  for (const flags of [[], ['--adopt']]) {
+    const result = await agents('install', '--agent', 'codex', ...flags);
+    const reflect = skillResults(result.json.results, 'reflect')[0];
+    assert.deepEqual([reflect.action, reflect.code, reflect.state], ['conflict', 'SKILL_REPLACED', 'replaced'], flags.join(' '));
+    assert.match(reflect.reason, /different copy .* remove it and run agents install, or pass --force/);
+    assert.ok(skillResults(result.json.results, 'context-kit').every(item => item.action === 'unchanged'));
+  }
+  assert.equal(await readFile(join(shared, 'reflect/SKILL.md'), 'utf8'), 'mine');
+  assert.ok((await records(workspace)).some(item => item.name === 'reflect'), 'the record is kept');
   const removed = await agents('uninstall', '--force');
-  const skills = removed.json.results.filter(item => item.kind === 'skill');
-  assert.ok(skills.length && skills.every(item => item.action === 'skipped' && item.code === 'SKILL_FOREIGN'), JSON.stringify(skills));
-  assert.deepEqual((await readdir(shared)).sort(), BUNDLED);
-  assert.deepEqual((await readFile(recordsFile(workspace), 'utf8')).includes('"kind": "skill"'), false, 'their records are dropped');
-  const installed = await agents('install', '--agent', 'codex');
-  assert.ok(installed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'conflict' && item.code === 'SKILL_FOREIGN'));
+  assert.deepEqual(skillResults(removed.json.results, 'reflect').map(item => [item.action, item.code]), [['skipped', 'SKILL_REPLACED']]);
+  assert.deepEqual(await readdir(shared), ['reflect']);
+});
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('without the launcher, restored copies are named with --adopt, which takes back only the installed content', async t => {
+  const { base, env, agents } = await fixture(t);
+  const shared = join(env.HOME, '.agents/skills');
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  // The launcher now is someone else's file, so ownership can't be shown.
+  await writeFile(join(env.HOME, '.local/bin/context-kit'), '#!/bin/sh\necho mine\n');
+  await restoreCopies(base, shared);
+  await writeFile(join(shared, 'reflect/SKILL.md'), 'mine');
+  const named = await agents('install', '--agent', 'codex');
+  const kit = skillResults(named.json.results, 'context-kit')[0];
+  assert.deepEqual([kit.action, kit.code], ['conflict', 'SKILL_REPLACED']);
+  assert.match(kit.reason, /pass --adopt to take it back/);
+  const adopted = await agents('install', '--agent', 'codex', '--adopt');
+  for (const name of BUNDLED) {
+    const result = skillResults(adopted.json.results, name)[0];
+    if (name === 'reflect') assert.deepEqual([result.action, result.code], ['conflict', 'SKILL_REPLACED']);
+    else assert.deepEqual([result.action, result.readopted], ['unchanged', true], name);
+  }
+  assert.equal(adopted.json.results.find(item => item.kind === 'launcher').action, 'conflict', 'the launcher is not taken over');
+  assert.equal(await readFile(join(env.HOME, '.local/bin/context-kit'), 'utf8'), '#!/bin/sh\necho mine\n');
+});
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('skill directories a dotfile manager replaced with symlinks to the installed content are taken back', async t => {
+  const { base, env, agents } = await fixture(t);
+  const shared = join(env.HOME, '.agents/skills');
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  const dotfiles = join(base, 'dotfiles/skills');
+  await mkdir(dirname(dotfiles), { recursive: true });
+  await rename(shared, dotfiles);
+  await mkdir(shared);
+  for (const name of BUNDLED) await symlink(join(dotfiles, name), join(shared, name));
+  const again = await agents('install', '--agent', 'codex');
+  assert.ok(again.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'unchanged' && item.readopted), JSON.stringify(again.json.results));
+  assert.ok((await agents('status')).json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+  const removed = await agents('uninstall');
+  assert.ok(removed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'removed'));
+  assert.deepEqual(await readdir(shared), []);
+  assert.deepEqual((await readdir(dotfiles)).sort(), BUNDLED, 'the dotfiles are untouched');
 });
 
 // spec: agent-installation / Foreign and edited skills are preserved
@@ -1172,12 +1248,34 @@ test('a workspace whose copies were deleted does not remove the identical ones a
   await rm(shared, { recursive: true });
   const second = join(base, 'second');
   await run(['init', second]);
-  assert.equal((await run(['--root', second, 'agents', 'install', '--agent', 'codex'])).code, 0);
+  // One workspace per user: the second takes over with --force, launcher included.
+  assert.equal((await run(['--root', second, 'agents', 'install', '--agent', 'codex', '--force'])).code, 0);
   const removed = await agents('uninstall');
-  assert.ok(removed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'skipped' && item.code === 'SKILL_FOREIGN'));
+  assert.ok(removed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'skipped' && item.code === 'SKILL_REPLACED'), JSON.stringify(removed.json.results));
   assert.deepEqual((await readdir(shared)).sort(), BUNDLED);
   const status = await run(['--root', second, 'agents', 'status']);
   assert.ok(status.json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+});
+
+// spec: agent-installation / Codex skills move to the shared location
+test('a legacy Codex copy replaced since install is left in place and its record dropped', async t => {
+  const machine = await fixture(t);
+  const { base, env, workspace, agents } = machine;
+  const legacy = await legacyCodexInstall(machine, join(base, 'codex'));
+  // Its records keep the identities the move kept; one copy is recreated, as a restore would.
+  const backup = join(base, 'reflect-backup');
+  await promisify(execFile)('cp', ['-R', join(legacy, 'reflect'), backup]);
+  await rm(join(legacy, 'reflect'), { recursive: true });
+  await promisify(execFile)('cp', ['-R', backup, join(legacy, 'reflect')]);
+  for (const flags of [[], ['--force']]) {
+    const result = await agents('install', '--agent', 'codex', ...flags);
+    const reflect = result.json.results.find(item => item.path === join(legacy, 'reflect'));
+    if (!flags.length) assert.deepEqual([reflect.action, reflect.code], ['skipped', 'SKILL_FOREIGN']);
+    assert.ok(await exists(join(legacy, 'reflect/SKILL.md')), flags.join(' '));
+  }
+  assert.deepEqual(await readdir(legacy), ['reflect']);
+  assert.equal((await records(workspace)).some(item => item.path === join(legacy, 'reflect')), false);
+  assert.deepEqual((await readdir(join(env.HOME, '.agents/skills'))).sort(), BUNDLED);
 });
 
 // Linux's ext4 can give a new file the inode of a deleted one; only the birth time tells them
@@ -1193,8 +1291,10 @@ test('a copy whose birth time differs from the recorded one is not this install\
   if (recorded.identity.birth === undefined) return t.skip('this file system reports no birth time');
   await editRecords(workspace, item => item.name === 'reflect' ? { ...item, identity: { ...item.identity, birth: '1' } } : null);
   assert.equal((await agents('status')).json.items.find(item => item.name === 'reflect').state, 'replaced');
+  // Without the launcher's evidence, a copy that is merely the same content isn't taken back.
+  await writeFile(join(env.HOME, '.local/bin/context-kit'), '#!/bin/sh\necho mine\n');
   const removed = await agents('uninstall');
-  assert.deepEqual(skillResults(removed.json.results, 'reflect').map(item => [item.action, item.code]), [['skipped', 'SKILL_FOREIGN']]);
+  assert.deepEqual(skillResults(removed.json.results, 'reflect').map(item => [item.action, item.code]), [['skipped', 'SKILL_REPLACED']]);
   assert.ok(await exists(join(shared, 'reflect')));
   assert.equal(await exists(join(shared, 'context-kit')), false);
 
@@ -1265,4 +1365,20 @@ test('install sweeps launcher temporaries over an hour old by their exact name, 
   for (const name of [stale, fresh, ...others]) await writeFile(join(directory, name), 'temporary\n');
   assert.equal((await agents('install')).code, 0);
   assert.deepEqual((await readdir(directory)).sort(), ['context-kit', fresh, ...others].sort());
+});
+
+// Device numbers aren't stable on btrfs subvolumes, NFS or in containers; with a birth time,
+// inode and birth time decide. The record is given another device number, as such a remount
+// would present it.
+// spec: agent-installation / Foreign and edited skills are preserved
+test('a changed device number alone does not make a copy replaced when birth times are kept', async t => {
+  const { env, workspace, agents } = await fixture(t);
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  const recorded = JSON.parse(await readFile(recordsFile(workspace), 'utf8')).items.find(item => item.name === 'reflect');
+  if (recorded.identity.birth === undefined) return t.skip('this file system reports no birth time');
+  await editRecords(workspace, item => item.identity ? { ...item, identity: { ...item.identity, dev: '424242' } } : null);
+  assert.ok((await agents('status')).json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+  const removed = await agents('uninstall');
+  assert.ok(removed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'removed'));
+  assert.deepEqual(await readdir(join(env.HOME, '.agents/skills')), []);
 });

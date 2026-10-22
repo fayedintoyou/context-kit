@@ -9,8 +9,8 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   help [topic]
   init <new-directory> [--kit <npm-spec>] [--addons a,b|none]
   setup <new-directory> [--kit <npm-spec>] [--addons a,b|none] [agents install options]
-  agents install [--agent claude,codex] [--scope user|project] [--project <dir>] [--name <server>] [--link] [--force] [--allow-write] [--global-mcp]
-  agents status | agents uninstall [--agent claude,codex] [--force]
+  agents install [--agent claude,codex] [--scope user|project] [--project <dir>] [--name <server>] [--link] [--force] [--adopt] [--allow-write] [--global-mcp]
+  agents status | agents uninstall [--agent claude,codex] [--force] [--adopt]
   list | validate
   context <hub-id> [--inbox]
   browse <hub-id> [directory] [--offset <n>] [--inbox]
@@ -31,16 +31,16 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
       [--skip-review "<reason>"] [--no-checks "<reason>"] [--bootstrap-policy]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
-  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--allow-write', '--global-mcp', '--name', '--help', '--path', '--ref', '--alias', '--title', '--concept', '--description', '--ready', '--rehearse',
+  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--adopt', '--allow-write', '--global-mcp', '--name', '--help', '--path', '--ref', '--alias', '--title', '--concept', '--description', '--ready', '--rehearse',
     '--sha', '--repo', '--wait', '--timeout', '--method', '--skip-review', '--no-checks', '--bootstrap-policy', '--depth', '--scan', '--clone', '--ask'], ['--scan']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
     const [command, ...args] = positional;
     let result;
     const list = value => value === undefined ? undefined : value === 'none' ? [] : value.split(',').map(item => item.trim()).filter(Boolean);
-    const installFlags = ['--agent', '--scope', '--project', '--name', '--link', '--force', '--allow-write', '--global-mcp'];
+    const installFlags = ['--agent', '--scope', '--project', '--name', '--link', '--force', '--adopt', '--allow-write', '--global-mcp'];
     const installOptions = () => ({ agents: list(options['--agent']), scope: options['--scope'], project: options['--project'], name: options['--name'],
-      link: Boolean(options['--link']), force: Boolean(options['--force']), allowWrite: Boolean(options['--allow-write']), globalMcp: Boolean(options['--global-mcp']) });
+      link: Boolean(options['--link']), force: Boolean(options['--force']), adopt: Boolean(options['--adopt']), allowWrite: Boolean(options['--allow-write']), globalMcp: Boolean(options['--global-mcp']) });
     if (!['agents', 'setup'].includes(command) && installFlags.some(flag => options[flag])) fail('INVALID_INPUT', 'Install options apply only to agents and setup');
     if (options['--addons'] && !['init', 'setup'].includes(command)) fail('INVALID_INPUT', '--addons applies only to init and setup');
     if ((command === 'init' || command === 'setup') && args.length === 1) {
