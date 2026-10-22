@@ -53,6 +53,9 @@ A concept with `type: Repository` registers one of your repositories. Its
 URL, or `file://` for a local one), optional `aliases` lists other names for it,
 and optional `keywords` lists topic phrases that aren't names ("personal site").
 Keywords only help agents pick the routing skill; commands never accept them.
+The `resource` never carries credentials: `validate` rejects one with userinfo
+(other than an SSH login such as `git@`), a query or a fragment, and `repos add`
+stores only the clean form.
 `validate` rejects a Repository without a git upstream, with `aliases` that is not
 a list of names or `keywords` that is not a list of strings, sharing an alias or
 title with another, with a title over 80 characters or an alias or keyword over

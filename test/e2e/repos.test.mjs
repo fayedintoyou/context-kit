@@ -377,9 +377,9 @@ test('no secret placed anywhere in a remote URL reaches setup, locate or validat
   assert.equal(locate.error.message, `${wrong} has remotes github.com/o/r and ${unrecognized} unrecognized, not github.com/x/target`);
   const validate = await cli('validate');
   assert.equal(validate.error.code, 'INVALID_REPOSITORY');
-  // The routing skill and repos listing show a hub concept's resource as written; that is
-  // their own requirement's output, not this one's.
-  for (const text of [setup.stderr, JSON.stringify(setup.json), JSON.stringify(locate.error), JSON.stringify(validate.error)].map(text => text.toLowerCase())) {
+  // The listing shows each resource's clean form.
+  const listing = await cli('repos');
+  for (const text of [setup.stderr, JSON.stringify(setup.json), JSON.stringify(locate.error), JSON.stringify(validate.error), JSON.stringify(listing.json)].map(text => text.toLowerCase())) {
     for (const secret of secrets) assert.ok(!text.includes(secret.toLowerCase()), `${secret} shown in ${text.slice(Math.max(0, text.indexOf(secret.toLowerCase()) - 200), text.indexOf(secret.toLowerCase()) + 50)}`);
   }
 });
@@ -832,4 +832,147 @@ test('an agent registers a repository over MCP only when writes are allowed', as
   const added = await writer.callTool({ name: 'add_repo', arguments: { id: 'personal/main', upstream: 'https://github.com/me/garden', aliases: ['garden'] } });
   assert.equal(added.isError, undefined, JSON.stringify(added.content));
   assert.match(await readFile(join(workspace, 'hubs/personal/garden.md'), 'utf8'), /by: repo-agent\/2\.0\.0/);
+});
+
+// Every file under the given directories, as text, with its path.
+async function filesUnder(...directories) {
+  const { readdir } = await import('node:fs/promises');
+  const files = [];
+  const walk = async directory => {
+    for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await walk(path);
+      else if (entry.isFile()) files.push({ path, text: await readFile(path, 'utf8') });
+    }
+  };
+  for (const directory of directories) await walk(directory);
+  return files;
+}
+// Asserts no form of any secret (as written, lower or upper case) is in any of the texts.
+function noSecrets(secrets, entries) {
+  for (const [where, text] of entries) {
+    const lower = String(text).toLowerCase();
+    for (const secret of secrets) assert.ok(!lower.includes(secret.toLowerCase()), `${secret} in ${where}`);
+  }
+}
+// The CLI's raw stdout and stderr, whatever its exit code.
+async function rawCli(env, workspace, ...args) {
+  try { const { stdout, stderr } = await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, ...args], { env }); return { code: 0, stdout, stderr }; }
+  catch (error) { return { code: error.code, stdout: error.stdout, stderr: error.stderr }; }
+}
+const TOKEN = 'ghp_' + 'Fake9Secret8Token7Value6For5Tests4321';
+
+// spec: repository-registry / Checkout remote with a token
+test('repos add --path stores a token-carrying origin only in its clean form, everywhere', async t => {
+  const { base, env, workspace, checkout } = await fixture(t);
+  const path = await checkout(join(base, 'code/billing'), { origin: `https://faye:${TOKEN}@github.com/acme/billing.git?access_token=${TOKEN}#${TOKEN}` });
+  const added = await rawCli(env, workspace, 'repos', 'add', 'personal/main', '--path', path, '--alias', 'billing');
+  assert.equal(added.code, 0, added.stderr);
+  const result = JSON.parse(added.stdout);
+  assert.equal(result.repository.upstream, 'https://github.com/acme/billing.git');
+  assert.match(result.removed, /carried credentials, a query or a fragment; only https:\/\/github\.com\/acme\/billing\.git was stored/);
+  const concept = await readFile(join(workspace, 'hubs/personal/billing.md'), 'utf8');
+  assert.equal(parseYaml(concept.match(/^---\n([\s\S]*?)\n---\n/)[1]).resource, 'https://github.com/acme/billing.git');
+  assert.match(await readFile(join(workspace, 'hubs/personal/index.md'), 'utf8'), /\[billing\]\(billing\.md\) - Repository https:\/\/github\.com\/acme\/billing\.git\./);
+  assert.ok((await readFile(join(workspace, '.state/generated/my-repos/SKILL.md'), 'utf8')).includes(`https://github.com/acme/billing.git at ${path}`));
+  const listed = await rawCli(env, workspace, 'repos');
+  const validate = await rawCli(env, workspace, 'validate');
+  assert.equal(validate.code, 0, validate.stderr);
+  noSecrets([TOKEN, 'faye:'], [...(await filesUnder(workspace, env.HOME)).map(file => [file.path, file.text]),
+    ['add stdout', added.stdout], ['add stderr', added.stderr], ['repos', listed.stdout + listed.stderr], ['validate', validate.stdout + validate.stderr]]);
+});
+
+// spec: repository-registry / Agent adds an upstream with a token
+test('add_repo over MCP stores the clean form of an upstream holding a token', async t => {
+  const { env, workspace } = await fixture(t);
+  const client = new Client({ name: 'repo-agent', version: '2.0.0' });
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', workspace, '--allow-write'], env, stderr: 'pipe' }));
+  t.after(() => client.close());
+  const added = await client.callTool({ name: 'add_repo', arguments: { id: 'personal/main', upstream: `https://${TOKEN}@GitHub.com/Me/Garden?private_token=${TOKEN}` } });
+  assert.equal(added.isError, undefined, JSON.stringify(added.content));
+  assert.equal(added.structuredContent.repository.upstream, 'https://GitHub.com/Me/Garden');
+  assert.ok(added.structuredContent.removed);
+  const listed = await client.callTool({ name: 'list_repos', arguments: {} });
+  assert.deepEqual(listed.structuredContent.repositories.map(item => item.upstream), ['https://GitHub.com/Me/Garden']);
+  noSecrets([TOKEN], [...(await filesUnder(workspace)).map(file => [file.path, file.text]),
+    ['add_repo', JSON.stringify(added)], ['list_repos', JSON.stringify(listed)]]);
+});
+
+// spec: repository-registry / Refusals never echo the upstream
+test('repos add refusals name the clean form or say it is not an upstream, never the token', async t => {
+  const { env, workspace, register } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const again = await rawCli(env, workspace, 'repos', 'add', 'personal/main', `https://faye:${TOKEN}@github.com/me/room.git?token=${TOKEN}`, '--concept', 'room-again');
+  assert.equal(JSON.parse(again.stderr).error.code, 'REPOSITORY_EXISTS');
+  assert.equal(JSON.parse(again.stderr).error.message, 'https://github.com/me/room.git is already registered as personal/main/room');
+  // A password holding an unescaped / makes the URL ambiguous: not an upstream.
+  const ambiguous = await rawCli(env, workspace, 'repos', 'add', 'personal/main', `https://faye:pa/${TOKEN}@github.com/me/blog`);
+  assert.equal(JSON.parse(ambiguous.stderr).error.code, 'INVALID_INPUT');
+  assert.match(JSON.parse(ambiguous.stderr).error.message, /^Not a git upstream; give one like/);
+  noSecrets([TOKEN, 'faye:'], [['again', again.stdout + again.stderr], ['ambiguous', ambiguous.stdout + ambiguous.stderr],
+    ...(await filesUnder(workspace)).map(file => [file.path, file.text])]);
+  await assert.rejects(readFile(join(workspace, 'hubs/personal/room-again.md')), { code: 'ENOENT' });
+});
+
+// spec: repository-registry / Resource carrying credentials
+test('validate names every Repository whose resource carries credentials, a query or a fragment, without the secret', async t => {
+  const { env, workspace, register } = await fixture(t);
+  const secrets = ['Pw-SECRET-one', TOKEN, 'Query-SECRET-two', 'Frag-SECRET-three', 'Ssh-SECRET-four'];
+  await register('personal', 'pass', { title: 'pass', resource: 'https://faye:Pw-SECRET-one@github.com/me/pass' });
+  await register('personal', 'user', { title: 'user', resource: `https://${TOKEN}@github.com/me/user.git` });
+  await register('personal', 'query', { title: 'query', resource: 'https://github.com/me/query?access_token=Query-SECRET-two' });
+  await register('personal', 'frag', { title: 'frag', resource: 'git@github.com:me/frag.git#Frag-SECRET-three' });
+  await register('personal', 'ssh', { title: 'ssh', resource: 'ssh://git:Ssh-SECRET-four@github.com:2222/me/ssh.git' });
+  await register('personal', 'fine', { title: 'fine', resource: 'https://github.com/me/fine' });
+  const validate = await rawCli(env, workspace, 'validate');
+  const error = JSON.parse(validate.stderr).error;
+  assert.equal(error.code, 'INVALID_REPOSITORY');
+  for (const name of ['pass', 'user', 'query', 'frag', 'ssh']) assert.match(error.message, new RegExp(`personal/main/${name}: resource must not carry credentials, a query or a fragment`));
+  assert.doesNotMatch(error.message, /personal\/main\/fine/);
+  noSecrets([...secrets, 'faye'], [['validate', validate.stdout + validate.stderr]]);
+});
+
+// spec: repository-registry / SSH login name kept
+test('an scp-like resource keeps its git@ login and passes validate', async t => {
+  const { cli, register } = await fixture(t);
+  await register('personal', 'billing', { title: 'billing', resource: 'git@github.com:acme/billing.git' });
+  assert.equal((await cli('validate')).code, 0);
+  assert.deepEqual((await cli('repos')).json.repositories.map(item => item.upstream), ['git@github.com:acme/billing.git']);
+});
+
+// spec: repository-registry / Hand-written resource with a token
+test('repos, list_repos and the routing skill show a hand-written resource only in its clean form', async t => {
+  const { env, workspace, register } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: `https://faye:${TOKEN}@github.com:8443/me/room.git?access_token=${TOKEN}` });
+  const clean = 'https://github.com:8443/me/room.git';
+  const listed = await rawCli(env, workspace, 'repos');
+  assert.equal(listed.code, 0, listed.stderr);
+  assert.deepEqual(JSON.parse(listed.stdout).repositories.map(item => item.upstream), [clean]);
+  const synced = await rawCli(env, workspace, 'repos', 'sync');
+  assert.equal(synced.code, 0, synced.stderr);
+  const skill = await readFile(join(workspace, '.state/generated/my-repos/SKILL.md'), 'utf8');
+  assert.ok(skill.includes(`${clean} (missing on this machine)`), skill);
+  const client = new Client({ name: 'repos-test', version: '1.0.0' });
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', workspace], env, stderr: 'pipe' }));
+  t.after(() => client.close());
+  const mcp = await client.callTool({ name: 'list_repos', arguments: {} });
+  assert.deepEqual(mcp.structuredContent.repositories.map(item => item.upstream), [clean]);
+  noSecrets([TOKEN, 'faye'], [['repos', listed.stdout + listed.stderr], ['sync', synced.stdout + synced.stderr], ['list_repos', JSON.stringify(mcp)],
+    ...(await filesUnder(join(workspace, '.state'))).map(file => [file.path, file.text])]);
+});
+
+// spec: repository-registry / Long input redacted quickly
+test('setup redacts a 200,000-character answer in linear time', async t => {
+  const { base, cliInput, register } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await mkdir(join(base, 'empty'));
+  // A long run of scheme characters, the input the old pattern backtracked over at every position.
+  const answer = 'a'.repeat(200000);
+  const started = Date.now();
+  const setup = await cliInput(`${answer}\n\n`, 'repos', 'setup', '--ask', '--scan', join(base, 'empty'), '--depth', '0');
+  const elapsed = Date.now() - started;
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  assert.equal(setup.json.failed[0].code, 'NOT_A_CHECKOUT');
+  assert.ok(setup.json.failed[0].message.endsWith(`${answer}`));
+  assert.ok(elapsed < 5000, `setup took ${elapsed} ms`);
 });
