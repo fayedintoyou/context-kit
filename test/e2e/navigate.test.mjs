@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, writeFile, rm, realpath, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, realpath, symlink, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const exec = promisify(execFile);
 const kit = await realpath(fileURLToPath(new URL('../../', import.meta.url)));
@@ -181,4 +182,193 @@ test('browse and read return the same results over CLI and MCP', async t => {
   const error = await client.callTool({ name: 'read_concept', arguments: { id: 'personal/main', concept: 'log' } });
   assert.equal(error.isError, true);
   assert.equal(JSON.parse(error.content[0].text).error.code, 'NOT_A_CONCEPT');
+});
+
+// A workspace plus local git repositories holding hubs, mounted over file:// on an isolated
+// machine (no system or global git config). No network.
+async function mountFixture(t) {
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'context-kit-nav-mounts-')));
+  const children = [];
+  t.after(async () => {
+    for (const child of children) child.kill();
+    await exec('chmod', ['-R', 'u+w', base]).catch(() => {}); // Fetched mounts are read-only.
+    await rm(base, { recursive: true, force: true });
+  });
+  const env = { ...process.env, HOME: join(base, 'home'), XDG_DATA_HOME: join(base, 'data'), XDG_CONFIG_HOME: join(base, 'config'),
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  for (const name of ['CONTEXT_KIT_ROOT', 'CONTEXT_KIT_MCP_TOKEN', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_CONFIG_COUNT']) delete env[name];
+  await mkdir(env.HOME);
+  const workspace = join(base, 'workspace');
+  const run = async (...args) => {
+    try { return { code: 0, json: JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), ...args], { env })).stdout) }; }
+    catch (error) { return { code: error.code, error: error.stderr ? JSON.parse(error.stderr).error : undefined, output: `${error.stdout}${error.stderr}` }; }
+  };
+  await run('init', workspace);
+  const cli = (...args) => run('--root', workspace, ...args);
+  // A git repository with these files (a { symlink } value commits a symlink); returns its file:// URL.
+  const repository = async (name, files) => {
+    const path = join(base, name);
+    for (const [file, content] of Object.entries(files)) {
+      await mkdir(join(path, file, '..'), { recursive: true });
+      if (content.symlink) await symlink(content.symlink, join(path, file));
+      else await writeFile(join(path, file), content);
+    }
+    for (const args of [['init', '-q', '-b', 'main'], ['add', '-A'], ['commit', '-q', '-m', 'first']]) await exec('git', args, { cwd: path, env });
+    return `file://${path}`;
+  };
+  const call = async (client, name, args) => {
+    const result = await client.callTool({ name, arguments: args });
+    return result.isError ? { error: JSON.parse(result.content[0].text).error } : { json: result.structuredContent };
+  };
+  const mcp = async () => {
+    const client = new Client({ name: 'nav-mounts-test', version: '1.0.0' });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', workspace], env, stderr: 'pipe' }));
+    t.after(() => client.close());
+    return (name, args) => call(client, name, args);
+  };
+  // The remote HTTP server behind a bearer token, and an MCP SDK client for it.
+  const http = async () => {
+    const token = 'nav-test-token-0123456789abcdef0123456789abcdef';
+    const child = spawn(process.execPath, [join(kit, 'bin/mcp.mjs'), '--root', workspace, '--http', '0'],
+      { env: { ...env, CONTEXT_KIT_MCP_TOKEN: token }, cwd: base, stdio: ['ignore', 'pipe', 'pipe'] });
+    children.push(child);
+    let stderr = '';
+    const line = await new Promise((resolve, reject) => {
+      child.stderr.on('data', chunk => { stderr += chunk; if (stderr.includes('\n')) resolve(stderr.split('\n')[0]); });
+      child.once('exit', () => reject(new Error('server exited: ' + stderr)));
+    });
+    const client = new Client({ name: 'nav-mounts-http', version: '1.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(JSON.parse(line).url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+    t.after(() => client.close());
+    return (name, args) => call(client, name, args);
+  };
+  return { base, workspace, cli, repository, mcp, http };
+}
+const hubFiles = (id, extra = {}) => ({
+  'hub.json': JSON.stringify({ version: 1, id, description: `${id} hub.`, documents: ['README.md'], skills: [], links: [] }),
+  'README.md': concept('Guide', id, `The ${id} hub.`, `# ${id}`), ...extra });
+const under = (prefix, files) => Object.fromEntries(Object.entries(files).map(([file, content]) => [`${prefix}/${file}`, content]));
+const kinds = links => Object.fromEntries(links.map(({ target, text, ...rest }) => [target, rest]));
+
+// spec: progressive-disclosure / Link into a mount
+// spec: progressive-disclosure / Link into an unfetched mount
+test('links into a mount resolve there, never past its fetched export, over CLI, MCP and HTTP', async t => {
+  const { base, workspace, cli, repository, mcp, http } = await mountFixture(t);
+  const source = await repository('shared-context', hubFiles('team/data', {
+    'tables/orders.md': concept('Table', 'Orders', 'One row per order.', 'One row per pelican order.'),
+    'tables/aliased.md': { symlink: 'orders.md' }, 'tables/hosts.md': { symlink: '/etc/hosts' } }));
+  await writeFile(join(base, 'secret.md'), concept('Guide', 'Secret', 'Outside every hub.', 'Do not read.'));
+  await writeFile(join(workspace, 'hubs/personal/links.md'), concept('Guide', 'Links', 'Links into a mount.', [
+    '[orders](shared:/tables/orders)', '[orders file](shared:/tables/orders.md#columns)', '[absent](shared:/tables/absent)',
+    '[other](other:/x)', '[tables](shared:/tables)', '[aliased](shared:/tables/aliased)', '[hosts](shared:/tables/hosts)',
+    '[up](shared:/../secret)', '[encoded up](shared:/tables/%2e%2e/%2e%2e/secret)', '[hidden](shared:/.git/config)',
+    '[absolute](shared://etc/passwd)', '[file url](file:///etc/hosts)', '[root](/../../secret.md)'].join(',\n')));
+  assert.equal((await cli('mounts', 'add', 'shared', source)).code, 0);
+
+  const read = await cli('read', 'personal/main', 'links');
+  assert.equal(read.code, 0, JSON.stringify(read.error));
+  const missing = { kind: 'missing', mount: 'shared' };
+  const orders = { kind: 'concept', hub: 'shared', id: 'tables/orders', ref: 'shared:/tables/orders' };
+  assert.deepEqual(kinds(read.json.links), {
+    'shared:/tables/orders': orders, 'shared:/tables/orders.md#columns': orders, 'shared:/tables/absent': missing,
+    'other:/x': { kind: 'external', url: 'other:/x' }, 'shared:/tables': missing,
+    // Symlinks are never exported, so neither target is there to follow.
+    'shared:/tables/aliased': missing, 'shared:/tables/hosts': missing,
+    'shared:/../secret': { ...missing, reason: 'invalid-id' }, 'shared:/tables/%2e%2e/%2e%2e/secret': { ...missing, reason: 'invalid-id' },
+    'shared:/.git/config': { ...missing, reason: 'invalid-id' },
+    'shared://etc/passwd': { kind: 'external', url: 'shared://etc/passwd' }, 'file:///etc/hosts': { kind: 'external', url: 'file:///etc/hosts' },
+    '/../../secret.md': { kind: 'outside' } });
+  assert.doesNotMatch(JSON.stringify(read.json), new RegExp(base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/(?!workspace)'));
+  const followed = await cli('read', read.json.links[0].ref);
+  assert.equal(followed.code, 0, JSON.stringify(followed.error));
+  assert.deepEqual([followed.json.hub, followed.json.id], ['shared', 'tables/orders']);
+  assert.match(followed.json.content, /pelican order/);
+  // The same over MCP, stdio and HTTP.
+  for (const call of [await mcp(), await http()]) {
+    assert.deepEqual((await call('read_concept', { id: 'personal/main', concept: 'links' })).json, read.json);
+    assert.deepEqual((await call('read_concept', { concept: read.json.links[0].ref })).json, followed.json);
+  }
+
+  // Declared but not fetched (the export is gone): missing with the reason, and the read succeeds.
+  await exec('chmod', ['-R', 'u+w', join(workspace, '.state/mounts')]);
+  await rm(join(workspace, '.state/mounts/shared'), { recursive: true });
+  const unfetched = await cli('read', 'personal/main', 'links');
+  assert.equal(unfetched.code, 0, JSON.stringify(unfetched.error));
+  assert.deepEqual(kinds(unfetched.json.links)['shared:/tables/orders'], { kind: 'missing', mount: 'shared', reason: 'unfetched' });
+  assert.deepEqual(kinds(unfetched.json.links)['other:/x'], { kind: 'external', url: 'other:/x' });
+  assert.deepEqual((await (await mcp())('read_concept', { id: 'personal/main', concept: 'links' })).json, unfetched.json);
+
+  // Fetched again, then broken: missing with reason broken.
+  assert.equal((await cli('mounts', 'fetch', 'shared')).code, 0);
+  const [key] = (await readdir(join(workspace, '.state/mounts/shared'))).filter(name => !name.startsWith('.'));
+  await exec('chmod', ['-R', 'u+w', join(workspace, '.state/mounts/shared')]);
+  await writeFile(join(workspace, '.state/mounts/shared', key, 'hub.json'), 'not json');
+  assert.deepEqual(kinds((await cli('read', 'personal/main', 'links')).json.links)['shared:/tables/orders'], { kind: 'missing', mount: 'shared', reason: 'broken' });
+
+  // A mount named like a workspace hub is not read, and its links never land in that workspace hub.
+  await writeFile(join(workspace, '.state/mounts/shared', key, 'hub.json'), hubFiles('team/data')['hub.json']);
+  await mkdir(join(workspace, 'hubs/decoy/tables'), { recursive: true });
+  for (const [file, content] of Object.entries(hubFiles('shared', { 'tables/orders.md': concept('Table', 'Decoy', 'A decoy.', 'Decoy.') }))) {
+    await writeFile(join(workspace, 'hubs/decoy', file), content);
+  }
+  const shadowed = await cli('read', 'personal/main', 'links');
+  assert.equal(shadowed.code, 0, JSON.stringify(shadowed.error));
+  assert.deepEqual(kinds(shadowed.json.links)['shared:/tables/orders'], { kind: 'missing', mount: 'shared', reason: 'name-conflict' });
+});
+
+// spec: progressive-disclosure / Outside link a mount covers
+test('an outside link resolves in another mount of the same source repository that covers it', async t => {
+  const { base, workspace, cli, repository, mcp } = await mountFixture(t);
+  await writeFile(join(base, 'secret.md'), concept('Guide', 'Secret', 'Outside every repository.', 'Do not read.'));
+  const overview = concept('Guide', 'Overview', 'Where things live.', [
+    '[deploy](../platform/deploy.md)', '[deploy from root](/../platform/deploy.md)', '[platform](../platform/)',
+    '[runbook](../platform/runbook.txt)', '[absent](../platform/absent.md)', '[aliased](../platform/aliased.md)',
+    '[hosts](../platform/hosts.md)', '[via link](../plat/deploy.md)', '[prefix](../platformx/deploy.md)',
+    '[repo root](../../README.md)', '[beyond](../../../secret.md)', '[far beyond](../../../../../../../../etc/hosts)'].join(',\n'));
+  const files = { ...under('hubs/data', hubFiles('team/data', { 'overview.md': overview })),
+    ...under('hubs/platform', hubFiles('team/platform', { 'deploy.md': concept('Playbook', 'Deploy', 'How to ship.', 'Ship with the heron script.'),
+      'runbook.txt': 'runbook', 'aliased.md': { symlink: 'deploy.md' }, 'hosts.md': { symlink: '/etc/hosts' } })),
+    ...under('hubs/platformx', hubFiles('team/platformx', { 'deploy.md': concept('Playbook', 'Other', 'Not this one.', 'No.') })),
+    'hubs/plat': { symlink: 'platform' }, ...hubFiles('team/mono') };
+  const mono = await repository('mono', files);
+  // The same paths in a different repository never cover the first one's links.
+  const copy = await repository('copy', files);
+  assert.equal((await cli('mounts', 'add', 'data', mono, '--path', 'hubs/data')).code, 0);
+  assert.equal((await cli('mounts', 'add', 'look-alike', copy, '--path', 'hubs/platform')).code, 0);
+
+  const outside = { kind: 'outside' };
+  const alone = await cli('read', 'data:/overview');
+  assert.equal(alone.code, 0, JSON.stringify(alone.error));
+  assert.ok(alone.json.links.every(link => link.kind === 'outside'), JSON.stringify(alone.json.links));
+
+  assert.equal((await cli('mounts', 'add', 'platform', mono, '--path', 'hubs/platform')).code, 0);
+  const read = await cli('read', 'data:/overview');
+  assert.equal(read.code, 0, JSON.stringify(read.error));
+  const deploy = { kind: 'concept', hub: 'platform', id: 'deploy', ref: 'platform:/deploy' };
+  const missing = { kind: 'missing', hub: 'platform', mount: 'platform' };
+  assert.deepEqual(kinds(read.json.links), {
+    '../platform/deploy.md': deploy, '/../platform/deploy.md': deploy, '../platform/': { kind: 'directory', hub: 'platform', id: '' },
+    '../platform/runbook.txt': { kind: 'file', hub: 'platform', path: 'runbook.txt' }, '../platform/absent.md': missing,
+    // Symlinks in the source are not exported; a symlinked directory is not a path into the mount.
+    '../platform/aliased.md': missing, '../platform/hosts.md': missing, '../plat/deploy.md': outside,
+    '../platformx/deploy.md': outside, '../../README.md': outside, '../../../secret.md': outside,
+    '../../../../../../../../etc/hosts': outside });
+  const followed = await cli('read', read.json.links[0].ref);
+  assert.deepEqual([followed.json.hub, followed.json.id, followed.json.mount.path], ['platform', 'deploy', 'hubs/platform']);
+  assert.match(followed.json.content, /heron script/);
+  const call = await mcp();
+  assert.deepEqual((await call('read_concept', { concept: 'data:/overview' })).json, read.json);
+  assert.deepEqual((await call('read_concept', { concept: 'platform:/deploy' })).json, followed.json);
+
+  // A mount of the repository root covers what no deeper mount does; the deepest one wins.
+  assert.equal((await cli('mounts', 'add', 'mono', mono)).code, 0);
+  const rooted = kinds((await cli('read', 'data:/overview')).json.links);
+  assert.deepEqual(rooted['../platform/deploy.md'], deploy);
+  assert.deepEqual(rooted['../platformx/deploy.md'], { kind: 'concept', hub: 'mono', id: 'hubs/platformx/deploy', ref: 'mono:/hubs/platformx/deploy' });
+  assert.deepEqual(rooted['../../README.md'], { kind: 'concept', hub: 'mono', id: 'README', ref: 'mono:/README' });
+  assert.deepEqual(rooted['../plat/deploy.md'], { kind: 'missing', hub: 'mono', mount: 'mono' });
+  assert.deepEqual(rooted['../../../secret.md'], outside);
+  // Workspace concepts' links beyond the hub stay outside: only mounted links are resolved in a source.
+  await writeFile(join(workspace, 'hubs/personal/up.md'), concept('Guide', 'Up', 'Up.', '[deploy](../../../platform/deploy.md)'));
+  assert.deepEqual((await cli('read', 'personal/main', 'up')).json.links.map(link => link.kind), ['outside']);
 });

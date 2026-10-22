@@ -32,7 +32,7 @@ topics, so `help / Help covers the tool` keeps passing.
 
 ## 4. Links into mounts (slice `mount-links`)
 
-- [ ] 4.1 Classify `<mount>:/<id>` links and same-source outside links from loaded file sets; keep existing kinds; link `test/e2e/navigate.test.mjs` to "Follow links" (unchanged), "Link into a mount", "Outside link a mount covers" and "Link into an unfetched mount"
+- [x] 4.1 Classify `<mount>:/<id>` links and same-source outside links from loaded file sets; keep existing kinds; link `test/e2e/navigate.test.mjs` to "Follow links" (unchanged), "Link into a mount", "Outside link a mount covers" and "Link into an unfetched mount"
 
 ## 5. Mounted repositories (slice `mounted-repositories`)
 
