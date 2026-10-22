@@ -18,4 +18,4 @@
 
 ## 3. Integration
 
-- [ ] 3.1 Deploy to the owner's Cloudflare account following `docs/remote.md` and connect ChatGPT, Claude and Claude Code; record the manual checks' outcome on the integration PR
+- [x] 3.1 Deploy to the owner's Cloudflare account following `docs/remote.md` and connect ChatGPT, Claude and Claude Code; record the manual checks' outcome on the integration PR
