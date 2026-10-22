@@ -18,7 +18,7 @@ cd ~/code/billing && npm --prefix ~/context run hub -- repos add team/platform -
 the hub's index, and rebuilds the `my-repos` skill. With `--path` it reads the
 upstream from the checkout's `origin` and records where it is on this machine. It
 stores only the upstream's clean form: userinfo, a query and a fragment are dropped
-(an SSH login such as `git@` stays), and the result's `removed` says when. It
+(SSH keeps a well-known login such as `git@`, and scp-like `host:path` form), and the result's `removed` says when. It
 refuses an upstream, alias or concept that is already in use. Agents can do the same
 over MCP with `add_repo` when the server allows writes; they never record paths.
 Then fill in the concept with what someone needs to work on the repository.

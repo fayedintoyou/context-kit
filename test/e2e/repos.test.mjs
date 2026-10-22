@@ -976,3 +976,50 @@ test('setup redacts a 200,000-character answer in linear time', async t => {
   assert.ok(setup.json.failed[0].message.endsWith(`${answer}`));
   assert.ok(elapsed < 5000, `setup took ${elapsed} ms`);
 });
+
+// spec: repository-registry / Token-like SSH login dropped
+test('an ssh login that may be a token is dropped, a well-known one kept', async t => {
+  const { env, workspace, cli } = await fixture(t);
+  // An old 20-character GitLab token, with no known prefix, as the scp-like user.
+  const token = 'abcdefghijKLMNOPQRST';
+  const added = await rawCli(env, workspace, 'repos', 'add', 'personal/main', `${token}@gitlab.com:me/garden.git`);
+  assert.equal(added.code, 0, added.stderr);
+  assert.equal(JSON.parse(added.stdout).repository.upstream, 'gitlab.com:me/garden.git');
+  assert.ok(JSON.parse(added.stdout).removed);
+  for (const [upstream, kept] of [[`ssh://${token}@gitlab.com/me/shed.git`, 'ssh://gitlab.com/me/shed.git'],
+    ['faye@gerrit.example.com:repos/fence.git', 'faye@gerrit.example.com:repos/fence.git'], ['git@github.com:me/gate.git', 'git@github.com:me/gate.git']]) {
+    const result = await cli('repos', 'add', 'personal/main', upstream);
+    assert.equal(result.code, 0, JSON.stringify(result.error));
+    assert.equal(result.json.repository.upstream, kept);
+    assert.equal('removed' in result.json, upstream !== kept);
+  }
+  assert.equal((await cli('validate')).code, 0);
+  noSecrets([token], [['add', added.stdout + added.stderr], ...(await filesUnder(workspace)).map(file => [file.path, file.text])]);
+});
+
+// spec: repository-registry / scp-like path kept
+test('a clean scp-like upstream still reaches the same path over ssh, with or without its login', async t => {
+  const { base, env, workspace } = await fixture(t);
+  // A fake ssh that records what git asks it to run, then fails.
+  const log = join(base, 'ssh.log');
+  const ssh = join(base, 'fake-ssh');
+  await writeFile(ssh, `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\nexit 1\n`, { mode: 0o755 });
+  const sshEnv = { ...env, GIT_SSH_COMMAND: ssh, GIT_SSH_VARIANT: 'simple' };
+  assert.equal((await rawCli(sshEnv, workspace, 'repos', 'add', 'personal/main', 'abcdefghijKLMNOPQRST@git.example.com:repos/team/mill.git')).code, 0);
+  assert.equal((await rawCli(sshEnv, workspace, 'repos', 'add', 'personal/main', 'faye@git.example.com:repos/team/kiln.git')).code, 0);
+  for (const name of ['mill', 'kiln']) {
+    const clone = await rawCli(sshEnv, workspace, 'repos', 'clone', name, join(base, `clone-${name}`));
+    assert.equal(JSON.parse(clone.stderr).error.code, 'CLONE_FAILED');
+  }
+  const calls = (await readFile(log, 'utf8')).trim().split('\n');
+  assert.deepEqual(calls, ["git.example.com git-upload-pack 'repos/team/mill.git'", "faye@git.example.com git-upload-pack 'repos/team/kiln.git'"]);
+});
+
+// spec: repository-registry / Plain username suggests the clean form
+test('validate suggests the clean form for an HTTPS resource with a plain username', async t => {
+  const { cli, register } = await fixture(t);
+  await register('personal', 'bucket', { title: 'bucket', resource: 'https://faye@bitbucket.org/faye-team/bucket.git' });
+  const validate = await cli('validate');
+  assert.equal(validate.error.code, 'INVALID_REPOSITORY');
+  assert.equal(validate.error.message, 'personal/main/bucket: resource must not carry credentials, a query or a fragment; use https://bitbucket.org/faye-team/bucket.git');
+});
