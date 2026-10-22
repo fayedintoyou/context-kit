@@ -7,7 +7,14 @@ name: openspec
 #   changes; the canonical-edit label allows a deliberate direct edit.
 # - archive-rehearsal: on pull requests, archive every active change into a scratch copy
 #   and fail when the canonical specs would not validate strictly, naming the change.
-# Callers grant `contents: write` and include `labeled`/`unlabeled` in pull_request types.
+# Callers grant `contents: write` and `pull-requests: read`, and include `labeled`/`unlabeled` in
+# pull_request types. A caller MUST add `pull-requests: read` when it moves its pin past this
+# version: GitHub rejects a called job that asks for more than its caller grants, so without it the
+# whole workflow fails validation and does not run. The archive job reads merged pull requests with
+# gh and the workflow token, so a slice whose trailers live only in a pull request description (a
+# squash with a custom message, or a slice merged into an integration branch that was squashed)
+# still counts as landed. The pull request jobs run read-only and keep no checkout credentials,
+# since the rehearsal runs the pull request's own code.
 on:
   workflow_call:
     inputs:
@@ -42,6 +49,7 @@ jobs:
     concurrency: openspec-archive
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,6 +61,8 @@ jobs:
         run: if [ -f package-lock.json ]; then npm ci; fi
       - name: Archive ready changes
         id: archive
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           ${{ inputs.kit }} --root . specs archive --ready > "$RUNNER_TEMP/archive.json"
           cat "$RUNNER_TEMP/archive.json"
@@ -78,10 +88,13 @@ jobs:
   canonical-guard:
     if: github.event_name == 'pull_request'
     runs-on: ${{ contains(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          persist-credentials: false
       - name: Canonical specs change only through archived changes
         env:
           LABELED: ${{ contains(github.event.pull_request.labels.*.name, 'canonical-edit') }}
@@ -100,8 +113,12 @@ jobs:
   archive-rehearsal:
     if: github.event_name == 'pull_request'
     runs-on: ${{ contains(inputs.runs-on, '[') && fromJSON(inputs.runs-on) || inputs.runs-on }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
