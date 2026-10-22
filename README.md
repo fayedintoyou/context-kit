@@ -54,14 +54,21 @@ installs it into Claude Code and Codex: the enabled addons' skills are installed
 where those agents read them, and one MCP server for the workspace is registered
 through each agent's own CLI.
 
-Skills go to the fewest locations that cover the agents you select: Claude Code's
-`~/.claude/skills` (or `$CLAUDE_CONFIG_DIR/skills`) when Claude Code is selected,
-and one shared copy in `~/.agents/skills`, which Codex, Gemini CLI (`gemini`) and
-Cursor (`cursor`) read, when any of them is. Cursor also reads `~/.claude/skills`,
-so with Claude Code it needs no second copy. Shared copies keep only the Agent
-Skills standard frontmatter keys, and uninstalling one agent keeps them while
-another still uses them. Gemini CLI and Cursor get skills only for now; their MCP
-registration is reported `unsupported`. Reinstalling for Codex moves the copies an
+`--agent` takes `claude`, `codex`, `gemini` (Gemini CLI), `copilot` (GitHub
+Copilot CLI), `cursor` or `all` (default `claude,codex`). Skills go to the fewest
+locations that cover the agents you select: Claude Code's `~/.claude/skills` (or
+`$CLAUDE_CONFIG_DIR/skills`) when Claude Code is selected, and one shared copy in
+`~/.agents/skills`, which Codex, Gemini CLI, Copilot CLI and Cursor read, when any
+of them is. Cursor also reads `~/.claude/skills`, so with Claude Code alone it
+needs no second copy; when it does see two, install warns, since Cursor documents
+no precedence. Shared copies keep only the Agent Skills standard frontmatter keys,
+and uninstalling one agent keeps them while another still uses them. The MCP
+server is registered through `claude`, `codex` and `gemini mcp add`, and as one
+entry in Copilot CLI's `~/.copilot/mcp-config.json` and Cursor's
+`~/.cursor/mcp.json`, edited in place so your other entries and formatting stay;
+a config file with comments or invalid JSON is refused untouched. The `help
+addons-and-install` topic has the harness table and its sources; OpenCode and
+Antigravity CLI come later. Reinstalling for Codex moves the copies an
 older core put in `$CODEX_HOME/skills` to `~/.agents/skills`, removing each only
 after its replacement is in place and matches; one you edited is kept and reported.
 

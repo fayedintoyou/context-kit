@@ -17,13 +17,13 @@
 
 ## 3. More harnesses (slice `harnesses`)
 
-- [ ] 3.1 Extend the harness table with `gemini`, `copilot`, `cursor` and `--agent all`, keeping the default `claude,codex`; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Unknown harness`, `Every harness` and `Cursor with or without Claude Code`
-- [ ] 3.2 Warn when a harness reads the same skill from two directories with no documented precedence (Cursor); verify `test/e2e/agents.test.mjs` linked to `agent-installation / Cursor sees both directories`
-- [ ] 3.3 Register Gemini CLI through `gemini mcp add|remove -s user` with a fake `gemini` CLI; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Register with Gemini CLI`
-- [ ] 3.4 Register Copilot CLI and Cursor through their JSON config files (strict JSON, atomic write, own entry only, edited kept); verify `test/e2e/agents.test.mjs` linked to `agent-installation / Other servers are kept`, `Unreadable config` and `Edited entry`
-- [ ] 3.5 Project scope for the new harnesses (skills under `.agents/skills`, MCP skipped); verify `test/e2e/agents.test.mjs` linked to `agent-installation / Project install for Cursor`
+- [x] 3.1 Extend the harness table with `gemini`, `copilot`, `cursor` and `--agent all`, keeping the default `claude,codex`; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Unknown harness`, `Every harness` and `Cursor with or without Claude Code`
+- [x] 3.2 Warn when a harness reads the same skill from two directories with no documented precedence (Cursor); verify `test/e2e/agents.test.mjs` linked to `agent-installation / Cursor sees both directories`
+- [x] 3.3 Register Gemini CLI through `gemini mcp add|remove -s user` with a fake `gemini` CLI; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Register with Gemini CLI`
+- [x] 3.4 Register Copilot CLI and Cursor through their JSON config files (strict JSON, atomic write, own entry only, edited kept); verify `test/e2e/agents.test.mjs` linked to `agent-installation / Other servers are kept`, `Unreadable config` and `Edited entry`
+- [x] 3.5 Project scope for the new harnesses (skills under `.agents/skills`, MCP skipped); verify `test/e2e/agents.test.mjs` linked to `agent-installation / Project install for Cursor`
 - [ ] 3.6 Add the opt-in `test/e2e/discovery.test.mjs` for real Claude Code and Codex (`CONTEXT_KIT_HARNESS_SMOKE=1`) and `test/manual-checks.md` entries for Gemini CLI, Copilot CLI and Cursor, all linked to `agent-installation / Routing skill is discovered`; run them once and record versions and outcomes
-- [ ] 3.7 Document the harness table with its sources, documented capacity limits ("not documented" where none), and OpenCode and Antigravity CLI as later, in `addons-and-install.md`, the `help` topic and README; verify `test/e2e/help.test.mjs` passes and `node bin/hub.mjs validate`
+- [x] 3.7 Document the harness table with its sources, documented capacity limits ("not documented" where none), and OpenCode and Antigravity CLI as later, in `addons-and-install.md`, the `help` topic and README; verify `test/e2e/help.test.mjs` passes and `node bin/hub.mjs validate`
 
 ## 4. Portable entry point (slice `portable-entry`)
 
