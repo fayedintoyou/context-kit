@@ -41,7 +41,6 @@
 
 ## Workflow follow-up
 
-- Land after the prerequisite change `slice-aware-links`, so each slice can keep `npm test` green
 - Open one of the owner's repositories with no `context` and check that a fresh subagent told "work on <repo>" calls `repos open` once and starts work without scouting
 - Add a `reviewer` role and a `release` pack to that Repository concept, then run a fresh reviewer through `repos open --role reviewer`
 - Coordinate the reference form with `hub-federation`, and the routing body and local-only rule with `machine-setup`, before any of the three archives

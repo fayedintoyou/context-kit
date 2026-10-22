@@ -22,8 +22,6 @@
     change only edits the skill body, keeps `keywords` out of `context`, and
     relies on that rule rather than amending `remote-access`.
   - `hub-federation` (#48) uses the same `<qualifier>:/<id>` reference form.
-  - The prerequisite `slice-aware-links` lets each slice keep the spec-link
-    gate green.
 - `getSkill()` (`lib/workspace.mjs`) reads a skill only through a hub whose
   manifest declares it, and `listSkills()` hides `kit:` skills of disabled
   addons.
@@ -300,7 +298,7 @@ older core ignores it as an OKF extra key.
 
 ## Defaults adopted for owner review
 
-- The plan merges on its own after `slice-aware-links`.
+- The plan merges on its own, ahead of its slices.
 - `<hub-id>:/<id>`, matching #48.
 - A tracked-only tree (instruction files excepted), depth 2 and up to 150
   entries, as an upper bound under the 8 KiB allowance.

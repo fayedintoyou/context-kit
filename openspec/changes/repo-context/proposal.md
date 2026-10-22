@@ -99,12 +99,6 @@ the remote-access parity rule (`machine-setup`, #50); federation itself
 
 ## Dependencies
 
-- **`slice-aware-links`** (a prerequisite toolkit change). Today
-  `lib/specs/links.mjs` requires a linked test for every scenario of every
-  active change, so `npm test` fails on this plan and on each slice until all
-  of them land. That change makes the gate slice-aware. This change adds no
-  placeholder tests to work around it.
-
 - **Landing order across changes**, which `slices.yaml` can't express, is
   checked in tasks. The `open` slice starts after `machine-setup`'s
   `skill-frontmatter`, `portable-entry` and `local-only` slices have landed.
