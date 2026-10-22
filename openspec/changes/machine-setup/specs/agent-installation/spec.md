@@ -170,7 +170,7 @@ Each skill record SHALL identify the copy it installed. A recorded path now hold
 - **THEN** the copy stays in place and its record is dropped
 
 ### Requirement: One install at a time
-`agents install`, `agents uninstall` and `repos sync` SHALL each take an exclusive lock per workspace, taking over the lock of a holder that is no longer running, and SHALL fail with `AGENTS_BUSY`, writing nothing, after waiting for a live holder.
+`agents install`, `agents uninstall` and `repos sync` SHALL each take an exclusive lock per workspace, taking over the lock of a holder that is no longer running, and SHALL fail with `AGENTS_BUSY`, writing nothing, after waiting for a live holder. The holder SHALL remove `.state` temporaries a killed save left, by exact name, once their process is gone or they are over an hour old. Uninstall SHALL stop with `AGENTS_BUSY` before its next removal once it no longer holds the lock.
 
 #### Scenario: Concurrent installs take turns
 - **WHEN** two installs of one workspace for Cursor run at once
@@ -179,6 +179,14 @@ Each skill record SHALL identify the copy it installed. A recorded path now hold
 #### Scenario: Busy workspace
 - **WHEN** a live process holds the workspace's lock and a caller installs with a short wait, then the holder is a process that is gone
 - **THEN** the first install fails with `AGENTS_BUSY` and writes no records, and the second takes the lock over and succeeds
+
+#### Scenario: Temporaries a killed save left
+- **WHEN** `.state` holds record and leftovers temporaries of a dead process and an hour-old one of a live process, plus a live process's recent one and files with similar names, and a caller installs
+- **THEN** the dead process's and the hour-old ones are removed and the others are kept
+
+#### Scenario: Uninstall loses the lock
+- **WHEN** another command takes the lock over after an uninstall's first removal
+- **THEN** that uninstall fails with `AGENTS_BUSY` having removed nothing more, leaves the other holder's lock, and the next uninstall removes the rest
 
 ### Requirement: Checked config edits
 An edit to Copilot CLI's or Cursor's MCP config file SHALL replace it only while it still holds what the edit was computed from, recomputing from a changed file a bounded number of times. An edit that can't apply cleanly SHALL leave the file as the other writer left it and report `MCP_CONFLICT`. Accepted residual: a harness that replaces the file by its own rename between the last check and Context Kit's rename loses that change.
@@ -192,7 +200,7 @@ An edit to Copilot CLI's or Cursor's MCP config file SHALL replace it only while
 - **THEN** install reports `MCP_CONFLICT`, saying nothing was written, and the file holds exactly the writer's bytes
 
 ### Requirement: Previous versions of config files
-A Copilot CLI or Cursor MCP config file that Context Kit replaced or deleted SHALL be kept beside it as a previous version, which a later install or uninstall deletes once it is an hour old and still holds what it held; one that changed SHALL be kept as a displaced copy and reported. Accepted residual: a write landing between that check and the delete is lost.
+A Copilot CLI or Cursor MCP config file that Context Kit replaced or deleted SHALL be kept beside it as a previous version, which a later install, uninstall or `repos sync` deletes once it is an hour old and still holds what it held; one that changed SHALL be kept as a displaced copy and reported (not from the pull hooks, whose output is discarded). Accepted residual: a write landing between that check and the delete is lost.
 
 #### Scenario: Unchanged previous versions swept
 - **WHEN** a config file's leftovers include a recent previous version that still holds what it held, and a caller installs now and again an hour later
@@ -201,3 +209,7 @@ A Copilot CLI or Cursor MCP config file that Context Kit replaced or deleted SHA
 #### Scenario: Late write displaced
 - **WHEN** a harness writes through an open descriptor to the file an install replaced or an uninstall deleted
 - **THEN** that write stays on disk, and the run that cleans it up moves it to a displaced copy and reports it
+
+#### Scenario: Sync sweeps previous versions
+- **WHEN** an install and uninstall for Cursor leave a previous version and a caller runs `repos sync` now and an hour later, then another install and uninstall leave one that is then changed, and a caller syncs an hour later
+- **THEN** the first sync keeps it, the second deletes it and the directory the install created, and the last reports the changed one as a displaced `leftover` holding the change

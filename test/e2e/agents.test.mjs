@@ -2230,6 +2230,7 @@ test('a held agents lock makes another install wait and then give up with AGENTS
 });
 
 // spec: agent-installation / Foreign and edited skills are preserved
+// spec: agent-installation / Temporaries a killed save left
 test('a lock holder sweeps temporaries killed saves left in .state, by exact name and only when their process is gone', async t => {
   const { workspace, agents } = await fixture(t, { agents: [] });
   const state = join(workspace, '.state');
@@ -2246,6 +2247,7 @@ test('a lock holder sweeps temporaries killed saves left in .state, by exact nam
 });
 
 // spec: agent-installation / Selective uninstall of shared copies
+// spec: agent-installation / Uninstall loses the lock
 test('an uninstall that loses the agents lock stops before removing anything more, and the next one finishes', async t => {
   const { base, env, workspace, run, agents } = await fixture(t, { agents: [] });
   assert.equal((await agents('install', '--agent', 'codex')).code, 0);
@@ -2279,6 +2281,7 @@ syncBuiltinESMExports();
 });
 
 // spec: agent-installation / Other servers are kept
+// spec: agent-installation / Sync sweeps previous versions
 test('repos sync sweeps previous versions of config files by the same rules as install and uninstall', async t => {
   const { env, workspace, run, agents } = await fixture(t, { agents: [] });
   const sync = extra => run(['--root', workspace, 'repos', 'sync'], extra);

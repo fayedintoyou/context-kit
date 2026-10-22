@@ -148,7 +148,8 @@ npm run agents -- uninstall [--agent claude,codex]
   removes, so one that lost the lock stops with `AGENTS_BUSY` before deleting
   more (the next uninstall finishes). Temporaries a killed save left in `.state`
   (`agents.json.<pid>-<ms>`, `leftovers.json.<pid>-<ms>`) are removed by the next
-  lock holder once their process is gone.
+  lock holder once their process is gone or they are over an hour old (so a reused
+  pid doesn't keep one forever).
 - A harness CLI that fails is reported with a fixed code (`MCP_ADD_FAILED`,
   `MCP_REMOVE_FAILED`, `MCP_CLI_TIMEOUT`, `MCP_CLI_NOT_RUNNABLE`) and never its
   output. A remove that failed while the server is still registered is reported
@@ -195,7 +196,10 @@ npm run agents -- uninstall [--agent claude,codex]
   too, always as a copy (see `repositories`).
 - When the workspace is a git checkout, `post-merge` and `post-rewrite` hooks are
   added to its hooks directory. They run `repos sync` after every pull and never
-  fail it. An existing hook that Context Kit didn't write is kept and reported as a
+  fail it. Their output is discarded, so a previous version that sync displaces
+  from a hook isn't shown: the copy stays on disk beside its config file as
+  `<file>.context-kit-displaced-*`, and a later run doesn't report it again.
+  An existing hook that Context Kit didn't write is kept and reported as a
   conflict; add `npm run -s hub -- repos sync` to it yourself, or `--force`.
   Uninstall removes the hooks once no agent items remain.
 - Claude Code gets the merge tripwire: a `PreToolUse` hook on Bash running the
