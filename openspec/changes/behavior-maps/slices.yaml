@@ -1,0 +1,64 @@
+slices:
+  - id: sources
+    title: Behavior source boundary with openspec and hub sources, maps behaviors / list_behaviors, maps addon skeleton
+    implements:
+      - behavior-sources / Behavior source boundary
+      - behavior-sources / OpenSpec behaviors
+      - behavior-sources / Hub behaviors
+      - behavior-sources / Stable fingerprints
+    paths: ["lib/behavior/sources.mjs", "lib/operations.mjs", "bin/hub.mjs", "addons/maps/**", "lib/help.mjs", "skills/context-kit/references/**", "test/e2e/maps.test.mjs", "test/e2e/fixtures/maps/**"]
+  - id: lid-source
+    title: Linked-intent development source
+    implements:
+      - behavior-sources / Linked-intent behaviors
+    depends_on: [sources]
+    paths: ["lib/behavior/sources.mjs", "lib/behavior/lid.mjs", "skills/context-kit/references/**", "test/e2e/maps.test.mjs", "test/e2e/fixtures/maps/**"]
+  - id: check
+    title: Map files, contents, structure, citations, coverage, labels, declared status and the check report
+    implements:
+      - behavior-maps / Map files
+      - behavior-maps / Map contents
+      - behavior-maps / Map structure
+      - behavior-maps / Citations resolve
+      - behavior-maps / Coverage
+      - behavior-maps / Plain-language labels
+      - behavior-maps / Declared status
+      - behavior-maps / Check outcome
+    depends_on: [sources]
+    paths: ["lib/behavior/maps.mjs", "lib/behavior/status.mjs", "lib/operations.mjs", "bin/hub.mjs", "lib/help.mjs", "skills/context-kit/references/**", "test/e2e/maps.test.mjs", "test/e2e/fixtures/maps/**"]
+  - id: pins
+    title: maps pin and stale or unpinned citations
+    implements:
+      - behavior-maps / Pinned citations
+    depends_on: [check]
+    paths: ["lib/behavior/maps.mjs", "lib/operations.mjs", "bin/hub.mjs", "skills/context-kit/references/**", "test/e2e/maps.test.mjs", "test/e2e/fixtures/maps/**"]
+  - id: render
+    title: Mermaid and JSON rendering and the generated diagram block
+    implements:
+      - behavior-maps / Mermaid rendering
+      - behavior-maps / JSON rendering
+      - behavior-maps / Generated diagram
+    depends_on: [check]
+    paths: ["lib/behavior/render.mjs", "lib/behavior/maps.mjs", "lib/operations.mjs", "bin/hub.mjs", "skills/context-kit/references/**", "test/e2e/maps.test.mjs", "test/e2e/fixtures/maps/**"]
+  - id: derived-status
+    title: Status from linked tests and JUnit results
+    implements:
+      - behavior-maps / Status from linked tests
+      - behavior-maps / Status from test results
+    depends_on: [check]
+    paths: ["lib/behavior/status.mjs", "lib/behavior/junit.mjs", "lib/operations.mjs", "bin/hub.mjs", "skills/context-kit/references/**", "test/e2e/maps.test.mjs", "test/e2e/fixtures/maps/**"]
+  - id: context-states
+    title: Context states of a hub and warnings for hub-sourced maps
+    implements:
+      - behavior-maps / Context states
+      - behavior-maps / Context map warnings
+    depends_on: [render]
+    paths: ["lib/behavior/context.mjs", "lib/behavior/maps.mjs", "maps/context-states.md", "lib/operations.mjs", "bin/hub.mjs", "skills/context-kit/references/**", "test/e2e/maps.test.mjs", "test/e2e/fixtures/maps/**"]
+  - id: skill-docs
+    title: behavior-map skill, addon listing, CLI-only writes, help and docs
+    implements:
+      - behavior-maps / Maps addon
+      - behavior-maps / Map writes are CLI-only
+      - behavior-maps / Drafting maps
+    depends_on: [lid-source, pins, derived-status, context-states]
+    paths: ["skills/**", "addons/maps/addon.json", "docs/**", "README.md", "lib/help.mjs", "test/**"]
