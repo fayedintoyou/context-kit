@@ -172,17 +172,25 @@ edit the block by hand: `--write` overwrites it and the check flags it.
 `maps pin <map>` (CLI only, never over MCP) records each citation's current
 fingerprint under the map block's `pins` and changes nothing else in the file. It
 edits `pins` in place: a changed pin has only its value replaced, a pin nothing
-cites loses its line, and new pins follow the last one in citation order (a new
-`pins` key goes after the block's last key, before any `...` or trailing comments;
-a `{ ... }` pins value stays one flow mapping). The `pins` line, comments and the
-other keys keep their bytes, and when every pin is already current nothing is
-written (`written: false`). Pin after a person has reviewed the map against its specs; from
-then on the check warns `stale` when a cited requirement or scenario changes
-(editing a scenario also changes the requirement holding it), and `unpinned` for a
-citation added since. Review what changed, update the map if needed, and pin again.
-Like `--write` it needs an explicit root (otherwise `WRITE_DISABLED`), refuses a map
-with errors, and writes atomically; it also refuses (`INVALID_INPUT`) a block
+cites loses its line (and the `pins` line goes when no pins remain), and new pins
+follow the last one in citation order, indented like the rest of the block. A new
+`pins` key goes after the block's last key, before any `...` or trailing comments.
+A `{ ... }` pins value has changed values replaced in place, and is rewritten as
+one flow mapping only when pins are added or removed. The `pins` line, comments
+and the other keys keep their bytes, and when every pin is already current
+nothing is written (`written: false`).
+
+Pin after a person has reviewed the map against its specs; from then on the check
+warns `stale` when a cited requirement or scenario changes (editing a scenario
+also changes the requirement holding it), and `unpinned` for a citation added
+since. Review what changed, update the map if needed, and pin again.
+
+Like `--write` it needs an explicit root (otherwise `WRITE_DISABLED`), refuses a
+map with errors, and writes atomically. It also refuses (`INVALID_INPUT`) a block
 written as one `{ ... }` mapping, which has no line of its own for `pins`: write
-the block in block style, one key per line. Pins
-never change the diagram, so pin, check, `render --write` and check converge: a
-second pin and render leave the file unchanged (`written: false`).
+the block in block style, one key per line. Before writing, it reads the whole new
+file back as `maps check` does and refuses with `PIN_UNSAFE`, writing nothing, if
+the map would not parse, anything outside the pins would change, or the pins would
+not be the current fingerprints; remove the `pins` key and pin again. Pins never
+change the diagram, so pin, check, `render --write` and check converge: a second
+pin and render leave the file unchanged (`written: false`).

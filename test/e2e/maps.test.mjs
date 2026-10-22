@@ -750,6 +750,45 @@ test('a cited scenario edited after pinning is stale in the check and the JSON u
   await pinTwice(withPins('...\n# end of the map\n'), withPins(`${pinsText}...\n# end of the map\n`));
 });
 
+test('pinning keeps comments in a multi-line flow pins value, matches the file indentation and drops pins when nothing is cited', async t => {
+  const { cli, mapFile, original, checkBoth } = await fixture(t);
+  const [, dotPin, badgePin] = original.match(/pins:\n {2}alerts \/ Room post without a mention: ([0-9a-f]{12})\n {2}alerts \/ Mention badge: ([0-9a-f]{12})\n/);
+  const pinsText = original.match(/pins:\n(?: {2}.*\n)*/)[0];
+  const pinTwice = async (before, after) => {
+    await writeFile(mapFile, before);
+    assert.equal((await cli('maps', 'pin', 'alerts')).json.written, true);
+    assert.equal(await readFile(mapFile, 'utf8'), after);
+    const checked = report(await checkBoth('alerts'));
+    assert.deepEqual([checked.valid, checked.errors, pinWarnings(checked)], [true, [], []]);
+    assert.equal((await cli('maps', 'pin', 'alerts')).json.written, false);
+    assert.equal(await readFile(mapFile, 'utf8'), after);
+  };
+  const flow = (dot, badge) => `pins: {  # reviewed\n  alerts / Room post without a mention: ${dot},  # the dot\n  alerts / Mention badge: ${badge}  # the badge\n}\n`;
+  await pinTwice(original.replace(pinsText, flow('abcdefabcdef', 'abcdefabcdef')), original.replace(pinsText, flow(dotPin, badgePin)));
+
+  // A block indented four spaces a level gets its new pins indented four spaces too.
+  const block = original.slice(original.indexOf('```yaml map\n'), original.indexOf('```\n\n<!--'));
+  const wide = original.replace(block, block.replace(/^( +)/gm, '  $1'));
+  assert.ok(wide.includes('\npins:\n    alerts / Room post without a mention: '));
+  await pinTwice(withoutPins(wide), wide);
+
+  // A map that cites nothing loses its pins entirely, wherever the key is, keeping comment lines.
+  const bare = pins => mapText('Nothing cited', `
+version: 1
+source: { kind: openspec }
+scope: [alerts / Mention badge]
+${pins.middle ?? ''}nodes:
+  - { id: posted, kind: start, label: A teammate posts }
+  - { id: seen, kind: end, label: You've seen it }
+transitions:
+  - { from: posted, to: seen }
+${pins.last ?? ''}`);
+  const stalePins = 'pins:  # reviewed\n  alerts / Mention badge: abcdefabcdef\n  # between the pins\n  alerts / Gone: abcdefabcdef\n';
+  for (const where of ['last', 'middle']) {
+    await pinTwice(bare({ [where]: stalePins }), bare({ [where]: '  # between the pins\n' }));
+  }
+});
+
 // spec: behavior-maps / Pin and render converge
 test('pin, check, render and check converge, and pinning and rendering again change nothing', async t => {
   const { cli, mapFile, original, checkBoth } = await fixture(t);
