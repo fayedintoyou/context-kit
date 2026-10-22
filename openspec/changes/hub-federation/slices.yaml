@@ -1,0 +1,41 @@
+slices:
+  - id: mount-lifecycle
+    title: Declare, add, fetch, remove and list mounts
+    implements:
+      - hub-federation / Mount declaration
+      - hub-federation / Add a mount
+      - hub-federation / Fetch pinned content
+      - hub-federation / Remove a mount
+      - hub-federation / List mounts
+    paths: ["lib/mounts.mjs", "lib/addons.mjs", "lib/operations.mjs", "bin/hub.mjs", "lib/help.mjs", "test/e2e/mounts.test.mjs", "skills/context-kit/**", "README.md", "docs/format.md", "openspec/changes/hub-federation/tasks.md"]
+  - id: mounted-reads
+    title: Mounted hubs in every read, qualified refs, read-only and degraded mounts
+    implements:
+      - hub-federation / Read mounted hubs
+      - hub-federation / Qualified concept references
+      - hub-federation / Bundles side by side
+      - hub-federation / Mounted hub manifests
+      - hub-federation / Mounts are read-only
+      - hub-federation / Unavailable mounts degrade
+    depends_on: [mount-lifecycle]
+    paths: ["lib/hubs.mjs", "lib/workspace.mjs", "lib/navigate.mjs", "lib/mounts.mjs", "lib/operations.mjs", "lib/repos.mjs", "bin/hub.mjs", "test/e2e/mounts.test.mjs", "skills/context-kit/**", "openspec/changes/hub-federation/tasks.md"]
+  - id: mount-upgrade
+    title: Deliberate upgrades with --check and a change report
+    implements:
+      - hub-federation / Pinned until upgraded
+    depends_on: [mounted-reads]
+    paths: ["lib/mounts.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/mounts.test.mjs", "skills/context-kit/**", "openspec/changes/hub-federation/tasks.md"]
+  - id: mount-links
+    title: Links into mounts and same-source outside links
+    implements:
+      - progressive-disclosure / Classified links
+    depends_on: [mounted-reads]
+    paths: ["lib/navigate.mjs", "test/e2e/navigate.test.mjs", "skills/context-kit/**", "openspec/changes/hub-federation/tasks.md"]
+  - id: mounted-repositories
+    title: Mounted Repository concepts in the registry and my-repos
+    implements:
+      - repository-registry / Mounted repositories
+      - repository-registry / Names across mounts
+      - repository-registry / Routing with unavailable mounts
+    depends_on: [mounted-reads, mount-upgrade]
+    paths: ["lib/repos.mjs", "lib/mounts.mjs", "lib/install.mjs", "test/e2e/repos.test.mjs", "test/e2e/agents.test.mjs", "skills/context-kit/**", "README.md", "docs/**", "openspec/changes/hub-federation/tasks.md"]
