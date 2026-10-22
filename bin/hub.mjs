@@ -29,7 +29,7 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   specs parties --store <id>
   specs status <change> | specs next <change> | specs slice <change> <slice> | specs reconcile <change>   [--store <id>]
   specs archivable | specs archive --ready | specs archive --rehearse   [--store <id>]
-  maps behaviors --source openspec [--store <id>] | maps list | maps check [<map>] [--strict]
+  maps behaviors --source openspec/lid [--store <id>] | maps list | maps check [<map>] [--strict]
   maps render <map> [--format mermaid/json] [--write]   (--write puts the diagram in the map file; CLI only)
   pr land <number> --sha <tested-sha> [--repo owner/name] [--wait] [--timeout <minutes>] [--method squash/rebase/merge]
       [--skip-review "<reason>"] [--no-checks "<reason>"] [--bootstrap-policy]
@@ -135,7 +135,7 @@ try {
         else fail('INVALID_INPUT', help);
       } else if (command === 'maps') {
         if (mapsBehaviors && args.length === 1) {
-          if (!options['--source']) fail('INVALID_INPUT', 'maps behaviors needs --source <name> (openspec)');
+          if (!options['--source']) fail('INVALID_INPUT', 'maps behaviors needs --source <name> (openspec or lid)');
           result = await execute(selection, 'list_behaviors', { source: options['--source'], ...store });
         }
         else if (args[0] === 'list' && args.length === 1) result = await execute(selection, 'list_maps');

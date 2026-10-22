@@ -12,8 +12,9 @@ Drawing a map is interpretation, so a model or a person drafts it, following the
 [behavior-map](../skills/behavior-map/SKILL.md) skill. Keeping it honest is
 mechanical, so Context Kit does that: whether every state cites a real behavior,
 which behaviors in scope no state covers, whether labels are in plain words, and
-how the map is drawn. Context Kit never runs tests, checkers or models, and reads
-specs only through the pinned OpenSpec CLI.
+how the map is drawn. Context Kit never runs tests, checkers or models; it reads
+OpenSpec specs only through the pinned OpenSpec CLI and linked-intent development
+spec files as plain text.
 
 The `maps` addon provides the operations and the skill. It is opt-in: enable it
 with `init --addons maps,...` or in `context-kit.json`. The `maps` help topic
@@ -25,10 +26,14 @@ with `init --addons maps,...` or in `context-kit.json`. The `maps` help topic
    lists the canonical requirements (`<capability> / <requirement>`) and scenarios
    (`<capability> / <scenario>`) of the repository, or of a readable shared store
    with `--store`, each with a fingerprint of its normalized text. Pending change
-   deltas are not listed.
+   deltas are not listed. `--source lid` lists the entries of a repository that
+   keeps its specs the [linked-intent development](https://github.com/jszmajda/lid)
+   way (`docs/intent/**/*-specs.md` or `docs/specs/*.md`): each `**<ID>**:` list
+   item with its text and status marker (`[x]` implemented, `[ ]` a gap, `[D]`
+   deferred, or none). A map over them cites entry IDs and scopes ID prefixes.
 2. **Draft** `maps/<name>.md`: an OKF concept with `type: BehaviorMap` and one
    fenced `yaml map` block naming its source, its scope (capabilities or
-   requirements), its nodes (`start`, `state`, `choice`, `end`) and transitions,
+   requirements; ID prefixes for `lid`), its nodes (`start`, `state`, `choice`, `end`) and transitions,
    labelled in the person's words, every state citing behaviors.
 3. **Check.** `maps check [<name>]` (MCP `check_map`) reports errors (schema,
    structure, an uncited state, a citation that names no behavior or more than
@@ -68,6 +73,6 @@ to review.
 ## Later
 
 Planned in the `behavior-maps` change: pinning citations' fingerprints so a map
-says when a cited spec changed, a linked-intent development source, hub maps of a
+says when a cited spec changed, hub maps of a
 persona's or team's working states, and declared status with evidence beside
 status derived from linked tests.

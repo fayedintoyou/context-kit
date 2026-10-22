@@ -18,15 +18,16 @@ const marker = '<!-- context-kit:diagram:start';
 const endMarker = '<!-- context-kit:diagram:end -->';
 
 // A temporary copy of the fictional Pigeon repository (OpenSpec specs and maps/alerts.md),
+// or of another fixture repository (lid: entries copied from upstream linked-intent development),
 // with an isolated OpenSpec registry, driven through the CLI and an MCP SDK client.
-async function fixture(t) {
+async function fixture(t, name = 'pigeon') {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'context-kit-maps-')));
   t.after(() => rm(base, { recursive: true, force: true }));
   const env = { ...process.env, XDG_DATA_HOME: join(base, 'data'), XDG_CONFIG_HOME: join(base, 'config'),
     OPENSPEC_TELEMETRY: '0', DO_NOT_TRACK: '1', OPENSPEC_NO_UPDATE_CHECK: '1' };
   delete env.CONTEXT_KIT_ROOT;
-  const root = join(base, 'pigeon');
-  await cp(join(fixtures, 'pigeon'), root, { recursive: true });
+  const root = join(base, name);
+  await cp(join(fixtures, name), root, { recursive: true });
   const cli = async (...args) => {
     const parse = text => (text.trim() ? JSON.parse(text) : undefined);
     try {
@@ -49,7 +50,7 @@ async function fixture(t) {
   };
   const mapFile = join(root, 'maps/alerts.md');
   const specFile = join(root, 'openspec/specs/alerts/spec.md');
-  const original = await readFile(mapFile, 'utf8');
+  const original = name === 'pigeon' ? await readFile(mapFile, 'utf8') : undefined;
   // Rewrites the alerts map: edit receives the map file's text and returns the new text.
   const editMap = async edit => writeFile(mapFile, edit(await readFile(mapFile, 'utf8')));
   // Checks over the CLI and MCP, which must report the same; returns the CLI result.
@@ -443,4 +444,236 @@ test('writing refuses a map with errors, and map files are never followed throug
   assert.equal((await cli('maps', 'list')).error.code, 'PATH_ESCAPE');
   assert.equal((await checkBoth('alerts')).error.code, 'PATH_ESCAPE');
   assert.equal((await cli('maps', 'render', 'alerts', '--write')).error.code, 'PATH_ESCAPE');
+});
+
+// The upstream fixture's entries in listing order: files by path, entries in file order.
+const LID_ENTRIES = [
+  ['AUTH-UI-001', 'implemented', 'docs/intent/auth/auth-specs.md', 'User Authentication / AUTH-UI-001'],
+  ['AUTH-UI-002', 'implemented', 'docs/intent/auth/auth-specs.md', 'User Authentication / AUTH-UI-002'],
+  ['AUTH-API-001', 'gap', 'docs/intent/auth/auth-specs.md', 'User Authentication / AUTH-API-001'],
+  ['AUTH-API-002', 'deferred', 'docs/intent/auth/auth-specs.md', 'User Authentication / AUTH-API-002'],
+  ['LID-CORE-001', 'implemented', 'docs/intent/linked-intent-dev/core/core-specs.md', 'Triggering / LID-CORE-001'],
+  ['LID-CORE-002', 'implemented', 'docs/intent/linked-intent-dev/core/core-specs.md', 'Triggering / LID-CORE-002'],
+  ['LID-CORE-003', 'implemented', 'docs/intent/linked-intent-dev/core/core-specs.md', 'Triggering / LID-CORE-003'],
+  ['LID-CORE-004', 'implemented', 'docs/intent/linked-intent-dev/core/core-specs.md', 'Triggering / LID-CORE-004'],
+  ['CART-UI-001', 'none', 'docs/specs/cart-specs.md', 'EARS Requirement Patterns / CART-UI-001']];
+const lidListing = async (cli, mcp) => {
+  const listed = await cli('maps', 'behaviors', '--source', 'lid');
+  assert.equal(listed.code, 0, JSON.stringify(listed.error));
+  assert.deepEqual(await mcp('list_behaviors', { source: 'lid' }), listed.json);
+  return listed;
+};
+
+// spec: behavior-sources / Upstream entry forms
+test('linked-intent entries in backticked, plain and markerless forms are listed with ID, text, marker and file', async t => {
+  const { root, cli, mcp } = await fixture(t, 'lid');
+  const listed = await lidListing(cli, mcp);
+  assert.deepEqual(listed.json.source, { kind: 'lid' });
+  assert.deepEqual(listed.json.skipped, []);
+  assert.deepEqual(listed.json.behaviors.map(({ id, marker, file, title }) => [id, marker, file, title]), LID_ENTRIES);
+  const byId = Object.fromEntries(listed.json.behaviors.map(behavior => [behavior.id, behavior]));
+  for (const behavior of listed.json.behaviors) {
+    assert.equal(behavior.kind, 'entry');
+    assert.match(behavior.fingerprint, /^[0-9a-f]{12}$/);
+  }
+  assert.equal(byId['LID-CORE-001'].text, 'When a prompt proposes a change to project code or specifications, the system SHALL consult the linked-intent-dev workflow. ' +
+    'The skill errs toward over-triggering, since an over-triggered consult is cheap and an under-triggered one lets drift accumulate.');
+  assert.equal(byId['AUTH-API-002'].text, 'Where multi-factor authentication is enabled, the system shall require a second factor.');
+  assert.equal(byId['CART-UI-001'].text, 'The system shall display the item count in the cart icon.');
+  // An example inside a code block is not an entry, nor is a non-list line such as **LLD**.
+  assert.ok(!JSON.stringify(listed.json).includes('CART-UI-002'));
+  assert.equal((await lidListing(cli, mcp)).stdout, listed.stdout);
+
+  // The marker is not part of the text: implementing an entry keeps its fingerprint; editing it doesn't.
+  const auth = join(root, 'docs/intent/auth/auth-specs.md');
+  await writeFile(auth, (await readFile(auth, 'utf8')).replace('- [ ] **AUTH-API-001**', '- `[x]` **AUTH-API-001**').replace(/\n/g, '\r\n'));
+  const implemented = Object.fromEntries((await lidListing(cli, mcp)).json.behaviors.map(behavior => [behavior.id, behavior]));
+  assert.equal(implemented['AUTH-API-001'].marker, 'implemented');
+  assert.equal(implemented['AUTH-API-001'].fingerprint, byId['AUTH-API-001'].fingerprint);
+  await writeFile(auth, (await readFile(auth, 'utf8')).replace('every authenticated API request.', 'every authenticated API request,\r\n  including retries.'));
+  const edited = Object.fromEntries((await lidListing(cli, mcp)).json.behaviors.map(behavior => [behavior.id, behavior]));
+  assert.equal(edited['AUTH-API-001'].text, 'The system shall validate JWT tokens on every authenticated API request,\nincluding retries.');
+  assert.notEqual(edited['AUTH-API-001'].fingerprint, byId['AUTH-API-001'].fingerprint);
+  assert.equal(edited['AUTH-API-002'].fingerprint, byId['AUTH-API-002'].fingerprint);
+});
+
+// spec: behavior-sources / Duplicate linked-intent ID
+test('a linked-intent ID defined in two files fails with INVALID_SOURCE naming the ID and both files', async t => {
+  const { root, cli, mcp, checkBoth } = await fixture(t, 'lid');
+  await writeFile(join(root, 'docs/specs/auth.md'), '## Sign-in\n\n- `[ ]` **AUTH-UI-001**: The system shall show a sign-in link in the header.\n');
+  const listed = await cli('maps', 'behaviors', '--source', 'lid');
+  assert.equal(listed.code, 1);
+  assert.equal(listed.error.code, 'INVALID_SOURCE');
+  assert.match(listed.error.message, /AUTH-UI-001/);
+  assert.match(listed.error.message, /docs\/intent\/auth\/auth-specs\.md:3/);
+  assert.match(listed.error.message, /docs\/specs\/auth\.md:3/);
+  assert.deepEqual((await mcp('list_behaviors', { source: 'lid' })).error, listed.error);
+  // A map over the source fails the same way rather than resolving either entry.
+  await mkdir(join(root, 'maps'));
+  await writeFile(join(root, 'maps/sign-in.md'), mapText('Signing in', `
+version: 1
+source: { kind: lid }
+scope: [AUTH-UI]
+nodes:
+  - { id: home, kind: start, label: You open the home screen }
+  - { id: button, label: A login button shows, cites: [AUTH-UI-001] }
+transitions:
+  - { from: home, to: button }`));
+  const checked = await checkBoth('sign-in');
+  assert.equal(checked.error.code, 'INVALID_SOURCE');
+});
+
+// spec: behavior-maps / Linked-intent scope
+test('a map over linked-intent entries cites them by ID, scopes them by ID prefix and renders them', async t => {
+  const { root, cli, mcp, checkBoth } = await fixture(t, 'lid');
+  await mkdir(join(root, 'maps'));
+  const file = join(root, 'maps/sign-in.md');
+  const write = (scope, cites) => writeFile(file, mapText('Signing in', `
+version: 1
+source: { kind: lid }
+scope: [${scope}]
+nodes:
+  - { id: home, kind: start, label: You open the home screen }
+  - { id: button, label: A login button shows, cites: [${cites}] }
+  - { id: done, kind: end, label: You can sign in }
+transitions:
+  - { from: home, to: button }
+  - { from: button, to: done }`));
+  await write('AUTH-UI', 'AUTH-UI-001');
+  const checked = report(await checkBoth('sign-in'), 'sign-in');
+  assert.equal(checked.valid, true, JSON.stringify(checked.errors));
+  assert.deepEqual(checked.warnings.map(({ code, element }) => [code, element]), [['uncovered', 'AUTH-UI-002']]);
+  const rendered = await cli('maps', 'render', 'sign-in', '--format', 'json');
+  assert.deepEqual(rendered.json.nodes[1].cites, [{ id: 'AUTH-UI-001', kind: 'entry', title: 'User Authentication / AUTH-UI-001', fingerprint: (await lidListing(cli, mcp)).json.behaviors[0].fingerprint }]);
+  assert.deepEqual(await mcp('render_map', { map: 'sign-in', format: 'json' }), rendered.json);
+  // A prefix is whole segments: AUTH-U names nothing; an unknown ID is an unknown citation.
+  await write('AUTH-U', 'AUTH-UI-009');
+  const wrong = report(await checkBoth('sign-in'), 'sign-in');
+  assert.deepEqual(wrong.errors.map(({ code, element }) => [code, element]), [['unknown_citation', 'button'], ['unknown_citation', 'scope']]);
+  assert.match(wrong.errors[0].message, /AUTH-UI-009, which names no linked-intent entry/);
+});
+
+test('fenced code at any indentation is never an entry, and an entry-like item that does not parse is reported', async t => {
+  const { root, cli, mcp } = await fixture(t, 'lid');
+  await writeFile(join(root, 'docs/specs/factors-specs.md'), [
+    '## Second factor', '',
+    '- [x] **2FA-001**: Require a second factor.', '',
+    '    ```markdown',
+    '    - [x] **EXAMPLE-003**: This is code, not intent.',
+    '    - [x] **AUTH-UI-001**: A duplicate only in an example.',
+    '    ```', '',
+    '  - `[D]` **2FA-002**: Remember a trusted device',
+    '    for thirty days.',
+    '- An example that never closes:',
+    '  ~~~~',
+    '  - **EXAMPLE-004**: Still code.',
+    '  ~~~',
+    '  - **EXAMPLE-005**: Still code: the closing fence is too short.',
+    '- [ ] **2FA-003**: Listed once the item holding the open fence ends.',
+    '- [X] **2FA-004**: An upper-case X is no marker.',
+    '- [x] **2fa-005**: Lower case is no ID.',
+    '- **Notes**: Not an ID, and not reported.', ''].join('\n'));
+  const listed = await lidListing(cli, mcp);
+  const added = listed.json.behaviors.filter(behavior => behavior.file === 'docs/specs/factors-specs.md');
+  assert.deepEqual(added.map(({ id, marker, text }) => [id, marker, text]), [
+    ['2FA-001', 'implemented', 'Require a second factor.'],
+    ['2FA-002', 'deferred', 'Remember a trusted device\nfor thirty days.'],
+    ['2FA-003', 'gap', 'Listed once the item holding the open fence ends.']]);
+  assert.ok(!JSON.stringify(listed.json.behaviors).includes('EXAMPLE-'));
+  assert.deepEqual(listed.json.skipped.map(({ file, line, id }) => [file, line, id]), [
+    ['docs/specs/factors-specs.md', 18, '2FA-004'], ['docs/specs/factors-specs.md', 19, '2fa-005']]);
+  assert.match(listed.json.skipped[0].reason, /not a status marker/);
+  assert.match(listed.json.skipped[1].reason, /not a linked-intent ID/);
+});
+
+test('code blocks opened on a list line, indented at the top level or in a block quote hold no entries', async t => {
+  const { root, cli, mcp } = await fixture(t, 'lid');
+  await writeFile(join(root, 'docs/specs/examples-specs.md'), [
+    '## Examples', '',
+    '    ```',
+    '    - [x] **A-001**: Indented code at the top level, not a fence that never closes.', '',
+    '- [x] **A-001**: The real entry.',
+    '- ```markdown',
+    '  - [x] **A-001**: An example opened on a list line.',
+    '  ```',
+    '1. ```',
+    '   - [x] **A-001**: An example in an ordered item.',
+    '   ```',
+    '- Nested:',
+    '  - ```',
+    '    - [x] **A-001**: An example in a nested item.',
+    '    ```', '',
+    '> ```',
+    '> - [x] **A-001**: An example in a block quote.',
+    '> ```', '',
+    '> - Quoted list:',
+    '>   ```',
+    '>   - [x] **A-001**: An example in a list in a block quote.',
+    '>   ```', '',
+    '- [ ] **A-002**: Listed: nothing above swallowed it.',
+    '- [x] **ＡＵＴＨ-００１**: Full-width letters are no ID.', ''].join('\n'));
+  const listed = await lidListing(cli, mcp);
+  const added = listed.json.behaviors.filter(behavior => behavior.file === 'docs/specs/examples-specs.md');
+  assert.deepEqual(added.map(({ id, marker, text }) => [id, marker, text]), [
+    ['A-001', 'implemented', 'The real entry.'], ['A-002', 'gap', 'Listed: nothing above swallowed it.']]);
+  assert.deepEqual(listed.json.skipped.map(({ file, line, id }) => [file, line, id]), [['docs/specs/examples-specs.md', 28, 'ＡＵＴＨ-００１']]);
+  // A label that only looks like an ID in another script is reported too, even without a marker.
+  await writeFile(join(root, 'docs/specs/examples-specs.md'), '- **ＡＵＴＨ-００２**: Unmarked.\n- **Notes**: Not reported.\n');
+  assert.deepEqual((await lidListing(cli, mcp)).json.skipped.map(({ id }) => id), ['ＡＵＴＨ-００２']);
+});
+
+test('only top-level headings title entries, and an entry underlined into a heading is still an entry', async t => {
+  const { root, cli, mcp } = await fixture(t, 'lid');
+  await writeFile(join(root, 'docs/specs/headings-specs.md'), [
+    '## Real', '',
+    '- [x] **A-001**: Underlined by a rule.',
+    '  ---',
+    '- [ ] **A-002**: Underlined twice.',
+    '  ===',
+    '- [x] **A-003**: After the underlines.', '',
+    '> ## Quoted',
+    '- **A-004**: After a quoted heading.', '',
+    '- ## Inside an item',
+    '- [D] **A-005**: After a heading inside an item.', ''].join('\n'));
+  const listed = await lidListing(cli, mcp);
+  const added = listed.json.behaviors.filter(behavior => behavior.file === 'docs/specs/headings-specs.md');
+  assert.deepEqual(added.map(({ id, marker, title, text }) => [id, marker, title, text]), [
+    ['A-001', 'implemented', 'Real / A-001', 'Underlined by a rule.'],
+    ['A-002', 'gap', 'Real / A-002', 'Underlined twice.'],
+    ['A-003', 'implemented', 'Real / A-003', 'After the underlines.'],
+    ['A-004', 'none', 'Real / A-004', 'After a quoted heading.'],
+    ['A-005', 'deferred', 'Real / A-005', 'After a heading inside an item.']]);
+  assert.deepEqual(listed.json.skipped, []);
+});
+
+test('the lid source never follows a symlink and takes no store', async t => {
+  const { base, root, cli, mcp, checkBoth } = await fixture(t, 'lid');
+  const outside = join(base, 'outside');
+  await mkdir(join(outside, 'deep'), { recursive: true });
+  await writeFile(join(outside, 'outside-specs.md'), '- [x] **OUT-001**: Outside the repository.\n');
+  await writeFile(join(outside, 'deep/deep-specs.md'), '- [x] **OUT-002**: Outside the repository too.\n');
+  await symlink(join(outside, 'outside-specs.md'), join(root, 'docs/specs/linked.md'));
+  await symlink(join(outside, 'deep'), join(root, 'docs/intent/deep'));
+  const listed = await lidListing(cli, mcp);
+  assert.deepEqual(listed.json.skipped, [{ file: 'docs/intent/deep', reason: 'symlink' }, { file: 'docs/specs/linked.md', reason: 'symlink' }]);
+  assert.deepEqual(listed.json.behaviors.map(behavior => behavior.id), LID_ENTRIES.map(([id]) => id));
+  await rm(join(root, 'docs'), { recursive: true });
+  await symlink(outside, join(root, 'docs'));
+  const linked = await lidListing(cli, mcp);
+  assert.deepEqual(linked.json, { root, source: { kind: 'lid' }, behaviors: [], skipped: [{ file: 'docs', reason: 'symlink' }] });
+
+  const stored = await cli('maps', 'behaviors', '--source', 'lid', '--store', 'shared');
+  assert.equal(stored.error.code, 'INVALID_INPUT');
+  assert.match(stored.error.message, /store applies only to the openspec source/);
+  assert.deepEqual((await mcp('list_behaviors', { source: 'lid', store: 'shared' })).error, stored.error);
+  await mkdir(join(root, 'maps'));
+  await writeFile(join(root, 'maps/sign-in.md'), mapText('Signing in', `
+version: 1
+source: { kind: lid, store: shared }
+scope: [AUTH]
+nodes:
+  - { id: home, kind: start, label: You open the home screen }
+transitions: []`));
+  const checked = report(await checkBoth('sign-in'), 'sign-in');
+  assert.deepEqual(checked.errors.map(({ code, element }) => [code, element]), [['schema', 'source']]);
 });
