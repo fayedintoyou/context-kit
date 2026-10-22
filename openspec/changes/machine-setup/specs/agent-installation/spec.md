@@ -3,11 +3,22 @@
 ## MODIFIED Requirements
 
 ### Requirement: Install into agents
-`agents install` SHALL install the enabled addons' skills into each selected agent's skill directory (Claude Code: `.claude/skills`; Codex: `~/.agents/skills` for user scope or `.agents/skills` for project scope) and register an MCP server named after the workspace through that agent's own CLI, with skill prompts turned off because the skills are installed natively, recording every installed item.
+`agents install` SHALL install the enabled addons' skills into each selected harness's skill directory (Claude Code: `.claude/skills`; the others: `~/.agents/skills` at user scope, `.agents/skills` at project scope) and register an MCP server named after the workspace through the harness's CLI (Claude Code, Codex, Gemini CLI) or its config file (Copilot CLI, Cursor), with skill prompts turned off, recording every installed item.
 
 #### Scenario: Install for Claude Code and Codex
 - **WHEN** a caller installs for both agents at user scope
 - **THEN** each agent's skill directory contains the enabled skills, Codex copies omit `disable-model-invocation`, each agent CLI is called to register the workspace's MCP server, and status reports every item as installed
+
+### Requirement: Missing agents
+When a harness that registers through its CLI (Claude Code, Codex, Gemini CLI) has no CLI on the path, the installer SHALL skip that harness's MCP registration with a clear report and still install its skills. Copilot CLI and Cursor SHALL register through their config files whether or not their executables are installed.
+
+#### Scenario: Agent CLI missing
+- **WHEN** a caller installs for an agent whose CLI is not on the path
+- **THEN** skills are installed and the result reports the MCP registration as skipped for that agent
+
+#### Scenario: Config-file harnesses need no executable
+- **WHEN** a caller installs for Codex, Copilot CLI and Cursor on a machine with none of their executables on the path
+- **THEN** Codex's registration is reported skipped, and Copilot CLI's and Cursor's are installed in their config files
 
 ## ADDED Requirements
 
@@ -89,7 +100,7 @@ At project scope, Gemini CLI, Copilot CLI and Cursor SHALL get skills under the 
 - **THEN** the skills are under the project's `.agents/skills`, `~/.cursor/mcp.json` is unchanged, and the registration is reported skipped
 
 ### Requirement: Harness discovery checks
-Each supported harness SHALL have a discovery check: after `agents install`, a session of that harness started outside every checkout lists the routing skill. The checks for Claude Code and Codex SHALL be end-to-end tests that run when `CONTEXT_KIT_HARNESS_SMOKE=1` and the real CLI is available; the others SHALL be manual checks with recorded results.
+Each supported harness SHALL have a discovery check: after `agents install`, a session of that harness started outside every checkout lists the routing skill. The checks for Claude Code and Codex SHALL be end-to-end tests that run when `CONTEXT_KIT_HARNESS_SMOKE=1` and the real CLI is available; the others SHALL be manual checks listed in `test/manual-checks.md`.
 
 #### Scenario: Routing skill is discovered
 - **WHEN** a workspace with a registered repository is installed for a harness and a session of that harness is started in a temporary directory outside any checkout
@@ -134,3 +145,71 @@ With `--global-rule`, `agents install` SHALL write a Context Kit-owned rule file
 #### Scenario: Edited rule
 - **WHEN** the installed rule file was edited and a caller installs with `--no-global-rule`, then uninstalls
 - **THEN** the edited file is kept and reported `edited` both times
+
+### Requirement: Replaced skill copies
+Each skill record SHALL identify the copy it installed. A recorded path now holding another copy SHALL be reported `replaced`, keep its record, and be left by uninstall and cleanup. One with the installed content SHALL be taken back by the workspace that owns the launcher, or with `--adopt`; other content stays foreign (`SKILL_REPLACED`). A replaced legacy Codex copy SHALL be left in place and its record dropped.
+
+#### Scenario: Restored copies taken back
+- **WHEN** Codex skills installed by the workspace that owns the launcher are replaced by copies with the installed content, by a restore or by a dotfile manager's symlinks
+- **THEN** status reports them `replaced`, the next install reports them `unchanged` and readopted, and later syncs and uninstall treat them as installed
+
+#### Scenario: Other content stays foreign
+- **WHEN** a replaced copy holds other content and a caller installs with and without `--adopt`, then runs `uninstall --force`
+- **THEN** each install reports it `SKILL_REPLACED` and keeps its record, and uninstall leaves the copy
+
+#### Scenario: Adopt without the launcher
+- **WHEN** the launcher has been replaced by another file and installed skills were restored, one with other content
+- **THEN** install reports them `SKILL_REPLACED` naming `--adopt`, and `install --adopt` takes back only the copies with the installed content and leaves the launcher
+
+#### Scenario: Another workspace's identical copies
+- **WHEN** a workspace's copies are deleted, a second workspace installs identical ones with `--force`, and the first uninstalls
+- **THEN** the first skips them as `SKILL_REPLACED` and the second still reports them installed
+
+#### Scenario: Replaced legacy Codex copy
+- **WHEN** a legacy Codex copy was recreated since install and a caller installs for Codex with and without `--force`
+- **THEN** the copy stays in place and its record is dropped
+
+### Requirement: One install at a time
+`agents install`, `agents uninstall` and `repos sync` SHALL each take an exclusive lock per workspace, taking over the lock of a holder that is no longer running, and SHALL fail with `AGENTS_BUSY`, writing nothing, after waiting for a live holder. The holder SHALL remove `.state` temporaries a killed save left, by exact name, once their process is gone or they are over an hour old. Uninstall SHALL stop with `AGENTS_BUSY` before its next removal once it no longer holds the lock.
+
+#### Scenario: Concurrent installs take turns
+- **WHEN** two installs of one workspace for Cursor run at once
+- **THEN** both succeed, one installs the registration and the other finds it unchanged, and exactly one record holds it
+
+#### Scenario: Busy workspace
+- **WHEN** a live process holds the workspace's lock and a caller installs with a short wait, then the holder is a process that is gone
+- **THEN** the first install fails with `AGENTS_BUSY` and writes no records, and the second takes the lock over and succeeds
+
+#### Scenario: Temporaries a killed save left
+- **WHEN** `.state` holds record and leftovers temporaries of a dead process and an hour-old one of a live process, plus a live process's recent one and files with similar names, and a caller installs
+- **THEN** the dead process's and the hour-old ones are removed and the others are kept
+
+#### Scenario: Uninstall loses the lock
+- **WHEN** another command takes the lock over after an uninstall's first removal
+- **THEN** that uninstall fails with `AGENTS_BUSY` having removed nothing more, leaves the other holder's lock, and the next uninstall removes the rest
+
+### Requirement: Checked config edits
+An edit to Copilot CLI's or Cursor's MCP config file SHALL replace it only while it still holds what the edit was computed from, recomputing from a changed file a bounded number of times. An edit that can't apply cleanly SHALL leave the file as the other writer left it and report `MCP_CONFLICT`. Accepted residual: a harness that replaces the file by its own rename between the last check and Context Kit's rename loses that change.
+
+#### Scenario: Harness writes meanwhile
+- **WHEN** a writer changes Cursor's config before an install's edit is captured, and in place during the swap of a later install and an uninstall
+- **THEN** the first install applies its entry to the writer's content, and the others leave the file byte-identical to what the writer left and report `MCP_CONFLICT`
+
+#### Scenario: Edit that can't apply
+- **WHEN** a writer changes the file before every attempt, or leaves content that is not JSON
+- **THEN** install reports `MCP_CONFLICT`, saying nothing was written, and the file holds exactly the writer's bytes
+
+### Requirement: Previous versions of config files
+A Copilot CLI or Cursor MCP config file that Context Kit replaced or deleted SHALL be kept beside it as a previous version, which a later install, uninstall or `repos sync` deletes once it is an hour old and still holds what it held; one that changed SHALL be kept as a displaced copy and reported (not from the pull hooks, whose output is discarded). Accepted residual: a write landing between that check and the delete is lost.
+
+#### Scenario: Unchanged previous versions swept
+- **WHEN** a config file's leftovers include a recent previous version that still holds what it held, and a caller installs now and again an hour later
+- **THEN** the first install keeps it and the later one deletes it
+
+#### Scenario: Late write displaced
+- **WHEN** a harness writes through an open descriptor to the file an install replaced or an uninstall deleted
+- **THEN** that write stays on disk, and the run that cleans it up moves it to a displaced copy and reports it
+
+#### Scenario: Sync sweeps previous versions
+- **WHEN** an install and uninstall for Cursor leave a previous version and a caller runs `repos sync` now and an hour later, then another install and uninstall leave one that is then changed, and a caller syncs an hour later
+- **THEN** the first sync keeps it, the second deletes it and the directory the install created, and the last reports the changed one as a displaced `leftover` holding the change

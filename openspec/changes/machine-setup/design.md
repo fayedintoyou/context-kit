@@ -262,6 +262,23 @@ uninstall don't depend on undocumented subcommands. Copilot documents JSONC for
 refused, not rewritten. Project scope skips MCP for the three new harnesses. Their project config files are usually committed, which
 `agent-installation / Scopes` already avoids for Claude Code.
 
+Review hardened the write into a checked swap, because the harness may write the
+file while install edits it (`Checked config edits`): the edit replaces the file
+only while it still holds what the edit was computed from, is recomputed a bounded
+number of times, and otherwise writes nothing and reports `MCP_CONFLICT`. A file
+replaced or deleted is kept as a previous version for an hour, since a harness may
+still hold it open, then swept only if unchanged, otherwise displaced and reported
+(`Previous versions of config files`). Install, uninstall and `repos sync` take a
+per-workspace lock (`AGENTS_BUSY`). Two residuals are accepted and stated in the
+requirements and in `addons-and-install.md`: POSIX has no conditional rename, so a
+harness replacing the file by its own rename in the instant before ours loses that
+change; and a write landing between the sweep's check and its delete is lost.
+
+Skill records likewise identify the copy they installed (inode and birth time, or
+device and inode), so a copy someone else put in its place is `replaced`, never
+removed; the installed content is taken back by the workspace that owns the
+launcher, or with `--adopt` (`Replaced skill copies`).
+
 ### 7. Path portability: the MCP server by name, and a launcher
 
 What breaks when the workspace moves is the absolute `cd` in the skill. The MCP
@@ -285,7 +302,10 @@ registration's `--root` breaks too. Options:
 
 The body names one operation (decision 8) as `<server>`'s tool and as `context-kit
 <command>`. Every command in the body (clone, locate, concept read, recovery) goes
-through the launcher. It ends with `Workspace: <root>` for humans only.
+through the launcher. While this workspace's launcher isn't in place as written
+(before the first install, or after someone else's file replaced it), the same
+commands run the core by absolute path with `--root <workspace>`: still no `cd`.
+It ends with `Workspace: <root>` for humans only.
 
 **One workspace per user per machine (adopted default: reject, not namespace).**
 `my-repos` and the launcher are one per user already. Namespacing (`my-repos-work`,
@@ -310,7 +330,11 @@ Whichever change lands second updates one table entry and its test.
 - `scanRepositories(root, directories, {depth})` walks breadth-first, sorted,
   skipping hidden directories, `node_modules` and the inside of any checkout found
   (`rev-parse --show-toplevel` equals the candidate). The depth is capped at 6
-  because home directories are large.
+  because home directories are large. The scanned directory itself is searched
+  even when it is a checkout, so a home directory kept in git still works, unless
+  it is a registered repository's checkout: then it is recorded (or already is) and
+  not entered, as any checkout found below it would be, so a vendored copy inside a
+  project is never recorded.
 - A linked worktree is detected by `git rev-parse --git-common-dir` differing from
   `--git-dir`. Its main worktree is the first entry of `git worktree list
   --porcelain -z` (NUL-separated, so a path keeps every character), never a
@@ -360,7 +384,9 @@ with the repository's name.
   `CONTEXT_KIT_HARNESS_SMOKE=1` and the real CLIs authenticated. It runs on the
   owner's machine, not in CI, which has neither CLI.
 - Gemini CLI, Copilot CLI and Cursor: `test/manual-checks.md` entries, with the
-  harness version, date and outcome recorded when run.
+  harness version, date and outcome recorded when run. None of the three is
+  installed on the owner's machine, so running them moved to the
+  `harness-discovery-checks` change, and this one archives without them.
 
 Both forms link the scenario *Routing skill is discovered*.
 

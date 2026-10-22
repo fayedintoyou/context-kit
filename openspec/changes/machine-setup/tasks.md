@@ -22,7 +22,7 @@
 - [x] 3.3 Register Gemini CLI through `gemini mcp add|remove -s user` with a fake `gemini` CLI; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Register with Gemini CLI`
 - [x] 3.4 Register Copilot CLI and Cursor through their JSON config files (strict JSON, atomic write, own entry only, edited kept); verify `test/e2e/agents.test.mjs` linked to `agent-installation / Other servers are kept`, `Unreadable config` and `Edited entry`
 - [x] 3.5 Project scope for the new harnesses (skills under `.agents/skills`, MCP skipped); verify `test/e2e/agents.test.mjs` linked to `agent-installation / Project install for Cursor`
-- [ ] 3.6 Add the opt-in `test/e2e/discovery.test.mjs` for real Claude Code and Codex (`CONTEXT_KIT_HARNESS_SMOKE=1`) and `test/manual-checks.md` entries for Gemini CLI, Copilot CLI and Cursor, all linked to `agent-installation / Routing skill is discovered`; run them once and record versions and outcomes
+- [x] 3.6 Add the opt-in `test/e2e/discovery.test.mjs` for real Claude Code and Codex (`CONTEXT_KIT_HARNESS_SMOKE=1`) and `test/manual-checks.md` entries for Gemini CLI, Copilot CLI and Cursor, all linked to `agent-installation / Routing skill is discovered`. Run 2026-10-22: Claude Code 2.1.303 and codex-cli 0.163.0 both list `my-repos`. None of the other three is installed on the owner's machine, so running their manual checks moved to the change `harness-discovery-checks`
 - [x] 3.7 Document the harness table with its sources, documented capacity limits ("not documented" where none), and OpenCode and Antigravity CLI as later, in `addons-and-install.md`, the `help` topic and README; verify `test/e2e/help.test.mjs` passes and `node bin/hub.mjs validate`
 
 ## 4. Portable entry point (slice `portable-entry`)
@@ -47,8 +47,17 @@
 
 ## 7. Integration
 
-- [ ] 7.1 After the last slice lands, run `npm test` (every scenario linked), `node bin/hub.mjs validate`, `npx openspec validate machine-setup --strict` and `specs archive --rehearse` on `main` after the last slice
-- [ ] 7.2 Upgrade the owner's workspace, run `agents install --agent claude,codex`, and check from a session started in `~` that naming a repository routes to its checkout in Claude Code and Codex; record the outcome on the last slice's PR
+- [x] 7.1 After the last slice lands, run `npm test` (every scenario linked), `node bin/hub.mjs validate`, `npx openspec validate machine-setup --strict` and `specs archive --rehearse` on `main` after the last slice (run on the close-out branch, `main` at 511d3d5 plus section 8: all pass)
+- [x] 7.2 Upgrade the owner's workspace, run `agents install --agent claude,codex`, and check from a session started in `~` that naming a repository routes to its checkout in Claude Code and Codex. Verified 2026-10-22 on the owner's machine: workspace re-pinned to 511d3d5; `agents install --agent claude,codex` exited 0 (22 unchanged, 4 updated, 1 unsupported); `agents status` reports every item installed for claude and codex; the launcher run from `/` resolves all three repositories; `codex debug prompt-input` run from `/` includes the `my-repos` skill from `~/.agents/skills`; Claude Code lists `my-repos` from `~/.claude/skills`
+
+## 8. Close-out (reconcile findings)
+
+- [x] 8.1 A repository with no title is named by its first alias, else its id, never its upstream's name; verify `test/e2e/repos.test.mjs` linked to `repository-registry / No title`
+- [x] 8.2 A scan whose directory is a registered repository's checkout records it without entering it, while a home directory kept in git is still searched; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Scan from inside a checkout` and `Home directory kept in git`
+- [x] 8.3 Amend `Routing without a workspace path` with the core-by-path fallback; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Launcher unavailable`
+- [x] 8.4 Add `Replaced skill copies`, `One install at a time`, `Checked config edits` and `Previous versions of config files` (with their accepted residuals) for behaviour #64 and #69 shipped; verify the existing `test/e2e/agents.test.mjs` tests linked to their scenarios
+- [x] 8.5 Scope the checked-edit and previous-version rules to Copilot CLI's and Cursor's config files, and amend `Install into agents` and `Missing agents` so CLI-backed and config-file registrations don't contradict; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Config-file harnesses need no executable`
+- [x] 8.6 After #74: `repos sync` sweeps previous versions, the lock holder sweeps `.state` temporaries, and uninstall stops when it loses the lock; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Sync sweeps previous versions`, `Temporaries a killed save left` and `Uninstall loses the lock`
 
 ## Workflow follow-up
 

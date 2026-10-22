@@ -244,6 +244,18 @@ test('a missing agent CLI skips MCP registration but installs skills', async t =
   assert.equal(result.json.results.find(item => item.agent === 'claude' && item.kind === 'mcp').action, 'installed');
 });
 
+// spec: agent-installation / Config-file harnesses need no executable
+test('Copilot CLI and Cursor register through their config files without their executables, while a CLI-backed harness is skipped', async t => {
+  const { env, agents } = await fixture(t, { agents: [] });
+  const result = await agents('install', '--agent', 'codex,copilot,cursor');
+  assert.equal(result.code, 0, JSON.stringify(result.error));
+  const mcp = Object.fromEntries(result.json.results.filter(item => item.kind === 'mcp').map(item => [item.agent, item.action]));
+  assert.deepEqual(mcp, { codex: 'skipped', copilot: 'installed', cursor: 'installed' });
+  for (const file of [join(env.COPILOT_HOME, 'mcp-config.json'), join(env.HOME, '.cursor/mcp.json')]) {
+    assert.ok(JSON.parse(await readFile(file, 'utf8')).mcpServers['context-workspace'], file);
+  }
+});
+
 // spec: agent-installation / Set up a workspace
 test('setup creates a pinned instance and installs it into agents', async t => {
   const { base, run, calls } = await fixture(t);
@@ -1182,6 +1194,7 @@ async function restoreCopies(base, directory) {
 }
 
 // spec: agent-installation / Foreign and edited skills are preserved
+// spec: agent-installation / Restored copies taken back
 test('restored copies with the installed content are taken back by the workspace that owns the launcher', async t => {
   const { base, env, workspace, run, agents } = await fixture(t);
   const shared = join(env.HOME, '.agents/skills');
@@ -1207,6 +1220,7 @@ test('restored copies with the installed content are taken back by the workspace
 });
 
 // spec: agent-installation / Foreign and edited skills are preserved
+// spec: agent-installation / Other content stays foreign
 test('a replaced copy with other content stays foreign, named on every install, and --adopt does not take it', async t => {
   const { base, env, workspace, agents } = await fixture(t);
   const shared = join(env.HOME, '.agents/skills');
@@ -1228,6 +1242,7 @@ test('a replaced copy with other content stays foreign, named on every install, 
 });
 
 // spec: agent-installation / Foreign and edited skills are preserved
+// spec: agent-installation / Adopt without the launcher
 test('without the launcher, restored copies are named with --adopt, which takes back only the installed content', async t => {
   const { base, env, agents } = await fixture(t);
   const shared = join(env.HOME, '.agents/skills');
@@ -1251,6 +1266,7 @@ test('without the launcher, restored copies are named with --adopt, which takes 
 });
 
 // spec: agent-installation / Foreign and edited skills are preserved
+// spec: agent-installation / Restored copies taken back
 test('skill directories a dotfile manager replaced with symlinks to the installed content are taken back', async t => {
   const { base, env, agents } = await fixture(t);
   const shared = join(env.HOME, '.agents/skills');
@@ -1270,6 +1286,7 @@ test('skill directories a dotfile manager replaced with symlinks to the installe
 });
 
 // spec: agent-installation / Foreign and edited skills are preserved
+// spec: agent-installation / Another workspace's identical copies
 test('a workspace whose copies were deleted does not remove the identical ones another workspace installed', async t => {
   const machine = await fixture(t);
   const { base, env, run, agents } = machine;
@@ -1288,6 +1305,7 @@ test('a workspace whose copies were deleted does not remove the identical ones a
 });
 
 // spec: agent-installation / Upgrade an existing Codex install
+// spec: agent-installation / Replaced legacy Codex copy
 test('a legacy Codex copy replaced since install is left in place and its record dropped', async t => {
   const machine = await fixture(t);
   const { base, env, workspace, agents } = machine;
@@ -1906,6 +1924,7 @@ async function racer(base) {
 }
 
 // spec: agent-installation / Other servers are kept
+// spec: agent-installation / Harness writes meanwhile
 test('a harness writing its config while install or uninstall edits it keeps its change', async t => {
   const { base, env, run, workspace } = await fixture(t, { agents: [] });
   const race = await racer(base);
@@ -1943,6 +1962,7 @@ test('a harness writing its config while install or uninstall edits it keeps its
 });
 
 // spec: agent-installation / Other servers are kept
+// spec: agent-installation / Edit that can't apply
 test('a writer racing every attempt, or racing before an early stop, ends with exactly its bytes and MCP_CONFLICT', async t => {
   const { base, env, run, workspace } = await fixture(t, { agents: [] });
   const race = await racer(base);
@@ -2078,6 +2098,7 @@ test('a config file an interrupted uninstall moved aside is put back, or kept as
 });
 
 // spec: agent-installation / Other servers are kept
+// spec: agent-installation / Unchanged previous versions swept
 test('recovery removes only what holds the bytes Context Kit wrote, and never replaces a displaced copy', async t => {
   const { env, agents, later } = await fixture(t, { agents: [] });
   const directory = join(env.HOME, '.cursor');
@@ -2149,6 +2170,7 @@ syncBuiltinESMExports();
 `;
 
 // spec: agent-installation / Other servers are kept
+// spec: agent-installation / Late write displaced
 test('a late write through a descriptor to the file install replaced or uninstall deleted is kept, then displaced and reported', async t => {
   for (const phase of ['install', 'uninstall']) {
     const { base, env, run, workspace, agents, later } = await fixture(t, { agents: [] });
@@ -2173,6 +2195,7 @@ test('a late write through a descriptor to the file install replaced or uninstal
 });
 
 // spec: agent-installation / Other servers are kept
+// spec: agent-installation / Concurrent installs take turns
 test('concurrent installs of one workspace take turns, so every registration stays recorded', async t => {
   for (let pair = 0; pair < 3; pair++) {
     const { env, workspace, run, agents } = await fixture(t, { agents: [] });
@@ -2190,6 +2213,7 @@ test('concurrent installs of one workspace take turns, so every registration sta
 });
 
 // spec: agent-installation / Other servers are kept
+// spec: agent-installation / Busy workspace
 test('a held agents lock makes another install wait and then give up with AGENTS_BUSY, and a dead holder\'s lock is taken over', async t => {
   const { workspace, run } = await fixture(t, { agents: [] });
   const lock = join(workspace, '.state/.lock-agents');
@@ -2206,6 +2230,7 @@ test('a held agents lock makes another install wait and then give up with AGENTS
 });
 
 // spec: agent-installation / Foreign and edited skills are preserved
+// spec: agent-installation / Temporaries a killed save left
 test('a lock holder sweeps temporaries killed saves left in .state, by exact name and only when their process is gone', async t => {
   const { workspace, agents } = await fixture(t, { agents: [] });
   const state = join(workspace, '.state');
@@ -2222,6 +2247,7 @@ test('a lock holder sweeps temporaries killed saves left in .state, by exact nam
 });
 
 // spec: agent-installation / Selective uninstall of shared copies
+// spec: agent-installation / Uninstall loses the lock
 test('an uninstall that loses the agents lock stops before removing anything more, and the next one finishes', async t => {
   const { base, env, workspace, run, agents } = await fixture(t, { agents: [] });
   assert.equal((await agents('install', '--agent', 'codex')).code, 0);
@@ -2255,6 +2281,7 @@ syncBuiltinESMExports();
 });
 
 // spec: agent-installation / Other servers are kept
+// spec: agent-installation / Sync sweeps previous versions
 test('repos sync sweeps previous versions of config files by the same rules as install and uninstall', async t => {
   const { env, workspace, run, agents } = await fixture(t, { agents: [] });
   const sync = extra => run(['--root', workspace, 'repos', 'sync'], extra);
