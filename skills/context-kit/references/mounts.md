@@ -81,6 +81,45 @@ declared source, path and commit; after a pull changes any of them it is
 content is never shown under a new pin. `broken` (with a `reason`) means the
 fetched commit is not a loadable hub.
 
+## Reading mounted hubs
+
+A fetched mount is a hub named by its mount name in `list`, `context`, `browse`,
+`read` and `search` and their MCP tools (`list_hubs`, `get_context`,
+`browse_hub`, `read_concept`, `search_context`), after the workspace's own hubs.
+Its results carry `mount` (`name`, `source`, `path`, `commit`: where the bytes
+came from) beside the unchanged OKF trust summary; `list` and `context` also give
+`manifestId`, the mounted `hub.json` id. Freshness follows the mounted hub's own
+`freshness` policy. Reads use only the fetched content and never contact the
+source, so they work offline. Every MCP client the server admits, over stdio or
+the remote HTTP server, sees mounted hubs exactly like workspace hubs: mounting a
+hub discloses it to every client you have admitted, and there is no per-mount
+exposure control.
+
+Bundles sit side by side, never merged: each keeps its own root `index.md`,
+`okf_version`, `log.md` and concept IDs, so `shared:/README` and
+`personal/main:/README` are different concepts.
+
+A mounted hub is loaded leniently, since you can't fix it here. Nonconformant
+files are warnings; its manifest's `skills` and `specStores`, and `links` to hubs
+not present, are warnings and never offered (`read-skill <mount> ...` is
+`UNKNOWN_SKILL`). `validate` checks workspace hubs strictly and reports mounted
+problems as warnings naming the mount and file, never failing on them. Symlinks
+and submodules in the source are not exported and are warned about by name; a
+symlink found in an export is never followed.
+
+Mounts are read-only: `capture`, `capture_note`, `repos add` and `add_repo`
+against a mount fail with `READ_ONLY_MOUNT` before anything is written. Change a
+mounted hub in its own repository, then move the pin.
+
+A declared mount that is not available never breaks the other hubs:
+
+- Not fetched on this machine (a fresh clone, or a pull that moved its pin):
+  addressing it fails with `MOUNT_NOT_FETCHED`; `list`, `search`, `repos` and
+  `validate` warn with the remedy, `mounts fetch <name>`.
+- Fetched but not a loadable hub (no `hub.json`, or a curated document that is
+  not a concept): addressing it fails with `MOUNT_BROKEN` naming the file; the
+  same commands warn. Pin a commit whose content is a hub, or `mounts remove` it.
+
 ## What is exported, and limits
 
 The export holds the raw bytes of the pinned tree's regular files, read straight

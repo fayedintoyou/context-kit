@@ -14,7 +14,7 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   list | validate
   context <hub-id> [--inbox]
   browse <hub-id> [directory] [--offset <n>] [--inbox]
-  read <hub-id> <concept-id> [--frontmatter] [--inbox]
+  read <hub-id> <concept-id> | read <hub-id>:/<concept-id>   [--frontmatter] [--inbox]
   search <text> [--inbox]
   skills | addons
   read-skill <hub-id> <reference> [--file <path>]
@@ -67,7 +67,7 @@ try {
       const landFlags = ['--sha', '--repo', '--wait', '--timeout', '--method', '--skip-review', '--no-checks', '--bootstrap-policy'];
       if (landFlags.some(flag => options[flag] !== undefined) && !(command === 'pr' && args[0] === 'land')) fail('INVALID_INPUT', `${landFlags.join(', ')} apply only to pr land`);
       const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT), source: 'cli', actor: options['--by'] || KIT_ACTOR, allowWrite: true };
-      const count = { help: [0, 1], addons: [0], skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [2], search: [1], 'read-skill': [2], capture: [2] };
+      const count = { help: [0, 1], addons: [0], skills: [0], list: [0], validate: [0], context: [1], browse: [1, 2], read: [1, 2], search: [1], 'read-skill': [2], capture: [2] };
       if (options['--inbox'] && !['context', 'search', 'browse', 'read'].includes(command)) fail('INVALID_INPUT', '--inbox applies only to context, search, browse and read');
       const storeCommands = ['list', 'read', 'audit', 'garden', 'parties', 'status', 'next', 'slice', 'reconcile', 'archivable', 'archive'];
       if (options['--store'] && (command !== 'specs' || !storeCommands.includes(args[0]))) fail('INVALID_INPUT', `--store applies only to specs ${storeCommands.join('/')}`);
@@ -139,7 +139,7 @@ try {
           const offset = options['--offset'] === undefined ? 0 : Number(options['--offset']);
           result = await execute(selection, 'browse_hub', { id: args[0], path: args[1] ?? '', offset, includeInbox });
         }
-        if (command === 'read') result = await execute(selection, 'read_concept', { id: args[0], concept: args[1], frontmatter: Boolean(options['--frontmatter']), includeInbox });
+        if (command === 'read') result = await execute(selection, 'read_concept', { ...(args.length === 2 ? { id: args[0] } : {}), concept: args.at(-1), frontmatter: Boolean(options['--frontmatter']), includeInbox });
         if (command === 'search') result = await execute(selection, 'search_context', { query: args[0], includeInbox });
         if (command === 'help') result = await execute(selection, 'help', args[0] === undefined ? {} : { topic: args[0] });
         if (command === 'addons') result = await execute(selection, 'list_addons');
