@@ -99,5 +99,11 @@ None.
   harness CLIs and temporary `HOME`, `XDG_*`, `CODEX_HOME`, `COPILOT_HOME` and
   `CLAUDE_CONFIG_DIR`.
 - No new runtime dependency.
+- Depends on the toolkit change `slice-aware-links` (in flight). Today
+  `lib/specs/links.mjs` requires a linked test for every scenario of every active
+  change, so a sliced plan can't keep CI green slice by slice. Once that change
+  lands, each slice can merge to `main` on its own and slices.yaml drops its
+  `base: machine-setup`. Until then the slices use an integration branch. No
+  placeholder tests either way.
 - The owner's machine, after upgrading: `npm run agents -- install --agent
   claude,codex` (moves Codex's copies), then `repos setup` on any other machine.

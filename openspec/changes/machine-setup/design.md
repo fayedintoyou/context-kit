@@ -274,8 +274,11 @@ the home machine, so a labeled path is more useful.
 
 ### Delivery
 
-Slices merge into an integration branch, `machine-setup`, which merges to `main`
-once every scenario is linked. The spec-link gate checks every scenario of an
+The slices are meant to merge to `main` one at a time once the prerequisite change
+`slice-aware-links` makes the spec-link gate check only the scenarios of landed or
+in-progress slices. Then the `base` line comes out of slices.yaml. Until that
+lands, the slices merge into an integration branch, `machine-setup`, which merges
+to `main` once every scenario is linked. The spec-link gate checks every scenario of an
 in-flight change, so a slice can't pass it on `main` alone. This is the
 `remote-mcp-access` precedent. The slices themselves are independent where their
 code allows (slices.yaml).

@@ -1,5 +1,5 @@
-# Slices merge into the change's integration branch `machine-setup`, which merges to main
-# once every scenario is linked; npm test's spec-link gate fails until then.
+# Until slice-aware-links lands, slices merge into the integration branch `machine-setup`
+# (npm test's spec-link gate needs every scenario linked); afterwards drop `base` and merge to main.
 base: machine-setup
 slices:
   - id: skill-frontmatter
