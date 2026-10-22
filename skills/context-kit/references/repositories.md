@@ -17,6 +17,8 @@ cd ~/code/billing && npm --prefix ~/context run hub -- repos add team/platform -
 `repos add` writes a draft Repository concept (a person promotes it), lists it in
 the hub's index, and rebuilds the `my-repos` skill. With `--path` it reads the
 upstream from the checkout's `origin` and records where it is on this machine. It
+stores only the upstream's clean form: userinfo, a query and a fragment are dropped
+(an SSH login such as `git@` stays), and the result's `removed` says when. It
 refuses an upstream, alias or concept that is already in use. Agents can do the same
 over MCP with `add_repo` when the server allows writes; they never record paths.
 Then fill in the concept with what someone needs to work on the repository.
@@ -39,7 +41,8 @@ keywords: [personal site, portfolio]
 Keywords only help agents pick the `my-repos` skill; `repos locate` and `clone`
 don't accept them, and two repositories may share one.
 
-`validate` rejects a Repository without a git upstream, `aliases` that is not a
+`validate` rejects a Repository without a git upstream, a `resource` carrying
+credentials, a query or a fragment (without echoing it), `aliases` that is not a
 list of names, `keywords` that is not a list of strings, an alias or title used by
 two repositories, a keyword that is another repository's title or alias, and names
 over their bounds: a title over 80 characters, an alias or keyword over 60. A
