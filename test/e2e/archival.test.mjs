@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, appendFile, readFile, readdir, rm, realpath, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, appendFile, readFile, readdir, rm, realpath, symlink, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -535,6 +535,41 @@ test('every job of the openspec workflow runs on the runner its caller names, an
     assert.equal(runnerFor(job['runs-on'], 'my-runner'), 'my-runner', name);
     assert.equal(runnerFor(job['runs-on'], input.default), 'ubuntu-latest', name);
   }
+});
+
+// spec: change-archival / Archived on merge
+test('the openspec archive job reads merged pull requests with the workflow token, so a squashed slice still archives', async t => {
+  const workflow = parse(readFileSync(join(kit, '.github/workflows/openspec.yml'), 'utf8'));
+  const job = workflow.jobs.archive;
+  assert.deepEqual(job.permissions, { contents: 'write', 'pull-requests': 'read' });
+  // This repository's caller grants what the job asks for; a reusable workflow gets no more.
+  const caller = parse(readFileSync(join(kit, '.github/workflows/archive.yml'), 'utf8'));
+  assert.deepEqual(caller.permissions, { contents: 'write', 'pull-requests': 'read' });
+  const step = job.steps.find(item => item.run?.includes('specs archive --ready'));
+  assert.equal(step.env?.GH_TOKEN, '${{ github.token }}');
+  // The slice landed by a squash whose message lost its trailers; only the pull request description
+  // carries them. The fake gh, like gh in a workflow, answers only with a token.
+  const { base, root, env, git, change, commit } = await fixture(t);
+  await change('radius', '- [x] Store\n', { 'slices.yaml': 'slices:\n  - id: store\n    implements: [locations / Radius]\n' });
+  await commit('Store radius (#7)');
+  const merged = (await git('rev-parse', 'HEAD')).stdout.trim();
+  const prs = [{ number: 7, state: 'MERGED', headRefName: 'store', baseRefName: 'main', url: 'https://example.test/pr/7',
+    body: 'Stores radius.\n\nOpenSpec-Change: radius\nOpenSpec-Slice: store\n', mergeCommit: { oid: merged } }];
+  await writeFile(join(base, 'bin/gh'), `#!/bin/sh\n[ -n "$GH_TOKEN" ] || { echo 'gh: set the GH_TOKEN environment variable' >&2; exit 4; }\nprintf '%s\\n' '${JSON.stringify(prs)}'\n`);
+  await chmod(join(base, 'bin/gh'), 0o755);
+  const script = step.run.replace('${{ inputs.kit }}', `node ${join(kit, 'bin/hub.mjs')}`);
+  const run = async stepEnv => {
+    const output = join(base, 'output');
+    await writeFile(output, '');
+    const runEnv = { ...env, ...stepEnv, PATH: `${env.PATH}:${dirname(process.execPath)}:/usr/bin:/bin`, RUNNER_TEMP: base, GITHUB_OUTPUT: output };
+    if (!stepEnv.GH_TOKEN) { delete runEnv.GH_TOKEN; delete runEnv.GITHUB_TOKEN; }
+    await exec('bash', ['-c', script], { cwd: root, env: runEnv });
+    return readFile(output, 'utf8');
+  };
+  // Without the token, as the job ran before, the slice counts as unlanded and nothing archives.
+  assert.equal(await run({}), 'names=\n');
+  assert.equal(await run({ GH_TOKEN: step.env.GH_TOKEN.replace('${{ github.token }}', 'workflow-token') }), 'names=radius\n');
+  assert.deepEqual(await readdir(join(root, 'openspec/changes')).then(names => names.filter(name => name !== 'archive')), []);
 });
 
 // The job's own script, run as the workflow runs it: the caller's `kit` input stands in for this checkout's CLI.

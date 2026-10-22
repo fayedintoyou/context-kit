@@ -84,6 +84,7 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 permissions:
   contents: write
+  pull-requests: read
 jobs:
   openspec:
     uses: fayedintoyou/context-kit/.github/workflows/openspec.yml@<commit>
@@ -104,6 +105,9 @@ and copy the lifecycle paragraph from this repository's `openspec/config.yaml`
 context. The job pushes with the workflow token, which doesn't trigger other
 workflows, so the archive commit neither loops nor redeploys. If the default
 branch is protected, the job needs a token allowed to push to it.
+The job also gives `gh` the workflow token to read merged pull requests, so the
+caller grants `pull-requests: read`: without it, a slice whose trailers are only
+in a pull request description counts as unlanded and its change isn't archived.
 
 Merge commits and rebases keep commit trailers. A squash keeps only its message, so
 `pr land` gives a squash of a pull request carrying trailers its own message: the
