@@ -100,7 +100,11 @@ runs wait for each other. A held lock is touched every five minutes; one whose
 process is gone, or untouched for an hour, is taken over, and after 15 minutes of waiting the command fails with `MOUNT_BUSY`. Just before
 it writes `context-kit.json` or switches in fetched content, a command checks the
 lock is still its own; if another command took it over in a rare race, it stops
-with `MOUNT_BUSY` without changing anything, and can simply be run again.
+with `MOUNT_BUSY` without changing anything, and can simply be run again. After
+writing `context-kit.json` it reads the file back and re-applies a change that is
+missing. That makes a lost change very unlikely, not impossible: two commands can
+still pass the check at the same moment, and a later one can overwrite after the
+read-back. Run `mounts` after concurrent changes if in doubt.
 
 Adding, fetching and removing are CLI-only and need an explicit workspace outside
 the toolkit checkout; no MCP tool changes mounts, even with `--allow-write`.
