@@ -1,0 +1,57 @@
+# Slices merge into the change's integration branch `machine-setup`, which merges to main
+# once every scenario is linked; npm test's spec-link gate fails until then.
+base: machine-setup
+slices:
+  - id: skill-frontmatter
+    title: Keyword budget, shards and standard frontmatter for the routing skill
+    implements:
+      - repository-registry / Generated routing skill
+      - repository-registry / Routing skill keyword budget
+      - repository-registry / Routing skill shards
+      - repository-registry / Standard frontmatter for generated skills
+    paths: ["lib/repos.mjs", "lib/install.mjs", "lib/operations.mjs", "test/e2e/repos.test.mjs", "test/e2e/agents.test.mjs", "skills/context-kit/references/repositories.md", "openspec/changes/machine-setup/tasks.md"]
+  - id: shared-skills
+    title: Install into ~/.agents/skills, fewest locations, and move Codex's copies
+    implements:
+      - agent-installation / Install into agents
+      - agent-installation / Shared skills location
+      - agent-installation / Codex skills move to the shared location
+    paths: ["lib/install.mjs", "test/e2e/agents.test.mjs", "README.md", "skills/context-kit/references/addons-and-install.md", "openspec/changes/machine-setup/tasks.md"]
+  - id: harnesses
+    title: Gemini CLI, Copilot CLI, Cursor and OpenCode
+    implements:
+      - agent-installation / Supported harnesses
+      - agent-installation / Gemini CLI registration
+      - agent-installation / Registration through config files
+      - agent-installation / Project scope for more harnesses
+    depends_on: [shared-skills]
+    paths: ["lib/install.mjs", "bin/hub.mjs", "lib/help.mjs", "test/e2e/agents.test.mjs", "README.md", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
+  - id: portable-entry
+    title: Launcher, path-free routing body, and moved-workspace repair
+    implements:
+      - agent-installation / Launcher
+      - agent-installation / Moved workspace
+      - repository-registry / Routing without a workspace path
+    depends_on: [skill-frontmatter]
+    paths: ["lib/install.mjs", "lib/repos.mjs", "lib/operations.mjs", "test/e2e/agents.test.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
+  - id: setup-and-which
+    title: repos setup, scan depth and worktrees, repos which and which_repo
+    implements:
+      - repository-registry / Scan a directory once
+      - repository-registry / Machine setup
+      - repository-registry / Worktrees are not recorded checkouts
+      - repository-registry / Which repository is this
+      - repository-registry / Which repository over MCP
+    paths: ["lib/repos.mjs", "lib/operations.mjs", "lib/mcp/**", "bin/hub.mjs", "test/e2e/repos.test.mjs", "test/e2e/remote.test.mjs", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
+  - id: remote-paths
+    title: list_repos over HTTP names the serving machine's paths
+    implements:
+      - repository-registry / Repository paths over HTTP
+    depends_on: [setup-and-which]
+    paths: ["lib/operations.mjs", "lib/mcp/**", "bin/mcp.mjs", "test/e2e/remote.test.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/remote.md", "openspec/changes/machine-setup/tasks.md"]
+  - id: global-rule
+    title: Optional Claude Code user rule
+    implements:
+      - agent-installation / Optional global rule
+    depends_on: [portable-entry]
+    paths: ["lib/install.mjs", "test/e2e/agents.test.mjs", "README.md", "skills/context-kit/references/addons-and-install.md", "openspec/changes/machine-setup/tasks.md"]
