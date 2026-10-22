@@ -27,6 +27,10 @@ proposal (target truth) ─accepted→ slices.yaml ─→ PRs, in parallel where
    OpenSpec-Slice: <slice>
    ```
 
+   `npm test` requires linked tests only for the scenarios of slices that have
+   landed or carry these trailers on the current branch, so the first slice can
+   land green while later ones are still pending ([testing](testing.md)).
+
 3. **Review.** Review each PR against its slice with `reconcile-change` and
    `independent-review`, using `specs slice <change> <slice>` as the brief.
 4. **Reconcile.** When `specs status` shows `readyToReconcile`, run
