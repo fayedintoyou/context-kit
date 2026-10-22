@@ -129,7 +129,13 @@ refuses with `HEAD_MOVED`, `BASE_MOVED` or `CHECKS_CHANGED`, and anything else w
 gate's code. None of these makes a merge call.
 
 It merges with `sha` pinned, using the method given or the first the repository
-allows (squash, rebase, merge). GitHub rejecting it, such as a head that moved after
+allows (squash, rebase, merge). A squash of a pull request whose commits (from the
+pinned compare) or description carry `OpenSpec-Change`/`OpenSpec-Slice` trailers
+gets an explicit title and message ending with those lines, each once, and the
+`Co-authored-by` lines GitHub would add; the result's `merge.trailers` names them.
+Slices named for different changes, or a slice without a change, refuse
+`TRAILERS_CONFLICT`; a value that isn't an id refuses `TRAILERS_INVALID`; both
+before anything is posted. GitHub rejecting it, such as a head that moved after
 the refresh, is `MERGE_REJECTED`. A lost response is re-read: merged at the
 requested head counts; anything else is `MERGE_UNKNOWN`, with what was seen. Both
 say a merge call was made, and it is never retried. Afterwards it confirms the
