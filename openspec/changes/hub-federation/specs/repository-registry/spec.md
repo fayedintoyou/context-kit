@@ -40,7 +40,7 @@ When different upstreams claim one title or alias and a mount is among the claim
 - **THEN** `validate` fails naming both concepts and the alias, as without the mount
 
 ### Requirement: Effective trigger names
-Each repository's effective names SHALL be its title, aliases and any keywords minus names disputed across mounts, by the precedence in "Names across mounts". Any routing skill renderer SHALL take trigger names only from effective names, before applying a description budget, and a disputed name SHALL appear only in the skill body with the qualified ids it may mean.
+A repository's effective names SHALL be its title and aliases minus names disputed across mounts. Keywords SHALL be triggers only, never identifiers, shared ones deduplicated; one equal to another repository's name, with a mount involved, SHALL be dropped with a warning, workspace hubs first. Renderers SHALL trigger only on these, filtered before any description budget; a disputed name SHALL appear only in the body with its qualified ids.
 
 #### Scenario: Ambiguous names leave the triggers
 - **WHEN** two mounts each register a different repository with alias `api` and distinct titles, and the skill is rendered
@@ -49,6 +49,17 @@ Each repository's effective names SHALL be its title, aliases and any keywords m
 #### Scenario: Disputed names filtered before the budget
 - **WHEN** a workspace's effective names fill the routing skill's description budget, and two mounts also claim the alias `api`
 - **THEN** the description holds every effective name it held without the mounts' dispute, never `api`, and `api` is not reported as a skipped alias
+
+#### Scenario: Keywords across mounts
+- **WHEN** a workspace repository and a mounted repository both have keyword `billing`, and the mounted one also has keyword `site`, which is a workspace repository's alias, and a caller renders the skill, runs `validate` and `repos locate billing <path>`
+- **THEN** the description contains `billing` once and `site` only for the workspace repository, `validate` passes with a warning naming the dropped keyword, and the locate fails with `UNKNOWN_REPOSITORY`
+
+### Requirement: Context from the canonical concept
+When concepts share an upstream, the repository's `context` SHALL come only from its canonical concept, with relative refs resolving in that concept's hub; alternate concepts' `context` SHALL be ignored with a warning naming them.
+
+#### Scenario: Open through an alternate id
+- **WHEN** mounts `data` and `shared` both register `https://github.com/example/orders`, each with a `context` that refers to `/guides/deploy` in its own hub, and a caller runs `repos open shared:/repos/orders`
+- **THEN** it opens `data:/repos/orders` with the `data` concept's context, its ref given as `data:/guides/deploy`, and a warning naming `shared:/repos/orders`
 
 ## MODIFIED Requirements
 

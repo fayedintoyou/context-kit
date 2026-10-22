@@ -132,6 +132,10 @@ This is core Context Kit functionality, like hubs and repositories.
   archive. Agreed landing order after `slice-aware-links`: #50's routing,
   front-matter and portable-entry slices, then #49's open and routing slices, then
   this change's `mounted-repositories` slice; the other slices of all three can
-  land concurrently.
+  land concurrently. slices.yaml can't depend across changes, so that slice's
+  first task checks the order (`specs status machine-setup` / `repo-context`).
+  This change owns `Effective trigger names` (#50 names its renderer requirement
+  differently), including how keywords behave across mounts, and decides that a
+  shared upstream's `context` (#49) comes from the canonical concept.
 - No new dependencies. Uses the `git` CLI, like `repos clone`. Tests use local
   `file://` repositories, so they need no network.

@@ -225,7 +225,23 @@ manifest-less bundles.
     budget, so a dispute never costs another repository its alias. Disputed names
     appear only in the body, with the qualified ids they may mean. This change
     therefore does not modify `Generated routing skill`; it adds `Effective trigger
-    names`, which any renderer must honor.
+    names`, which any renderer must honor and which this change owns (#50 names
+    its own requirement for the renderer).
+
+    **Keywords** (the field `machine-setup` adds) are routing triggers only, never
+    identifiers: no `repos` command resolves a repository by a keyword. Keywords
+    shared by several repositories are allowed and listed once. A keyword equal to
+    another repository's title or alias is a `validate` error among workspace
+    hubs (owned by `machine-setup`); with a mount involved it is dropped with a
+    warning, workspace hubs first. All of this filtering happens before the
+    description budget.
+
+    **Context ownership.** When concepts share an upstream, the repository's
+    `context` (from `repo-context`) comes only from the canonical concept chosen by
+    the fixed order above, and its relative refs (`/<id>`) resolve in that
+    concept's own hub, so they come out qualified (`data:/guides/deploy`).
+    Alternates' `context` is ignored with a warning. `repos open` through an
+    alternate id therefore returns the canonical context.
 
 13. **Unfetched is a normal state.** A fresh clone of a workspace has pins but no
     content. `list`, `search`, `repos` and `validate` warn with the exact remedy

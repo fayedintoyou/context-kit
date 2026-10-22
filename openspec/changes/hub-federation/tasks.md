@@ -39,10 +39,13 @@ spec-links requires tests for every scenario here, so no slice can pass `npm tes
 
 ## 5. Mounted repositories (slice `mounted-repositories`)
 
+- [ ] 5.0 Landing check before starting this slice: on a fresh `main`, `specs status machine-setup` shows its routing/front-matter and portable-entry slices `landed`, and `specs status repo-context` shows its `open` and `routing` slices `landed` (or those changes are archived). If not, wait; slices.yaml cannot express a cross-change dependency
+
 - [ ] 5.1 Registry reads fetched mounts' Repository concepts as `<mount>:/<id>` with `mount`; `my-repos` lists them with their mount and read command; mount commands refresh installed unchanged copies; link `test/e2e/repos.test.mjs` to "One person's hub on two machines" and "Many people, one hub", and `test/e2e/agents.test.mjs` to "Upgrade brings a new repository"
 - [ ] 5.2 One repository per upstream with `alternateIds` accepted by every `repos` command; link `test/e2e/repos.test.mjs` to "Same upstream twice"
 - [ ] 5.3 Name precedence and warnings across mounts, keeping workspace-only duplicates failing; link `test/e2e/repos.test.mjs` to "Workspace keeps its alias", "Two mounts claim an alias" and "Workspace duplicates still fail"
-- [ ] 5.4 Effective trigger names in the registry, consumed by `machine-setup`'s renderer before its budget; disputed names only in the body; link `test/e2e/repos.test.mjs` to "Ambiguous names leave the triggers" and "Disputed names filtered before the budget"
+- [ ] 5.4 Effective trigger names in the registry, consumed by `machine-setup`'s renderer before its budget; disputed names only in the body; keywords as triggers only, deduplicated, dropped with a warning when they collide with a name and a mount is involved; link `test/e2e/repos.test.mjs` to "Ambiguous names leave the triggers", "Disputed names filtered before the budget" and "Keywords across mounts"
+- [ ] 5.4a Canonical concept owns `context` (from `repo-context`), refs resolved in its hub, alternates ignored with a warning; link `test/e2e/repos.test.mjs` to "Open through an alternate id"
 - [ ] 5.5 Recovery guidance and a recovery skill for unavailable mounts through the portable entry point (no `cd`); rebase `Routing skill guidance` onto `repo-context`'s and `machine-setup`'s text first; link `test/e2e/repos.test.mjs` to "Mount declared but not fetched" and "No repositories" (updated), and `test/e2e/agents.test.mjs` to "Only unfetched mounts" and "Recovery from an unrelated directory"
 - [ ] 5.6 Document mounts, including that every admitted MCP client (stdio or HTTP) sees mounted content, in `docs/format.md` and README, mark roadmap step 3 done in `docs/next.md`
 
