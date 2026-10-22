@@ -130,6 +130,10 @@ A rendered diagram SHALL colour declared statuses (grey works, red issue, green 
 - **WHEN** a map with a declared working state, a declared issue with its declared fix and an untested state is rendered
 - **THEN** the diagram colours the first three grey, red and green, outlines the last as untested, draws the fix edge and keys the untested style as derived
 
+#### Scenario: Status key shows on GitHub
+- **WHEN** a map file with declared and derived statuses and a written diagram is pushed and viewed on GitHub
+- **THEN** GitHub draws the status colours, the fix edge and the key
+
 ### Requirement: JSON rendering
 `--format json` SHALL return the map as normalized JSON: nodes and transitions in file order with their kinds and labels, and each element's resolved citations (ID, kind, title, fingerprint). It SHALL include no warning that depends on the evaluation instant, so the same map and repository always give the same JSON.
 
@@ -146,7 +150,7 @@ A rendered diagram SHALL colour declared statuses (grey works, red issue, green 
 
 #### Scenario: Diagram shows on GitHub
 - **WHEN** a map file with a written diagram is pushed and viewed on GitHub
-- **THEN** GitHub draws the diagram with its shapes, labels and key
+- **THEN** GitHub draws the diagram with its shapes and labels
 
 ### Requirement: Check outcome
 The check report SHALL list each map with its errors and warnings, each with a code, element and message. The CLI SHALL exit nonzero when any error is reported, or any warning with `--strict`; MCP SHALL return the report either way.
