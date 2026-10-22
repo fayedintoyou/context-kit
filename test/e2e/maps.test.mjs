@@ -523,6 +523,7 @@ transitions:
   assert.equal(checked.error.code, 'INVALID_SOURCE');
 });
 
+// spec: behavior-maps / Linked-intent scope
 test('a map over linked-intent entries cites them by ID, scopes them by ID prefix and renders them', async t => {
   const { root, cli, mcp, checkBoth } = await fixture(t, 'lid');
   await mkdir(join(root, 'maps'));
@@ -550,6 +551,39 @@ transitions:
   const wrong = report(await checkBoth('sign-in'), 'sign-in');
   assert.deepEqual(wrong.errors.map(({ code, element }) => [code, element]), [['unknown_citation', 'button'], ['unknown_citation', 'scope']]);
   assert.match(wrong.errors[0].message, /AUTH-UI-009, which names no linked-intent entry/);
+});
+
+test('fenced code at any indentation is never an entry, and an entry-like item that does not parse is reported', async t => {
+  const { root, cli, mcp } = await fixture(t, 'lid');
+  await writeFile(join(root, 'docs/specs/factors-specs.md'), [
+    '## Second factor', '',
+    '- [x] **2FA-001**: Require a second factor.', '',
+    '    ```markdown',
+    '    - [x] **EXAMPLE-003**: This is code, not intent.',
+    '    - [x] **AUTH-UI-001**: A duplicate only in an example.',
+    '    ```', '',
+    '  - `[D]` **2FA-002**: Remember a trusted device',
+    '    for thirty days.',
+    '- An example that never closes:',
+    '  ~~~~',
+    '  - **EXAMPLE-004**: Still code.',
+    '  ~~~',
+    '  - **EXAMPLE-005**: Still code: the closing fence is too short.',
+    '- [ ] **2FA-003**: Listed once the item holding the open fence ends.',
+    '- [X] **2FA-004**: An upper-case X is no marker.',
+    '- [x] **2fa-005**: Lower case is no ID.',
+    '- **Notes**: Not an ID, and not reported.', ''].join('\n'));
+  const listed = await lidListing(cli, mcp);
+  const added = listed.json.behaviors.filter(behavior => behavior.file === 'docs/specs/factors-specs.md');
+  assert.deepEqual(added.map(({ id, marker, text }) => [id, marker, text]), [
+    ['2FA-001', 'implemented', 'Require a second factor.'],
+    ['2FA-002', 'deferred', 'Remember a trusted device\nfor thirty days.'],
+    ['2FA-003', 'gap', 'Listed once the item holding the open fence ends.']]);
+  assert.ok(!JSON.stringify(listed.json.behaviors).includes('EXAMPLE-'));
+  assert.deepEqual(listed.json.skipped.map(({ file, line, id }) => [file, line, id]), [
+    ['docs/specs/factors-specs.md', 18, '2FA-004'], ['docs/specs/factors-specs.md', 19, '2fa-005']]);
+  assert.match(listed.json.skipped[0].reason, /not a status marker/);
+  assert.match(listed.json.skipped[1].reason, /not a linked-intent ID/);
 });
 
 test('the lid source never follows a symlink and takes no store', async t => {

@@ -42,12 +42,16 @@ marker `[x]`, `[ ]` or `[D]`, plain or in backticks:
 - **CART-UI-001**: The system shall display the item count in the cart icon.
 ```
 
-The ID is upper-case letters and digits in `-`-joined segments ending in a number;
-the text runs to the next list item, heading or blank line. Each entry has `kind`
+The ID is upper-case letters and digits in `-`-joined segments ending in a number
+(`AUTH-UI-001`, `2FA-001`); the text runs to the next list item, heading or blank
+line. Each entry has `kind`
 `entry`, `title` (the nearest `##` heading, then the ID), `text`, `file`,
 `fingerprint` and `marker`: `implemented`, `gap`, `deferred` or `none`. The
 marker isn't part of the text, so marking an entry implemented keeps its
-fingerprint. Code blocks and other lines are ignored. An ID defined twice fails
+fingerprint. Fenced code blocks, at any indentation, and other lines are ignored. A
+list item that looks like an entry but has no valid ID or marker (`[X]`,
+`**auth-001**`) is not listed but reported in `skipped` with its `file`, `line`,
+`id` and `reason`. An ID defined twice fails
 with `INVALID_SOURCE` naming both places (`file:line`). Files are read as text,
 never executed, and never through a symlink: a symlinked file or directory is
 listed in `skipped` with its reason: `symlink`, `too large` (over 128 KiB) or

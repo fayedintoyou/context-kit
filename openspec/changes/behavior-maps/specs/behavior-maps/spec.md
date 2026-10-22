@@ -72,6 +72,10 @@ The check SHALL list as `uncovered` warnings the behaviors in the map's scope th
 - **WHEN** a map's scope is `alerts / Mention badge` and every scenario of that requirement is cited, while other `alerts` scenarios are not
 - **THEN** the check lists nothing as `uncovered`
 
+#### Scenario: Linked-intent scope
+- **WHEN** a map over the `lid` source has scope `AUTH-UI` and its one state cites `AUTH-UI-001`, then its scope becomes `AUTH-U` and the state cites `AUTH-UI-009`
+- **THEN** the first check is valid and lists `AUTH-UI-002` as `uncovered`, and the second reports the citation and the scope as `unknown_citation`
+
 ### Requirement: Pinned citations
 `maps pin <map>` (CLI only) SHALL record each citation's current fingerprint in the map block and change nothing else in the file. The check SHALL warn `unpinned` for a citation with no pin and `stale` for one whose behavior's fingerprint differs from its pin, naming the elements that cite it, and JSON rendering SHALL give each citation's pin state.
 
