@@ -1136,21 +1136,35 @@ test('a routing skill in the shared ~/.agents/skills location alone also makes a
   assert.equal(await exists(join(base, 'claude/skills')), false, 'nothing written');
 });
 
-// A corrupt checkouts file is refused while rendering the routing skill, which comes before
-// any write: no launcher, no records, no released registrations.
-test('install refuses a corrupt checkouts file with INVALID_CONFIG before writing anything', async t => {
-  const { base, env, workspace, agents, calls } = await fixture(t);
-  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
-  await mkdir(join(workspace, '.state'), { recursive: true });
-  await writeFile(join(workspace, '.state/checkouts.json'), '{ not json');
-  const refused = await agents('install');
-  assert.equal(refused.code, 1);
-  assert.equal(refused.error.code, 'INVALID_CONFIG');
-  assert.match(refused.error.message, /checkouts\.json/);
-  assert.equal(await exists(join(env.HOME, '.local/bin')), false, 'no launcher directory');
-  assert.equal(await exists(join(workspace, '.state/agents.json')), false, 'no records');
-  assert.equal(await exists(join(base, 'claude/skills')), false);
-  assert.deepEqual(await calls(), []);
+// Every configuration install reads is read before its first write, so a broken one refuses
+// with INVALID_CONFIG and nothing is written: no launcher, records, skills or agent CLI calls.
+test('install refuses a corrupt configuration with INVALID_CONFIG before writing anything', async t => {
+  const broken = {
+    'checkouts file': [async workspace => {
+      await mkdir(join(workspace, '.state'), { recursive: true });
+      await writeFile(join(workspace, '.state/checkouts.json'), '{ not json');
+    }, /checkouts\.json/],
+    'context-kit.json': [workspace => writeFile(join(workspace, 'context-kit.json'), '{ "version": 1, "addons": ['), /context-kit\.json/],
+    'unknown enabled addon': [workspace => writeFile(join(workspace, 'context-kit.json'), JSON.stringify({ version: 1, addons: ['reflect', 'nonesuch'] })), /nonesuch/],
+    'addon manifest': [async workspace => {
+      await workspaceAddon(workspace);
+      await writeFile(join(workspace, 'addons/drafting/addon.json'), '{ "name": "drafting", ');
+    }, /drafting/],
+  };
+  for (const [label, [breakIt, message]] of Object.entries(broken)) {
+    const { base, env, workspace, agents, calls } = await fixture(t);
+    await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+    await breakIt(workspace);
+    const refused = await agents('install');
+    assert.equal(refused.code, 1, label);
+    assert.equal(refused.error.code, 'INVALID_CONFIG', `${label}: ${JSON.stringify(refused.error)}`);
+    assert.match(refused.error.message, message, label);
+    assert.equal(await exists(join(env.HOME, '.local/bin')), false, `${label}: no launcher directory`);
+    assert.equal(await exists(join(workspace, '.state/agents.json')), false, `${label}: no records`);
+    assert.equal(await exists(join(base, 'claude/skills')), false, `${label}: no Claude Code skills`);
+    assert.equal(await exists(join(env.HOME, '.agents')), false, `${label}: no shared skills`);
+    assert.deepEqual(await calls(), [], `${label}: no agent CLI calls`);
+  }
 });
 
 // spec: agent-installation / Foreign launcher
