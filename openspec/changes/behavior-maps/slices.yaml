@@ -1,0 +1,57 @@
+slices:
+  - id: journey
+    title: OpenSpec source to a checked, rendered map, with the maps addon, skill, help and docs
+    implements:
+      - behavior-sources / Behavior source boundary
+      - behavior-sources / OpenSpec behaviors
+      - behavior-sources / Stable fingerprints
+      - behavior-maps / Map files
+      - behavior-maps / Map contents
+      - behavior-maps / Map structure
+      - behavior-maps / Citations resolve
+      - behavior-maps / Coverage
+      - behavior-maps / Plain-language labels
+      - behavior-maps / Check outcome
+      - behavior-maps / Mermaid rendering
+      - behavior-maps / JSON rendering
+      - behavior-maps / Generated diagram
+      - behavior-maps / Map writes are CLI-only
+      - behavior-maps / Maps addon
+      - behavior-maps / Drafting maps
+    paths: ["lib/behavior/**", "lib/operations.mjs", "bin/hub.mjs", "addons/maps/**", "skills/behavior-map/**",
+      "skills/context-kit/SKILL.md", "skills/context-kit/references/**", "docs/**", "README.md",
+      "test/e2e/maps.test.mjs", "test/e2e/fixtures/maps/**", "test/e2e/addons.test.mjs", "test/e2e/mcp.test.mjs",
+      "test/e2e/help.test.mjs", "test/manual-checks.md"]
+  - id: pins
+    title: maps pin, stale and unpinned citations, convergence
+    implements:
+      - behavior-maps / Pinned citations
+    depends_on: [journey]
+    paths: ["lib/behavior/**", "lib/operations.mjs", "bin/hub.mjs", "skills/behavior-map/**", "skills/context-kit/references/**",
+      "docs/maps.md", "test/e2e/maps.test.mjs", "test/e2e/fixtures/maps/**"]
+  - id: lid-source
+    title: Linked-intent development source, tested against upstream entries
+    implements:
+      - behavior-sources / Linked-intent behaviors
+    depends_on: [journey]
+    paths: ["lib/behavior/**", "skills/behavior-map/**", "skills/context-kit/references/**", "docs/maps.md",
+      "test/e2e/maps.test.mjs", "test/e2e/fixtures/maps/**"]
+  - id: hub-maps
+    title: Hub source, hub maps for persona and team working states, evaluation instant, context warnings
+    implements:
+      - behavior-sources / Hub behaviors
+      - behavior-sources / Evaluation instant
+      - behavior-maps / Hub maps
+      - behavior-maps / Context map warnings
+    depends_on: [journey]
+    paths: ["lib/behavior/**", "lib/workspace.mjs", "lib/operations.mjs", "bin/hub.mjs", "skills/behavior-map/**",
+      "skills/context-kit/references/**", "docs/**", "test/e2e/maps.test.mjs", "test/e2e/fixtures/maps/**"]
+  - id: evidence
+    title: Declared status with evidence, derived test-link status, status in diagrams
+    implements:
+      - behavior-maps / Declared status
+      - behavior-maps / Status from linked tests
+      - behavior-maps / Status in diagrams
+    depends_on: [journey]
+    paths: ["lib/behavior/**", "lib/operations.mjs", "bin/hub.mjs", "skills/behavior-map/**", "skills/context-kit/references/**",
+      "docs/maps.md", "test/e2e/maps.test.mjs", "test/e2e/fixtures/maps/**", "test/manual-checks.md"]
