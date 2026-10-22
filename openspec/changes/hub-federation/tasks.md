@@ -3,9 +3,6 @@
 Every slice that adds a command, MCP tool or error code also adds it to the help
 topics, so `help / Help covers the tool` keeps passing.
 
-Delivery depends on the toolkit-wide `slice-aware-links` change: until it lands,
-spec-links requires tests for every scenario here, so no slice can pass `npm test`.
-
 ## 1. Mount lifecycle (slice `mount-lifecycle`)
 
 - [ ] 1.1 Accept `mounts` in `context-kit.json` (name pattern, `source`, `path`, `ref`, 40-hex `commit`, no other keys; name not a workspace hub ID); link `test/e2e/mounts.test.mjs` to "Invalid mount declaration"

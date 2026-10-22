@@ -119,9 +119,6 @@ This is core Context Kit functionality, like hubs and repositories.
 - Help: a `mounts` topic, usage lines and the new error codes; `docs/format.md`,
   README and `docs/next.md` describe mounts. OKF links move to the canonical
   repository, https://github.com/GoogleCloudPlatform/open-knowledge-format.
-- Delivery depends on the toolkit-wide `slice-aware-links` change (spec-links
-  requires tests only for requirements of slices that have landed or are being
-  delivered). Until it lands, any branch carrying this change fails `npm test`.
 - Coordinates with two sibling plans. `machine-setup` (#50) owns the routing-skill
   renderer (front-matter budget, shards, keywords, the launcher-based portable
   entry point), so this change does not modify `Generated routing skill`; it adds
@@ -129,7 +126,7 @@ This is core Context Kit functionality, like hubs and repositories.
   and its recovery guidance uses #50's portable entry point. `repo-context` (#49)
   changes the skill body around `repos open`. The one remaining MODIFIED registry
   requirement, `Routing skill guidance`, rebases onto #49's and #50's text before
-  archive. Agreed landing order after `slice-aware-links`: #50's routing,
+  archive. Agreed landing order: #50's routing,
   front-matter and portable-entry slices, then #49's open, routing and fields slices, then
   this change's `mounted-repositories` slice; the other slices of all three can
   land concurrently. slices.yaml can't depend across changes, so that slice's
