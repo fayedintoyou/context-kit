@@ -264,6 +264,54 @@ test('scan records nothing for a worktree of a bare repository or of a deleted m
   assert.ok((await cli('repos')).json.repositories.every(item => item.status === 'missing'));
 });
 
+// spec: repository-registry / Scan finds a worktree
+test('a main checkout whose path holds a newline is recorded through its worktree, by scan and at a setup prompt', async t => {
+  const { base, cli, cliInput, register, checkout, commit } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await register('personal', 'studio', { title: 'studio', resource: 'https://github.com/me/studio' });
+  const room = await checkout(join(base, 'elsewhere/ro\nom'), { origin: 'https://github.com/me/room' });
+  await commit(room);
+  await exec('git', ['worktree', 'add', '-q', join(base, 'code/room-wt')], { cwd: room });
+  const studio = await checkout(join(base, 'elsewhere/stu\ndio '), { origin: 'https://github.com/me/studio' });
+  await commit(studio);
+  await exec('git', ['worktree', 'add', '-q', join(base, 'other/studio-wt')], { cwd: studio });
+  const scanned = await cli('repos', 'scan', join(base, 'code'));
+  assert.equal(scanned.code, 0, JSON.stringify(scanned.error));
+  assert.deepEqual(scanned.json.recorded.map(item => [item.id, item.path]), [['personal/main/room', room]]);
+  assert.deepEqual(scanned.json.skipped, []);
+  const setup = await cliInput(`${join(base, 'other/studio-wt')}\n`, 'repos', 'setup', '--ask', '--scan', join(base, 'code'));
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  assert.deepEqual(setup.json.located, [{ id: 'personal/main/studio', path: studio }]);
+  assert.deepEqual((await cli('repos')).json.repositories.map(item => item.path), [room, studio]);
+});
+
+test('setup never reports the credentials in a wrong checkout\'s remote, on stderr or in its result', async t => {
+  const { base, cliInput, register, checkout } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const token = 'ghp_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8';
+  const wrong = await checkout(join(base, 'wrong'), { origin: `https://faye:${token}@github.com/me/other.git`, mirror: `https://github.com/me/other?access_token=${token}` });
+  const setup = await cliInput(`${wrong}\n\n`, 'repos', 'setup', '--ask');
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  assert.equal(setup.json.failed[0].code, 'REMOTE_MISMATCH');
+  assert.match(setup.json.failed[0].message, /https:\/\/\*\*\*@github\.com\/me\/other/);
+  assert.match(setup.stderr, /REMOTE_MISMATCH/);
+  for (const text of [setup.stderr, JSON.stringify(setup.json)]) {
+    assert.ok(!text.includes(token) && !text.includes('faye:'), text);
+  }
+});
+
+test('a scan survives a directory with tens of thousands of subdirectories', async t => {
+  const { base, env, workspace, register, checkout } = await fixture(t);
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const wide = join(base, 'wide');
+  await mkdir(wide);
+  // A small stack makes 20,000 entries overflow a spread the way ~130,000 do by default.
+  for (let i = 0; i < 20000; i += 500) await Promise.all(Array.from({ length: 500 }, (_, j) => mkdir(join(wide, `d${i + j}`))));
+  const room = await checkout(join(wide, 'room'), { origin: 'https://github.com/me/room' });
+  const { stdout } = await exec(process.execPath, ['--stack-size=100', join(kit, 'bin/hub.mjs'), '--root', workspace, 'repos', 'scan', wide], { env, maxBuffer: 16 * 1024 * 1024 });
+  assert.deepEqual(JSON.parse(stdout).recorded, [{ id: 'personal/main/room', path: room }]);
+});
+
 // spec: repository-registry / Fresh machine without prompts
 test('repos setup records what it finds under home, reports the rest with remedies and clones nothing', async t => {
   const { env, cliInput, register, checkout, upstream } = await fixture(t);

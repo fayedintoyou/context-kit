@@ -43,7 +43,7 @@ slices:
       - repository-registry / Scan a directory once
       - repository-registry / Machine setup
       - repository-registry / Worktrees are not recorded checkouts
-    paths: ["lib/repos.mjs", "lib/operations.mjs", "bin/hub.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
+    paths: ["lib/repos.mjs", "lib/operations.mjs", "lib/arguments.mjs", "bin/hub.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/**", "openspec/changes/machine-setup/tasks.md"]
   - id: global-rule
     title: Optional Claude Code user rule
     implements:
