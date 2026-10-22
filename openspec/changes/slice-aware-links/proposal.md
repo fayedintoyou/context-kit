@@ -26,9 +26,11 @@ built fails the link check, so the first slice can't land green. Three sliced pl
   and the archive job tests the archived tree, where the scenarios are canonical.
 - Changes without `slices.yaml`, and the canonical specs, behave as today.
 - Without a plan base or `origin/HEAD`, the base is `main` or `master` locally or as fetched from
-  `origin` (fully qualified), so a detached checkout with only `refs/remotes/origin/main`, as CI
+  `origin`, so a detached checkout with only `refs/remotes/origin/main`, as CI
   has, judges landing against it. When none exists the current branch is still the base for
-  `specs status`, but the link check doesn't trust it and requires every scenario.
+  `specs status`, but the link check doesn't trust it and requires every scenario. A base is only
+  ever a branch, as fully qualified `refs/heads/<name>` and `refs/remotes/origin/<name>`: a tag,
+  `HEAD` or a commit id is never one, so a plan's `base: HEAD` is `Base branch not found`.
 - The `checks` workflow fetches full history, so the link check can read landing evidence instead
   of falling back to requiring everything in a shallow clone.
 

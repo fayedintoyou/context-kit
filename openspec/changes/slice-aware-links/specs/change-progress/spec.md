@@ -9,7 +9,7 @@ For an active repository change with a slice plan, the link check (`npm run spec
 
 #### Scenario: Slice on the current branch
 - **WHEN** HEAD has a commit with `OpenSpec-Change: deliver` and `OpenSpec-Slice: storage` that is not on `main`, another branch has the `api` slice's trailer commit, and no test links either slice's scenario
-- **THEN** the link check fails naming the `storage` scenario, and the `api` scenario is still pending, also from a detached HEAD in a clone with `origin/main` and no local `main`
+- **THEN** the link check fails naming the `storage` scenario, and the `api` scenario is still pending, also from a detached HEAD in a clone with `origin/main`, no local `main` and a `main` tag at HEAD
 
 #### Scenario: Landed slice
 - **WHEN** the `storage` slice's trailer commit is merged into `main`, HEAD is `main`, and no test links its scenario
@@ -20,10 +20,10 @@ For an active repository change with a slice plan, the link check (`npm run spec
 - **THEN** the link check fails naming each of those scenarios
 
 ### Requirement: Test links fail closed
-When a planned change's progress can't be read, as in a shallow clone, outside git, without a default branch, with an invalid plan or for a store's change, the link check SHALL require every scenario of the change and say why. Pending scenarios SHALL still be listed untested by `specs reconcile`, and a change with an unlanded slice SHALL NOT be archivable, so a change archives only with every scenario linked.
+When a planned change's progress can't be read, as in a shallow clone, outside git, without a default branch, with a base that is no branch, with an invalid plan or for a store's change, the link check SHALL require every scenario of the change and say why. Pending scenarios SHALL still be listed untested by `specs reconcile`, and a change with an unlanded slice SHALL NOT be archivable, so a change archives only with every scenario linked.
 
 #### Scenario: Shallow clone
-- **WHEN** a planned change with no started slice is checked in a shallow clone, in a repository with no `origin/HEAD`, `main` or `master`, or its `slices.yaml` is invalid
+- **WHEN** a planned change with no started slice is checked in a shallow clone, in a repository with no `origin/HEAD`, `main` or `master`, with a plan base that is no branch, such as `HEAD`, or with an invalid `slices.yaml`
 - **THEN** the link check fails naming every scenario of the change, and its output names the change and the reason
 
 #### Scenario: Archive needs every link

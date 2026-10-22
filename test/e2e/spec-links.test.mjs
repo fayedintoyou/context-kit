@@ -94,7 +94,7 @@ test('scenarios of unstarted slices are pending and do not fail the link check',
 
 // spec: change-progress / Slice on the current branch
 test('a slice with a trailer commit on HEAD must link its scenarios, while other branches do not count', async t => {
-  const { git, link, land, detachedClone, check } = await fixture(t);
+  const { git, gitIn, link, land, detachedClone, check } = await fixture(t);
   await git('checkout', '-qb', 'api-work');
   await land('api');
   await git('checkout', '-q', 'main');
@@ -106,6 +106,11 @@ test('a slice with a trailer commit on HEAD must link its scenarios, while other
   assert.ok(missing(result.stderr, 'Radius'), result.stderr);
   assert.ok(!missing(result.stderr, 'Ordering'), result.stderr);
   assert.match(result.stdout, /^○ locations \/ Use Ordering {2}pending: deliver slice api not started$/m);
+  // A tag named main at HEAD is no base: origin/main still is.
+  await gitIn(ci, 'tag', 'main');
+  result = await check(ci);
+  assert.equal(result.code, 1, result.stdout);
+  assert.ok(missing(result.stderr, 'Radius'), result.stderr);
 
   await git('checkout', '-qb', 'storage-work');
   await land('storage');
@@ -153,8 +158,8 @@ test('requirements no slice implements and changes without a plan stay required'
 });
 
 // spec: change-progress / Shallow clone
-test('a shallow clone, no default branch or an invalid plan requires every scenario of the change and says why', async t => {
-  const { base, root, env, git, check } = await fixture(t);
+test('a shallow clone, no default branch, a base that is no branch or an invalid plan requires every scenario of the change and says why', async t => {
+  const { base, root, env, git, land, detachedClone, check } = await fixture(t);
   const clone = join(base, 'shallow');
   await exec('git', ['clone', '-q', '--depth', '1', `file://${root}`, clone], { env });
   let result = await check(clone);
@@ -168,6 +173,15 @@ test('a shallow clone, no default branch or an invalid plan requires every scena
   assert.ok(missing(result.stderr, 'Radius') && missing(result.stderr, 'Ordering'), result.stderr);
   assert.match(result.stderr, /deliver: every scenario is required, .*no default branch was found .*so trunk is no base/);
   await git('branch', '-m', 'trunk', 'main');
+
+  // A plan base that is no branch, such as HEAD, would hide a slice built on HEAD.
+  const ci = await detachedClone();
+  await land('storage', ci);
+  await put(ci, 'openspec/changes/deliver/slices.yaml', `base: HEAD\n${plan}`);
+  result = await check(ci);
+  assert.equal(result.code, 1);
+  assert.ok(missing(result.stderr, 'Radius') && missing(result.stderr, 'Ordering'), result.stderr);
+  assert.match(result.stderr, /deliver: every scenario is required, .*Base branch not found: HEAD/);
 
   await put(root, 'openspec/changes/deliver/slices.yaml', plan.replace('depends_on: [storage]', 'depends_on: [client]'));
   result = await check();
