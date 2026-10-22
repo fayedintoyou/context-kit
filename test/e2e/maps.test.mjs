@@ -545,15 +545,63 @@ transitions:
   await write('AUTH-UI', 'AUTH-UI-001');
   const checked = report(await checkBoth('sign-in'), 'sign-in');
   assert.equal(checked.valid, true, JSON.stringify(checked.errors));
-  assert.deepEqual(checked.warnings.map(({ code, element }) => [code, element]), [['uncovered', 'AUTH-UI-002']]);
+  assert.deepEqual(checked.warnings.map(({ code, element }) => [code, element]), [['uncovered', 'AUTH-UI-002'], ['unpinned', 'button']]);
   const rendered = await cli('maps', 'render', 'sign-in', '--format', 'json');
-  assert.deepEqual(rendered.json.nodes[1].cites, [{ id: 'AUTH-UI-001', kind: 'entry', title: 'User Authentication / AUTH-UI-001', fingerprint: (await lidListing(cli, mcp)).json.behaviors[0].fingerprint }]);
+  assert.deepEqual(rendered.json.nodes[1].cites, [{ id: 'AUTH-UI-001', kind: 'entry', title: 'User Authentication / AUTH-UI-001', fingerprint: (await lidListing(cli, mcp)).json.behaviors[0].fingerprint, pin: 'unpinned' }]);
   assert.deepEqual(await mcp('render_map', { map: 'sign-in', format: 'json' }), rendered.json);
   // A prefix is whole segments: AUTH-U names nothing; an unknown ID is an unknown citation.
   await write('AUTH-U', 'AUTH-UI-009');
   const wrong = report(await checkBoth('sign-in'), 'sign-in');
   assert.deepEqual(wrong.errors.map(({ code, element }) => [code, element]), [['unknown_citation', 'button'], ['unknown_citation', 'scope']]);
   assert.match(wrong.errors[0].message, /AUTH-UI-009, which names no linked-intent entry/);
+});
+
+test('a linked-intent map pins its entries, goes stale when an entry\'s text changes and not when only its marker does', async t => {
+  const { root, cli, mcp, checkBoth } = await fixture(t, 'lid');
+  await mkdir(join(root, 'maps'));
+  const file = join(root, 'maps/sign-in.md');
+  const map = mapText('Signing in', `
+version: 1
+source: { kind: lid }
+scope: [AUTH-UI]
+nodes:
+  - { id: home, kind: start, label: You open the home screen }
+  - { id: button, label: A login button shows, cites: [AUTH-UI-001] }
+  - { id: form, label: A sign-in form opens, cites: [AUTH-UI-002] }
+  - { id: done, kind: end, label: You can sign in }
+transitions:
+  - { from: home, to: button }
+  - { from: button, to: form }
+  - { from: form, to: done }`);
+  await writeFile(file, map);
+  const pinState = async () => {
+    const json = (await cli('maps', 'render', 'sign-in', '--format', 'json')).json;
+    assert.deepEqual(await mcp('render_map', { map: 'sign-in', format: 'json' }), json);
+    return json.nodes.flatMap(node => node.cites.map(cite => [cite.id, cite.pin]));
+  };
+  assert.deepEqual(report(await checkBoth('sign-in'), 'sign-in').warnings.map(({ code, element }) => [code, element]), [['unpinned', 'button'], ['unpinned', 'form']]);
+  assert.equal((await cli('maps', 'pin', 'sign-in')).json.written, true);
+  const fingerprints = Object.fromEntries((await lidListing(cli, mcp)).json.behaviors.map(behavior => [behavior.id, behavior.fingerprint]));
+  const pinned = await readFile(file, 'utf8');
+  assert.equal(pinned, map.replace('\n```\n', `\npins:\n  AUTH-UI-001: ${fingerprints['AUTH-UI-001']}\n  AUTH-UI-002: ${fingerprints['AUTH-UI-002']}\n\`\`\`\n`));
+  assert.deepEqual(report(await checkBoth('sign-in'), 'sign-in').warnings, []);
+  assert.deepEqual(await pinState(), [['AUTH-UI-001', 'current'], ['AUTH-UI-002', 'current']]);
+
+  // Ticking an entry's marker keeps it current; editing its text makes it stale until pinned again.
+  const auth = join(root, 'docs/intent/auth/auth-specs.md');
+  const spec = await readFile(auth, 'utf8');
+  const entry = spec.split('\n').find(line => line.includes('**AUTH-UI-002**'));
+  await writeFile(auth, spec.replace(entry, entry.replace(/\[x\]/, '[ ]')));
+  assert.notEqual(await readFile(auth, 'utf8'), spec);
+  assert.deepEqual(report(await checkBoth('sign-in'), 'sign-in').warnings, []);
+  await writeFile(auth, spec.replace(entry, `${entry} Also on small screens.`));
+  const stale = report(await checkBoth('sign-in'), 'sign-in');
+  assert.deepEqual(stale.warnings.map(({ code, element }) => [code, element]), [['stale', 'form']]);
+  assert.match(stale.warnings[0].message, /AUTH-UI-002/);
+  assert.deepEqual(await pinState(), [['AUTH-UI-001', 'current'], ['AUTH-UI-002', 'stale']]);
+  assert.equal((await cli('maps', 'pin', 'sign-in')).json.written, true);
+  assert.deepEqual(report(await checkBoth('sign-in'), 'sign-in').warnings, []);
+  assert.equal((await cli('maps', 'pin', 'sign-in')).json.written, false);
 });
 
 test('fenced code at any indentation is never an entry, and an entry-like item that does not parse is reported', async t => {
