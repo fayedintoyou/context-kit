@@ -23,14 +23,14 @@ The workspace SHALL provide a generated skill named `my-repos` whose description
 ## ADDED Requirements
 
 ### Requirement: Repository keywords and name bounds
-A Repository concept MAY list `keywords`: topic phrases people use for it that are not names, such as "personal site". `validate` SHALL report `keywords` that is not a list of strings, a title over 80 characters, an alias or keyword over 60, and a keyword equal to another repository's title or alias. Characters are Unicode code points.
+A Repository concept MAY list `keywords`: topic phrases that are not names, such as "personal site". `validate` SHALL report `keywords` that is not a list of strings, a title over 80 characters (code points), an alias or keyword over 60, and a keyword equal to another repository's title or alias when both are in workspace hubs; when a mount is involved, `hub-federation`'s warn-and-drop policy applies instead.
 
 #### Scenario: Keywords reach the description
 - **WHEN** a Repository concept lists keywords `personal site` and `portfolio`, and a caller runs `agents install` and later adds a keyword and runs `repos sync`
 - **THEN** the installed skill's description contains both keywords after install and the new one after sync, and `validate` passes
 
 #### Scenario: Invalid keywords and long names
-- **WHEN** one Repository concept has `keywords: portfolio` (not a list), another an 81-character title, and a third a keyword equal to another repository's alias
+- **WHEN** one Repository concept has `keywords: portfolio` (not a list), another an 81-character title, and a third a keyword equal to another repository's alias, all in workspace hubs
 - **THEN** `validate` fails naming each concept and field
 
 ### Requirement: Routing skill renders effective trigger names
@@ -45,7 +45,7 @@ The routing skill SHALL build its description only from each repository's effect
 - **THEN** the first is named by its alias, the second by its id, and neither long title appears in the description
 
 #### Scenario: Invalid keyword never rendered
-- **WHEN** a repository lists a 61-character keyword and a keyword equal to another repository's alias, and a caller runs `repos sync`
+- **WHEN** a workspace repository lists a 61-character keyword and a keyword equal to another workspace repository's alias, and a caller runs `repos sync`
 - **THEN** `validate` fails naming both, neither keyword appears in the description, and neither is reported as skipped by the budget
 
 ### Requirement: Routing skill keyword budget

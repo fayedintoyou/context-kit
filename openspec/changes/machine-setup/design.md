@@ -97,8 +97,9 @@ and a name two mounts claim, keywords included, is dropped with a warning and
 reachable by qualified id. This change's renderer requirement, *Routing skill
 renders effective trigger names*, only consumes it. Until #48 lands, effective
 means every valid name. Keywords are triggers only, never identifiers.
-Workspace-local collisions (a keyword equal to another repository's title or
-alias) fail `validate` here. #48 owns mount collisions (warning and drop). Either
+Collisions entirely among workspace repositories (a keyword equal to another
+repository's title or alias) fail `validate` here. When a mount is involved,
+#48's warning-and-drop policy applies and `validate` passes. Either
 way a filtered keyword never reaches the budget.
 This change only depends on the registry returning, per repository,
 `{title|null, aliases[], keywords[]}`, already filtered. A name over its length
