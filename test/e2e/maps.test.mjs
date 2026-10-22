@@ -725,13 +725,29 @@ test('a cited scenario edited after pinning is stale in the check and the JSON u
     assert.equal((await cli('maps', 'pin', 'alerts')).json.written, true);
     assert.equal(await readFile(mapFile, 'utf8'), original.replace(/\n/g, eol));
   }
-  // Comments and the other keys keep their bytes; an existing pins entry is rewritten in place.
+  // Pins are edited in place: the pins line and every comment stay, a stale value is replaced, a pin
+  // nothing cites loses its line and a new one follows the last; pinning again changes nothing.
+  const [, dotPin, badgePin] = original.match(/pins:\n {2}alerts \/ Room post without a mention: ([0-9a-f]{12})\n {2}alerts \/ Mention badge: ([0-9a-f]{12})\n/);
   const pinsText = original.match(/pins:\n(?: {2}.*\n)*/)[0];
   const commented = original.replace('scope: [alerts]', 'scope: [alerts]  # the whole capability');
-  await writeFile(mapFile, commented.replace(pinsText, 'pins: { alerts / Room post without a mention: abcdefabcdef } # reviewed\n'));
+  const withPins = text => commented.replace(pinsText, text);
+  const pinTwice = async (before, after) => {
+    await writeFile(mapFile, before);
+    assert.equal((await cli('maps', 'pin', 'alerts')).json.written, true);
+    assert.equal(await readFile(mapFile, 'utf8'), after);
+    assert.deepEqual(report(await checkBoth('alerts')).warnings, []);
+    assert.equal((await cli('maps', 'pin', 'alerts')).json.written, false);
+    assert.equal(await readFile(mapFile, 'utf8'), after);
+  };
+  await writeFile(mapFile, withPins('pins:  # reviewed in October\n  alerts / Room post without a mention: abcdefabcdef  # first pass\n  alerts / Gone: abcdefabcdef\n'));
   assert.deepEqual(pinWarnings(report(await checkBoth('alerts'))), [['stale', 'dot'], ['unpinned', 'badge']]);
-  await cli('maps', 'pin', 'alerts');
-  assert.equal(await readFile(mapFile, 'utf8'), commented.replace(pinsText, pinsText.replace(/\n$/, ' # reviewed\n')));
+  await pinTwice(await readFile(mapFile, 'utf8'),
+    withPins(`pins:  # reviewed in October\n  alerts / Room post without a mention: ${dotPin}  # first pass\n  alerts / Mention badge: ${badgePin}\n`));
+  // A flow-style pins value stays one flow mapping on its line, its comment kept.
+  await pinTwice(withPins('pins: { alerts / Room post without a mention: abcdefabcdef } # reviewed\n'),
+    withPins(`pins: { alerts / Room post without a mention: ${dotPin}, alerts / Mention badge: ${badgePin} } # reviewed\n`));
+  // New pins go after the last key, before a document end marker and trailing comments.
+  await pinTwice(withPins('...\n# end of the map\n'), withPins(`${pinsText}...\n# end of the map\n`));
 });
 
 // spec: behavior-maps / Pin and render converge
@@ -751,6 +767,7 @@ test('pin, check, render and check converge, and pinning and rendering again cha
   assert.equal(await readFile(mapFile, 'utf8'), converged);
 });
 
+// spec: behavior-maps / Pinning a flow-style map
 test('pinning is CLI-only, needs an explicit root and refuses a map it cannot pin without other changes', async t => {
   const { root, env, cli, mcp, mapFile, editMap } = await fixture(t);
   assert.equal((await mcp('pin_map', { map: 'alerts' })).error.code, 'UNKNOWN_OPERATION');
@@ -772,6 +789,6 @@ test('pinning is CLI-only, needs an explicit root and refuses a map it cannot pi
   assert.equal((await cli('maps', 'check', 'alerts')).json.valid, true);
   const flowRefused = await cli('maps', 'pin', 'alerts');
   assert.equal(flowRefused.error.code, 'INVALID_INPUT');
-  assert.match(flowRefused.error.message, /block mapping/);
+  assert.match(flowRefused.error.message, /block style/);
   assert.equal(await readFile(mapFile, 'utf8'), flow);
 });

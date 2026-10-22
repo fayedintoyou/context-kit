@@ -170,15 +170,19 @@ edit the block by hand: `--write` overwrites it and the check flags it.
 ## Pinning
 
 `maps pin <map>` (CLI only, never over MCP) records each citation's current
-fingerprint under the map block's `pins`, in citation order, dropping pins nothing
-cites, and changes nothing else in the file: the old `pins` entry is replaced in
-place, or a new one added at the end of the block, and comments and the other keys
-keep their bytes. Pin after a person has reviewed the map against its specs; from
+fingerprint under the map block's `pins` and changes nothing else in the file. It
+edits `pins` in place: a changed pin has only its value replaced, a pin nothing
+cites loses its line, and new pins follow the last one in citation order (a new
+`pins` key goes after the block's last key, before any `...` or trailing comments;
+a `{ ... }` pins value stays one flow mapping). The `pins` line, comments and the
+other keys keep their bytes, and when every pin is already current nothing is
+written (`written: false`). Pin after a person has reviewed the map against its specs; from
 then on the check warns `stale` when a cited requirement or scenario changes
 (editing a scenario also changes the requirement holding it), and `unpinned` for a
 citation added since. Review what changed, update the map if needed, and pin again.
 Like `--write` it needs an explicit root (otherwise `WRITE_DISABLED`), refuses a map
 with errors, and writes atomically; it also refuses (`INVALID_INPUT`) a block
-written as one `{ ... }` mapping, which has no line of its own for `pins`. Pins
+written as one `{ ... }` mapping, which has no line of its own for `pins`: write
+the block in block style, one key per line. Pins
 never change the diagram, so pin, check, `render --write` and check converge: a
 second pin and render leave the file unchanged (`written: false`).

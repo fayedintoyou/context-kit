@@ -77,7 +77,7 @@ The check SHALL list as `uncovered` warnings the behaviors in the map's scope th
 - **THEN** the first check is valid and lists `AUTH-UI-002` as `uncovered`, and the second reports the citation and the scope as `unknown_citation`
 
 ### Requirement: Pinned citations
-`maps pin <map>` (CLI only) SHALL record each citation's current fingerprint in the map block and change nothing else in the file. The check SHALL warn `unpinned` for a citation with no pin and `stale` for one whose behavior's fingerprint differs from its pin, naming the elements that cite it, and JSON rendering SHALL give each citation's pin state.
+`maps pin <map>` (CLI only) SHALL record each citation's current fingerprint in the map block and change nothing else in the file. The check SHALL warn `unpinned` for a citation with no pin and `stale` for one whose behavior's fingerprint differs from its pin, naming the elements that cite it, and JSON rendering SHALL give each citation's pin state. `maps pin` SHALL refuse a map whose block is one flow mapping, asking for block style.
 
 #### Scenario: Spec changed after pinning
 - **WHEN** a map is pinned and then the text of a scenario one state cites is edited
@@ -86,6 +86,10 @@ The check SHALL list as `uncovered` warnings the behaviors in the map's scope th
 #### Scenario: Pin and render converge
 - **WHEN** a map is pinned, checked, rendered with `--write` and checked again, and then pinned and rendered with `--write` once more
 - **THEN** the second check reports no `unpinned`, `stale` or `diagram_outdated` warning and the second pin and render leave the file byte-identical
+
+#### Scenario: Pinning a flow-style map
+- **WHEN** a map's whole block is written as one `{ ... }` mapping and `maps pin` is run
+- **THEN** it fails with `INVALID_INPUT` asking for block style and leaves the file unchanged
 
 ### Requirement: Plain-language labels
 The check SHALL report as errors node labels over 70 characters, `when` labels over 50, and labels containing backticks, identifiers with underscores or inner capitals, file paths, spec IDs such as `AUTH-UI-001`, or the words SHALL, MUST, WHEN or THEN. Terms in the map's `vocabulary` list SHALL be exempt.
