@@ -35,10 +35,10 @@
 
 ## 5. New-machine flow (slice `setup-flow`)
 
-- [ ] 5.1 Add `repos scan --depth` (default 1, at most 6), pruning hidden directories, `node_modules` and found checkouts; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Scan finds checkouts` and `Deeper scan`
-- [ ] 5.2 Record a linked worktree's main worktree from `git worktree list --porcelain` (realpath-normalized), and nothing for a bare or missing main; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Scan finds a worktree` and `Worktree of a bare or missing main`
-- [ ] 5.3 Add `repos setup [--scan <dir>]... [--depth <n>] [--clone <repos>] [--ask]` (CLI only) with prompts on a terminal or `--ask`, then refresh skills; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Fresh machine without prompts`, `Approved at a prompt` and `Named clone`
-- [ ] 5.4 Document setup, depth and worktrees in `repositories.md`, `commands.md` and the `bin/hub.mjs` usage; verify `test/e2e/help.test.mjs` passes
+- [x] 5.1 Add `repos scan --depth` (default 1, at most 6), pruning hidden directories, `node_modules` and found checkouts; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Scan finds checkouts` and `Deeper scan`
+- [x] 5.2 Record a linked worktree's main worktree from `git worktree list --porcelain` (realpath-normalized), and nothing for a bare or missing main; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Scan finds a worktree` and `Worktree of a bare or missing main`
+- [x] 5.3 Add `repos setup [--scan <dir>]... [--depth <n>] [--clone <repos>] [--ask]` (CLI only) with prompts on a terminal or `--ask`, then refresh skills; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Fresh machine without prompts`, `Approved at a prompt` and `Named clone`
+- [x] 5.4 Document setup, depth and worktrees in `repositories.md`, `commands.md` and the `bin/hub.mjs` usage; verify `test/e2e/help.test.mjs` passes
 
 ## 6. Optional global rule (slice `global-rule`)
 
