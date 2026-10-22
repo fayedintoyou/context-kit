@@ -29,9 +29,8 @@ canonical.
   worktree list --porcelain`. The lookup never falls back to an enclosing checkout,
   and among several matching remotes `origin` wins, otherwise the result is
   `ambiguous`.
-- **Landing gate.** `remote-access` becomes canonical only when `remote-mcp-access`
-  archives (its last task is the owner's live deploy check). Until then this
-  change's `remote-access` delta can't archive, so no part of it merges to `main`.
+- **Landing gate (cleared).** `remote-access` became canonical when
+  `remote-mcp-access` archived at b02d3ee.
 
 ## Capabilities
 
@@ -43,7 +42,8 @@ None.
 
 - `remote-access`: MODIFIES `HTTP transport` (parity except local-only tools and
   labeled paths); ADDs `Local-only tools` and `Serving machine paths`.
-- `repository-registry`: ADDs `Which repository is this` and `Which repository
+- `repository-registry`: MODIFIES `Read-only repository listing over MCP` (paths
+  are labeled over HTTP); ADDs `Which repository is this` and `Which repository
   over MCP`.
 
 ## Impact

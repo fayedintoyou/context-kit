@@ -5,8 +5,14 @@
 `lib/mcp/server.mjs` builds one server for both transports, and `list_repos`
 returns `path` the same way on both. Operations already carry `cliOnly` and `write`
 flags, which `operations()` uses to decide what a caller is offered. The registry's
-`checkout()` accepts any path that is the top of its own checkout, and
-`remoteKeys()` normalizes remotes as `locate` does. This was planned in
+`checkout()` accepts any path that is the top of its own checkout,
+`remoteKeys()` normalizes remotes as `locate` does, and `mainWorktree()` (added
+by `machine-setup`'s `setup-flow`) reads the main worktree from `git worktree
+list --porcelain -z` with reasons for bare, deleted and non-checkout mains.
+`repos which` reuses `checkout()` and `mainWorktree()` rather than adding a second
+worktree reader. A call to an operation a caller isn't offered already fails with
+`UNKNOWN_OPERATION` (as `cliOnly` operations do over MCP), so local-only tools use
+the same code, as `repo-context` expects. This was planned in
 `machine-setup` and split out unchanged (see its design for the routing skill and
 launcher).
 
@@ -63,22 +69,22 @@ This MODIFIES `remote-access / HTTP transport` and its parity scenario, and ADDs
 `Local-only tools` and `Serving machine paths` to `remote-access`. Tying the
 behavior to an option (`--machine-name`) would have kept strict parity, but an HTTP
 server started without it would silently send unlabeled paths, which is the
-failure this fixes. **Ordering:** `remote-access` becomes canonical when
-`remote-mcp-access` archives (its last task is the owner's live deploy check).
-Changes archive by name, so until then the archive rehearsal reports
-`local-only-tools` as unarchivable (task 0.1).
+failure this fixes. **Ordering:** `remote-access` became canonical when `remote-mcp-access`
+archived at b02d3ee, so the gate (task 0.1) is cleared. The canonical
+`repository-registry / Read-only repository listing over MCP` requirement also
+says `list_repos` returns `repos`' local paths, so it is MODIFIED to point at the
+HTTP labeling.
 
 
 ### Delivery
 
-Two slices, merged to `main` one at a time after the gate:
+Two slices, merged to `main` one at a time (the gate has cleared):
 - `local-only`, with no dependencies: the flag, transport filtering, and `repos
   which`/`which_repo` as its first user. `repo-context`'s open slice builds on it.
 - `remote-paths`, after `local-only`: `servingMachinePath` and `--machine-name`.
 
 **Landing order across the sibling plans** (coordinator, 2026-10-22):
-1. `machine-setup`'s `skill-frontmatter` and `portable-entry` slices, and this
-   change's `local-only` slice (once its gate clears);
+1. `machine-setup` (landed and archived) and this change's `local-only` slice;
 2. `repo-context`'s open/routing slices;
 3. `hub-federation`'s `mounted-repositories`.
 
@@ -98,9 +104,10 @@ harness) started with the same workspace and options.
   operation. Review of new tools checks for the flag.
 - [Clients that read `path` over HTTP break] → intended: they get no path instead
   of a wrong one. The description names the replacement key.
-- [The gate holds this change indefinitely] → it waits only on the owner's live
-  deploy check for `remote-mcp-access`. Nothing else depends on this change except
-  `repo-context`'s open slice.
+- [Other tools also return the serving machine's paths over HTTP] → the #33
+  connector check showed ChatGPT the workspace `root`, which several results carry.
+  This change labels `list_repos` only. Whether other results' `root` fields should
+  be labeled or withheld over HTTP is an open question for a follow-up.
 
 ## Migration Plan
 

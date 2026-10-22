@@ -28,11 +28,11 @@ The MCP server SHALL serve Streamable HTTP at `/mcp` when started with `--http <
 ## ADDED Requirements
 
 ### Requirement: Local-only tools
-Tools that resolve a path or checkout on this machine (such as `which_repo`, or a tool that opens a repository's local checkout) SHALL be local-only: offered over stdio and never over HTTP, and a call to one over HTTP SHALL fail as an unknown tool. Each such tool SHALL declare itself local-only where it is defined.
+Tools that resolve a path or checkout on this machine (such as `which_repo`, or a tool that opens a repository's local checkout) SHALL be local-only: offered over stdio and never over HTTP, and a call to one over HTTP SHALL fail with `UNKNOWN_OPERATION`. Each such tool SHALL declare itself local-only where it is defined.
 
 #### Scenario: Local-only tools stay local
 - **WHEN** a stdio client and an HTTP client list tools on servers started with the same workspace and options, and the HTTP client calls `which_repo` anyway
-- **THEN** stdio lists `which_repo`, HTTP does not, and the HTTP call fails as an unknown tool with no operation run
+- **THEN** stdio lists `which_repo`, HTTP does not, and the HTTP call fails with `UNKNOWN_OPERATION` and no operation runs
 
 #### Scenario: Every local-only tool is withheld
 - **WHEN** the HTTP server's tool list is compared with every operation the core declares local-only

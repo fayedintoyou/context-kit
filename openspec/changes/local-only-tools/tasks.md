@@ -2,7 +2,7 @@
 
 ## 0. Landing gate
 
-- [ ] 0.1 Before any part of this change (plan or slice) merges to `main`, confirm `remote-mcp-access` is archived (`openspec/specs/remote-access/spec.md` exists on `main`) and `node bin/hub.mjs --root . specs archive --rehearse` reports no issue for `local-only-tools`; until then this change's `remote-access` delta makes the rehearsal fail
+- [x] 0.1 Before any part of this change (plan or slice) merges to `main`, confirm `remote-mcp-access` is archived (`openspec/specs/remote-access/spec.md` exists on `main`) and `node bin/hub.mjs --root . specs archive --rehearse` reports no issue for `local-only-tools`; until then this change's `remote-access` delta makes the rehearsal fail. Done 2026-10-22: `remote-mcp-access` archived on `main` at b02d3ee (`openspec/specs/remote-access/spec.md` canonical); its ChatGPT and Claude connector checks are recorded on #33 (via #75); the rehearsal reports no issue for `local-only-tools`
 
 ## 1. Local-only tools (slice `local-only`, no dependencies)
 
@@ -12,7 +12,7 @@
 
 ## 2. Serving-machine paths (slice `remote-paths`, after `local-only`)
 
-- [ ] 2.1 Over HTTP, return `machine` (`--machine-name`, default the host name) and `servingMachinePath` from `list_repos`, with the HTTP description; verify `test/e2e/remote.test.mjs` linked to `remote-access / Remote client sees whose paths they are` and `test/e2e/repos.test.mjs` linked to `remote-access / Local clients unchanged`
+- [ ] 2.1 Over HTTP, return `machine` (`--machine-name`, default the host name) and `servingMachinePath` from `list_repos`, with the HTTP description; verify `test/e2e/remote.test.mjs` linked to `remote-access / Remote client sees whose paths they are` and `test/e2e/repos.test.mjs` linked to `remote-access / Local clients unchanged` and `repository-registry / List over MCP`
 - [ ] 2.2 Document labeled paths in `skills/context-kit/references/remote.md`; verify `node bin/hub.mjs validate`
 
 ## 3. Integration

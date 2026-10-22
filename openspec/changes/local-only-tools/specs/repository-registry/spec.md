@@ -1,5 +1,14 @@
 # Spec Delta
 
+## MODIFIED Requirements
+
+### Requirement: Read-only repository listing over MCP
+The MCP server SHALL offer a read-only `list_repos` tool returning the same repositories, upstreams, aliases and local paths as `repos`, with paths labeled as the serving machine's over HTTP (`remote-access / Serving machine paths`), and SHALL NOT offer tools that record paths or clone.
+
+#### Scenario: List over MCP
+- **WHEN** an MCP client calls `list_repos` on a workspace with a located repository
+- **THEN** it receives that repository with its local path, and no locate or clone tool is listed
+
 ## ADDED Requirements
 
 ### Requirement: Which repository is this
