@@ -96,8 +96,12 @@ npm run agents -- uninstall [--agent claude,codex]
   `--force`. Codex has no such hook and is reported `unsupported`. The entry belongs
   to the core it runs, so workspaces run from the same core share one entry, and
   uninstalling either of them removes it (the other then reports it `missing`).
+- A managed `context-kit` launcher goes to `$XDG_BIN_HOME` or `~/.local/bin`, and
+  one workspace per user owns it and `my-repos` (`WORKSPACE_CONFLICT` otherwise;
+  see `repositories`).
 - `status` reports each item `installed`, `changed`, `stale` (source changed;
-  reinstall) or `missing`, and `broken` if the Node path moved; the tripwire is
-  `installed`, `edited` or `missing`.
+  reinstall) or `missing`, `broken` if the Node path moved, and `moved` if it was
+  installed from another workspace path; the tripwire is `installed`, `edited` or
+  `missing`. The launcher also reports `onPath`.
 
 Restart the agent after installing or changing addons.

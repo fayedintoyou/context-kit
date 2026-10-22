@@ -21,6 +21,7 @@ async function fixture(t, ...initArgs) {
   t.after(() => rm(base, { recursive: true, force: true }));
   const env = { ...process.env, ...gitEnv, HOME: join(base, 'home'), XDG_DATA_HOME: join(base, 'data'), XDG_CONFIG_HOME: join(base, 'config') };
   delete env.CONTEXT_KIT_ROOT;
+  delete env.XDG_BIN_HOME;
   await mkdir(env.HOME);
   const workspace = join(base, 'workspace');
   const run = async (...args) => {
@@ -478,8 +479,8 @@ test('the routing skill gives the exact commands for a missing checkout', async 
   await cli('agents', 'status');
   const text = await readFile(join(workspace, '.state/generated/my-repos/SKILL.md'), 'utf8');
   assert.match(text, /## Missing on this machine/);
-  assert.ok(text.includes('repos clone personal/main/room'));
-  assert.ok(text.includes('repos locate personal/main/room <path>'));
+  assert.ok(text.includes(' repos clone personal/main/room`'));
+  assert.ok(text.includes(' repos locate personal/main/room <path>`'));
 });
 
 // spec: repository-registry / Workflow guidance before changes
@@ -492,9 +493,64 @@ test('the routing skill tells agents to read each repository\'s instructions bef
   const section = text.slice(text.indexOf('## Before changing a repository'));
   assert.ok(section.length < text.length, 'has a before-changing section');
   assert.match(section, /`AGENTS\.md` \(or `CLAUDE\.md`\)/);
-  const read = `cd ${JSON.stringify(workspace)} && npm run -s hub -- read personal/main`;
-  assert.ok(section.includes(`${read} room\``));
-  assert.ok(section.includes(`${read} kit\``));
+  // Through the core by path until a launcher is installed: no change of directory either way.
+  const read = `${process.execPath} ${join(kit, 'bin/hub.mjs')} --root ${workspace} read personal/main`;
+  assert.ok(section.includes(`- the room: \`${read} room\``), section);
+  assert.ok(section.includes(`- the kit: \`${read} kit\``), section);
+  assert.doesNotMatch(text, /\bcd\s|npm run/);
+});
+
+// Installs for Claude Code alone on this isolated machine; no agent CLIs, so MCP is skipped.
+const installFor = async ({ base, env, workspace }, args = [], extra = {}) => JSON.parse((await exec(process.execPath,
+  [join(kit, 'bin/hub.mjs'), '--root', workspace, 'agents', 'install', '--agent', 'claude', ...args],
+  { env: { HOME: env.HOME, CLAUDE_CONFIG_DIR: join(base, 'claude'), PATH: '/usr/bin:/bin', ...extra } })).stdout);
+const shellQuote = value => `'${value.replaceAll("'", `'\\''`)}'`;
+
+// spec: repository-registry / Body names the server and the launcher
+test('the routing body names the MCP server\'s resolve tool and the launcher command, with no cd', async t => {
+  const context = await fixture(t);
+  const { base, workspace, register } = context;
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  // A launcher directory with a space and non-ASCII letters, off PATH: named by quoted absolute path.
+  const bin = join(base, 'my bïn');
+  const installed = await installFor(context, ['--name', 'context-home'], { XDG_BIN_HOME: bin });
+  assert.equal(installed.results.find(item => item.kind === 'launcher').action, 'installed');
+  const launcher = shellQuote(join(bin, 'context-kit'));
+  let { body } = await agentSkill(join(base, 'claude/skills/my-repos'));
+  assert.ok(body.includes('call the\n`list_repos` tool of the `context-home` MCP server, or run\n' + `\`${launcher} repos\``), body);
+  assert.doesNotMatch(body, /\bcd\s|npm run/);
+  assert.ok(!body.includes(`${workspace} `) && !body.includes(`${workspace}"`), 'the workspace path appears only as the closing note');
+  // Run as written from another directory, it resolves the repository.
+  const command = body.match(/or run\n`([^`]+)`/)[1];
+  const { stdout } = await exec('/bin/sh', ['-c', command], { cwd: base, env: { HOME: context.env.HOME, PATH: '/usr/bin:/bin' } });
+  assert.deepEqual(JSON.parse(stdout).repositories.map(item => item.id), ['personal/main/room']);
+  // On PATH too, the skill keeps the absolute path; the server name is the one registered.
+  await installFor(context, ['--name', 'context-home'], { XDG_BIN_HOME: bin, PATH: `${bin}:/usr/bin:/bin` });
+  ({ body } = await agentSkill(join(base, 'claude/skills/my-repos')));
+  assert.ok(body.includes('`context-home` MCP server, or run\n' + `\`${launcher} repos\``), body);
+  // Status renders with the recorded server name and launcher, so the copy is current.
+  const status = JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, 'agents', 'status'],
+    { env: { HOME: context.env.HOME, XDG_BIN_HOME: bin, PATH: '/usr/bin:/bin' } })).stdout);
+  assert.deepEqual(status.items.filter(item => item.name === 'my-repos').map(item => item.state), ['installed']);
+});
+
+// spec: repository-registry / Remedies use the launcher
+test('clone, locate and concept read commands for a missing repository run through the launcher', async t => {
+  const context = await fixture(t);
+  const { base, env, workspace, register } = context;
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  await installFor(context);
+  const launcher = join(env.HOME, '.local/bin/context-kit');
+  const { body } = await agentSkill(join(base, 'claude/skills/my-repos'));
+  assert.ok(body.includes(`clone it with \`${launcher} repos clone personal/main/room\``), body);
+  assert.ok(body.includes(`record that with \`${launcher} repos locate personal/main/room <path>\``), body);
+  assert.ok(body.includes(`- the room: \`${launcher} read personal/main room\``), body);
+  assert.ok(body.includes(`\`${launcher} repos sync\``), body);
+  assert.doesNotMatch(body, /\bcd\s|npm run/);
+  const read = body.match(/- the room: `([^`]+)`/)[1];
+  const { stdout } = await exec('/bin/sh', ['-c', read], { cwd: base, env: { HOME: env.HOME, PATH: '/usr/bin:/bin' } });
+  assert.equal(JSON.parse(stdout).okf.title, 'the room');
+  assert.equal(workspace, JSON.parse(stdout).root);
 });
 
 // spec: repository-registry / No repositories
@@ -943,7 +999,8 @@ test('an scp-like resource keeps its git@ login and passes validate', async t =>
 // spec: repository-registry / Hand-written resource with a token
 test('repos, list_repos and the routing skill show a hand-written resource only in its clean form', async t => {
   const { env, workspace, register } = await fixture(t);
-  await register('personal', 'room', { title: 'the room', resource: `https://faye:${TOKEN}@github.com:8443/me/room.git?access_token=${TOKEN}` });
+  // A user name no machine path holds: the scan below covers rendered skills, which name this machine's Node.
+  await register('personal', 'room', { title: 'the room', resource: `https://tokenuser:${TOKEN}@github.com:8443/me/room.git?access_token=${TOKEN}` });
   const clean = 'https://github.com:8443/me/room.git';
   const listed = await rawCli(env, workspace, 'repos');
   assert.equal(listed.code, 0, listed.stderr);
@@ -957,7 +1014,7 @@ test('repos, list_repos and the routing skill show a hand-written resource only 
   t.after(() => client.close());
   const mcp = await client.callTool({ name: 'list_repos', arguments: {} });
   assert.deepEqual(mcp.structuredContent.repositories.map(item => item.upstream), [clean]);
-  noSecrets([TOKEN, 'faye'], [['repos', listed.stdout + listed.stderr], ['sync', synced.stdout + synced.stderr], ['list_repos', JSON.stringify(mcp)],
+  noSecrets([TOKEN, 'tokenuser'], [['repos', listed.stdout + listed.stderr], ['sync', synced.stdout + synced.stderr], ['list_repos', JSON.stringify(mcp)],
     ...(await filesUnder(join(workspace, '.state'))).map(file => [file.path, file.text])]);
 });
 

@@ -27,11 +27,11 @@
 
 ## 4. Portable entry point (slice `portable-entry`)
 
-- [ ] 4.1 Write, record, report (`onPath`) and uninstall the managed launcher in `$XDG_BIN_HOME` or `~/.local/bin`; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Run from anywhere` and `Foreign launcher`
-- [ ] 4.2 Refuse a second workspace with `WORKSPACE_CONFLICT` before writing, and let `--force` take over the launcher and generated skills; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Second workspace`
-- [ ] 4.3 Render the routing body around the operation marked `resolve` (`list_repos` until `repo-context` adds `open_repo`), naming the MCP server and the launcher, with every command through the launcher and no `cd`; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Body names the server and the launcher`, `Remedies use the launcher`, `Missing checkout guidance` and `Workflow guidance before changes`
-- [ ] 4.4 Report `moved` in `agents status` for records naming another root, make the launcher fail with `WORKSPACE_MOVED`, and repair on install; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Move and repair`
-- [ ] 4.5 Document the launcher, one workspace per user, and moving a workspace in `repositories.md`, `troubleshooting.md` and `commands.md`; verify `node bin/hub.mjs validate`
+- [x] 4.1 Write, record, report (`onPath`) and uninstall the managed launcher in `$XDG_BIN_HOME` or `~/.local/bin`; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Run from anywhere` and `Foreign launcher`
+- [x] 4.2 Refuse a second workspace with `WORKSPACE_CONFLICT` before writing, and let `--force` take over the launcher and generated skills; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Second workspace`
+- [x] 4.3 Render the routing body around the operation marked `resolve` (`list_repos` until `repo-context` adds `open_repo`), naming the MCP server and the launcher, with every command through the launcher and no `cd`; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Body names the server and the launcher`, `Remedies use the launcher`, `Missing checkout guidance` and `Workflow guidance before changes`
+- [x] 4.4 Report `moved` in `agents status` for records naming another root, make the launcher fail with `WORKSPACE_MOVED`, and repair on install; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Move and repair`
+- [x] 4.5 Document the launcher, one workspace per user, and moving a workspace in `repositories.md`, `troubleshooting.md` and `commands.md`; verify `node bin/hub.mjs validate`
 
 ## 5. New-machine flow (slice `setup-flow`)
 
