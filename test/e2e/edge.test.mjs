@@ -124,7 +124,16 @@ async function startOrigin() {
   return { url };
 }
 
-async function startEdge(name, vars) {
+// A free port can be taken by another process before wrangler binds it; wrangler then exits with
+// "Address already in use", so try again on fresh ports.
+async function startEdge(name, vars, attempts = 3) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await startEdgeOnce(name, vars); } catch (error) {
+      if (attempt >= attempts || !/Address already in use|EADDRINUSE/.test(error.message)) throw error;
+    }
+  }
+}
+async function startEdgeOnce(name, vars) {
   const port = await freePort();
   const publicUrl = `http://127.0.0.1:${port}`;
   const all = { PUBLIC_URL: publicUrl, GITHUB_URL: github.url, GITHUB_API_URL: github.url, GITHUB_CLIENT_ID,
