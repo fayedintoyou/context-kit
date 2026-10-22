@@ -42,8 +42,8 @@
 
 ## 6. Optional global rule (slice `global-rule`)
 
-- [ ] 6.1 Add `--global-rule`/`--no-global-rule`: a recorded, Context Kit-owned `context-kit.md` in Claude Code's user rules directory naming the resolve operation and no repositories, kept across plain reinstalls, `unsupported` elsewhere; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Opt in`, `Off unless asked` and `Edited rule`
-- [ ] 6.2 Document the opt-in in `addons-and-install.md` and README; verify `node bin/hub.mjs validate`
+- [x] 6.1 Add `--global-rule`/`--no-global-rule`: a recorded, Context Kit-owned `context-kit.md` in Claude Code's user rules directory naming the resolve operation and no repositories, kept across plain reinstalls, `unsupported` elsewhere; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Opt in`, `Off unless asked` and `Edited rule`
+- [x] 6.2 Document the opt-in in `addons-and-install.md` and README; verify `node bin/hub.mjs validate`
 
 ## 7. Integration
 

@@ -24,6 +24,7 @@ Workspace addons carry skills only, never code.
 ```sh
 npm run agents -- install [--agent claude,codex] [--scope user|project] [--project <dir>]
                           [--name <server>] [--link] [--allow-write] [--force] [--adopt] [--global-mcp]
+                          [--global-rule | --no-global-rule]
 npm run agents -- status
 npm run agents -- uninstall [--agent claude,codex]
 ```
@@ -111,6 +112,21 @@ npm run agents -- uninstall [--agent claude,codex]
   `--force`. Codex has no such hook and is reported `unsupported`. The entry belongs
   to the core it runs, so workspaces run from the same core share one entry, and
   uninstalling either of them removes it (the other then reports it `missing`).
+- `--global-rule` (off by default) writes a Claude Code user rule,
+  `$CLAUDE_CONFIG_DIR/rules/context-kit.md` (default `~/.claude/rules/`), which
+  Claude Code loads in every project. It is under 600 characters: your
+  repositories resolve from any directory through the server's `list_repos` tool
+  or the launcher's `repos`, and the checkout's `AGENTS.md` or `CLAUDE.md` comes
+  first. It never lists repositories; the `my-repos` description does the routing.
+  The opt-in is recorded, so later installs keep and refresh it until
+  `--no-global-rule` or `uninstall` removes it. It is user scope only (a project
+  install reports it `skipped`); Codex, Gemini CLI and Cursor report it
+  `unsupported`. A `context-kit.md` Context Kit didn't write is never replaced or
+  removed, even with `--force` (`RULE_FOREIGN`, or `RULE_REPLACED` when another
+  file took its place). An edited one is kept and reported `edited`
+  (`RULE_EDITED`) by install, `--no-global-rule` and uninstall until `--force`. It
+  is written by temporary file and link or rename, and only through real
+  directories (`SYMLINKED_PATH`). Status shows it with `enabled`.
 - A managed `context-kit` launcher goes to `$XDG_BIN_HOME` or `~/.local/bin`, and
   one workspace per user owns it and `my-repos` (`WORKSPACE_CONFLICT` otherwise;
   see `repositories`).
@@ -118,6 +134,7 @@ npm run agents -- uninstall [--agent claude,codex]
   reinstall), `missing`, `replaced` (another copy in its place) or `pending` (an
   interrupted install), `broken` if the Node path moved, and `moved` if it was
   installed from another workspace path; the tripwire is `installed`, `edited` or
-  `missing`. The launcher also reports `onPath`.
+  `missing`; the rule is `installed`, `edited`, `missing`, `replaced` or `pending`.
+  The launcher also reports `onPath`.
 
 Restart the agent after installing or changing addons.

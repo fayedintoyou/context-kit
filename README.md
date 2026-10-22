@@ -93,6 +93,12 @@ skills in the project and keeps the MCP server private to it (Codex needs
 `--global-mcp`). Restart your agent after changing addons so its MCP server
 reloads them.
 
+Agents find your repositories through the generated `my-repos` skill, whose
+description names them. `--global-rule` is an optional extra for Claude Code: a
+short user rule, `~/.claude/rules/context-kit.md`, that says how repositories
+resolve from any directory, without listing them. Later installs keep it until
+`--no-global-rule` or `uninstall`; other agents report it `unsupported`.
+
 ## Your own workspace
 
 `init <new-directory>` creates a workspace without installing it. Your context
