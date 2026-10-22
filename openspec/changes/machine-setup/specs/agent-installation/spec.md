@@ -3,11 +3,22 @@
 ## MODIFIED Requirements
 
 ### Requirement: Install into agents
-`agents install` SHALL install the enabled addons' skills into each selected agent's skill directory (Claude Code: `.claude/skills`; Codex: `~/.agents/skills` for user scope or `.agents/skills` for project scope) and register an MCP server named after the workspace through that agent's own CLI, with skill prompts turned off because the skills are installed natively, recording every installed item.
+`agents install` SHALL install the enabled addons' skills into each selected harness's skill directory (Claude Code: `.claude/skills`; the others: `~/.agents/skills` at user scope, `.agents/skills` at project scope) and register an MCP server named after the workspace through the harness's CLI (Claude Code, Codex, Gemini CLI) or its config file (Copilot CLI, Cursor), with skill prompts turned off, recording every installed item.
 
 #### Scenario: Install for Claude Code and Codex
 - **WHEN** a caller installs for both agents at user scope
 - **THEN** each agent's skill directory contains the enabled skills, Codex copies omit `disable-model-invocation`, each agent CLI is called to register the workspace's MCP server, and status reports every item as installed
+
+### Requirement: Missing agents
+When a harness that registers through its CLI (Claude Code, Codex, Gemini CLI) has no CLI on the path, the installer SHALL skip that harness's MCP registration with a clear report and still install its skills. Copilot CLI and Cursor SHALL register through their config files whether or not their executables are installed.
+
+#### Scenario: Agent CLI missing
+- **WHEN** a caller installs for an agent whose CLI is not on the path
+- **THEN** skills are installed and the result reports the MCP registration as skipped for that agent
+
+#### Scenario: Config-file harnesses need no executable
+- **WHEN** a caller installs for Codex, Copilot CLI and Cursor on a machine with none of their executables on the path
+- **THEN** Codex's registration is reported skipped, and Copilot CLI's and Cursor's are installed in their config files
 
 ## ADDED Requirements
 
@@ -170,7 +181,7 @@ Each skill record SHALL identify the copy it installed. A recorded path now hold
 - **THEN** the first install fails with `AGENTS_BUSY` and writes no records, and the second takes the lock over and succeeds
 
 ### Requirement: Checked config edits
-A config-file edit SHALL replace the file only while it still holds what the edit was computed from, recomputing from a changed file a bounded number of times. An edit that can't apply cleanly SHALL leave the file as the other writer left it and report `MCP_CONFLICT`. Accepted residual: a harness that replaces the file by its own rename between the last check and Context Kit's rename loses that change.
+An edit to Copilot CLI's or Cursor's MCP config file SHALL replace it only while it still holds what the edit was computed from, recomputing from a changed file a bounded number of times. An edit that can't apply cleanly SHALL leave the file as the other writer left it and report `MCP_CONFLICT`. Accepted residual: a harness that replaces the file by its own rename between the last check and Context Kit's rename loses that change.
 
 #### Scenario: Harness writes meanwhile
 - **WHEN** a writer changes Cursor's config before an install's edit is captured, and in place during the swap of a later install and an uninstall
@@ -181,7 +192,7 @@ A config-file edit SHALL replace the file only while it still holds what the edi
 - **THEN** install reports `MCP_CONFLICT`, saying nothing was written, and the file holds exactly the writer's bytes
 
 ### Requirement: Previous versions of config files
-A config file Context Kit replaced or deleted SHALL be kept beside it as a previous version, which a later install or uninstall deletes once it is an hour old and still holds what it held; one that changed SHALL be kept as a displaced copy and reported. Accepted residual: a write landing between that check and the delete is lost.
+A Copilot CLI or Cursor MCP config file that Context Kit replaced or deleted SHALL be kept beside it as a previous version, which a later install or uninstall deletes once it is an hour old and still holds what it held; one that changed SHALL be kept as a displaced copy and reported. Accepted residual: a write landing between that check and the delete is lost.
 
 #### Scenario: Unchanged previous versions swept
 - **WHEN** a config file's leftovers include a recent previous version that still holds what it held, and a caller installs now and again an hour later

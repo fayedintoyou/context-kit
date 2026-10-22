@@ -56,6 +56,7 @@
 - [x] 8.2 A scan whose directory is a registered repository's checkout records it without entering it, while a home directory kept in git is still searched; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Scan from inside a checkout` and `Home directory kept in git`
 - [x] 8.3 Amend `Routing without a workspace path` with the core-by-path fallback; verify `test/e2e/repos.test.mjs` linked to `repository-registry / Launcher unavailable`
 - [x] 8.4 Add `Replaced skill copies`, `One install at a time`, `Checked config edits` and `Previous versions of config files` (with their accepted residuals) for behaviour #64 and #69 shipped; verify the existing `test/e2e/agents.test.mjs` tests linked to their scenarios
+- [x] 8.5 Scope the checked-edit and previous-version rules to Copilot CLI's and Cursor's config files, and amend `Install into agents` and `Missing agents` so CLI-backed and config-file registrations don't contradict; verify `test/e2e/agents.test.mjs` linked to `agent-installation / Config-file harnesses need no executable`
 
 ## Workflow follow-up
 

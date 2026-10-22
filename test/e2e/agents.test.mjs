@@ -244,6 +244,18 @@ test('a missing agent CLI skips MCP registration but installs skills', async t =
   assert.equal(result.json.results.find(item => item.agent === 'claude' && item.kind === 'mcp').action, 'installed');
 });
 
+// spec: agent-installation / Config-file harnesses need no executable
+test('Copilot CLI and Cursor register through their config files without their executables, while a CLI-backed harness is skipped', async t => {
+  const { env, agents } = await fixture(t, { agents: [] });
+  const result = await agents('install', '--agent', 'codex,copilot,cursor');
+  assert.equal(result.code, 0, JSON.stringify(result.error));
+  const mcp = Object.fromEntries(result.json.results.filter(item => item.kind === 'mcp').map(item => [item.agent, item.action]));
+  assert.deepEqual(mcp, { codex: 'skipped', copilot: 'installed', cursor: 'installed' });
+  for (const file of [join(env.COPILOT_HOME, 'mcp-config.json'), join(env.HOME, '.cursor/mcp.json')]) {
+    assert.ok(JSON.parse(await readFile(file, 'utf8')).mcpServers['context-workspace'], file);
+  }
+});
+
 // spec: agent-installation / Set up a workspace
 test('setup creates a pinned instance and installs it into agents', async t => {
   const { base, run, calls } = await fixture(t);
