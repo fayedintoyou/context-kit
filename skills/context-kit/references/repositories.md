@@ -42,8 +42,12 @@ don't accept them, and two repositories may share one.
 `validate` rejects a Repository without a git upstream, `aliases` that is not a
 list of names, `keywords` that is not a list of strings, an alias or title used by
 two repositories, a keyword that is another repository's title or alias, and names
-over their bounds: a title over 80 characters, an alias or keyword over 60. The
-list is shared through the workspace's git like any other concept.
+over their bounds: a title over 80 characters, an alias or keyword over 60. A
+blank title counts as none, so the repository is named by its first alias, or by
+its id; an id over 80 characters with no usable title or alias fails `validate`,
+`repos sync` and `agents install` until you give it one. `repos add` refuses names
+over the bounds, including a title that defaults to a long upstream name. The list
+is shared through the workspace's git like any other concept.
 
 ## Checkouts on this machine
 
@@ -82,8 +86,9 @@ nothing is dropped silently, and the body still lists every name. To get a skipp
 name into the description, shorten names or drop ones nobody uses.
 
 When even those first entries don't fit one description, the skill splits into
-shards: `my-repos` takes repositories in id order while they fit, then
-`my-repos-2`, and so on. Each shard's description says `(1 of 2)` and its body lists
+the fewest shards that hold them, `my-repos`, `my-repos-2` and so on. Repositories
+stay in id order, and the split is balanced so every shard has about the same
+room left for further names. Each shard's description says `(1 of 2)` and its body lists
 its own repositories and names the other shards. Shards are installed, updated and
 removed like the skill itself, so removing repositories folds them back into one.
 

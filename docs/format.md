@@ -57,7 +57,7 @@ Keywords only help agents pick the routing skill; commands never accept them.
 a list of names or `keywords` that is not a list of strings, sharing an alias or
 title with another, with a title over 80 characters or an alias or keyword over
 60 (Unicode code points), or with a keyword equal to another repository's title
-or alias. Local checkout paths are never stored in hubs (see the `repositories`
+or alias. `repos add` refuses names over these bounds. Local checkout paths are never stored in hubs (see the `repositories`
 help topic).
 
 `index.md` files carry no frontmatter, except `okf_version` in the hub-root index.

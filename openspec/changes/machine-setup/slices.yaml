@@ -9,7 +9,7 @@ slices:
       - repository-registry / Routing skill keyword budget
       - repository-registry / Routing skill shards
       - repository-registry / Standard frontmatter for generated skills
-    paths: ["lib/repos.mjs", "lib/install.mjs", "lib/operations.mjs", "package.json", "docs/format.md", "test/e2e/repos.test.mjs", "test/e2e/agents.test.mjs", "skills/context-kit/references/repositories.md", "openspec/changes/machine-setup/tasks.md"]
+    paths: ["lib/repos.mjs", "lib/install.mjs", "lib/operations.mjs", "package.json", "scripts/skills-ref.mjs", "docs/format.md", "test/e2e/repos.test.mjs", "test/e2e/agents.test.mjs", "skills/context-kit/references/repositories.md", "openspec/changes/machine-setup/tasks.md"]
   - id: shared-skills
     title: Install into ~/.agents/skills, fewest locations, and move Codex's copies
     implements:

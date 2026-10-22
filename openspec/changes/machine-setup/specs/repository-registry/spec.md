@@ -23,18 +23,22 @@ The workspace SHALL provide a generated skill named `my-repos` whose description
 ## ADDED Requirements
 
 ### Requirement: Repository keywords and name bounds
-A Repository concept MAY list `keywords`: topic phrases that are not names, such as "personal site". `validate` SHALL report `keywords` that is not a list of strings, a title over 80 characters (code points), an alias or keyword over 60, and a keyword equal to another repository's title or alias when both are in workspace hubs; when a mount is involved, `hub-federation`'s warn-and-drop policy applies instead.
+A Repository concept MAY list `keywords`: topic phrases that are not names, such as "personal site". `validate` SHALL report `keywords` that is not a list of strings, a title over 80 characters (code points), an alias or keyword over 60, and a keyword equal to another repository's title or alias when both are in workspace hubs (with a mount, `hub-federation`'s warn-and-drop policy applies). `repos add` SHALL refuse names over these bounds before writing.
 
 #### Scenario: Keywords reach the description
 - **WHEN** a Repository concept lists keywords `personal site` and `portfolio`, and a caller runs `agents install` and later adds a keyword and runs `repos sync`
 - **THEN** the installed skill's description contains both keywords after install and the new one after sync, and `validate` passes
 
 #### Scenario: Invalid keywords and long names
-- **WHEN** one Repository concept has `keywords: portfolio` (not a list), another an 81-character title, and a third a keyword equal to another repository's alias, all in workspace hubs
+- **WHEN** one Repository concept has `keywords: portfolio` (not a list), another `keywords: null`, another an 81-character title, and another a keyword equal to another repository's alias, all in workspace hubs
 - **THEN** `validate` fails naming each concept and field
 
+#### Scenario: Add refuses long names
+- **WHEN** `repos add` is given an 81-character title, a 61-character alias, or an upstream whose name is 81 characters and no title
+- **THEN** it fails with `INVALID_INPUT` and writes no concept
+
 ### Requirement: Routing skill renders effective trigger names
-The routing skill SHALL build its description only from each repository's effective trigger names as the registry defines them (until a registry requirement narrows them, every valid title, alias and keyword), never from raw concept fields, so a name the registry filters out never reaches the budget. A repository with no effective title SHALL be named by its first effective alias, or else by its id.
+The routing skill SHALL build its description only from each repository's effective trigger names as the registry defines them (until a registry requirement narrows them, every valid title, alias and keyword), never from raw concept fields. A repository with no effective title (none, blank or too long) SHALL be named by its first effective alias, else by its id; an id over 80 characters fails `validate`, `repos sync` and `agents install`.
 
 #### Scenario: All names are effective by default
 - **WHEN** a workspace's repositories have titles, aliases and keywords within the bounds and the skill is rendered
@@ -43,6 +47,14 @@ The routing skill SHALL build its description only from each repository's effect
 #### Scenario: Title not usable
 - **WHEN** one repository's title is over 80 characters and it has an alias, and another's is over 80 with no alias, and the skill is rendered
 - **THEN** the first is named by its alias, the second by its id, and neither long title appears in the description
+
+#### Scenario: Blank title
+- **WHEN** one repository's title is blank and it has an alias, and another's is blank with no alias, and the skill is rendered
+- **THEN** the first is named by its alias and the second by its id
+
+#### Scenario: Id too long to name
+- **WHEN** a repository has no usable title or alias and its id is over 80 characters
+- **THEN** `validate` and `repos sync` fail naming it and asking for a shorter title or an alias
 
 #### Scenario: Invalid keyword never rendered
 - **WHEN** a workspace repository lists a 61-character keyword and a keyword equal to another workspace repository's alias, and a caller runs `repos sync`
@@ -68,11 +80,15 @@ Each routing skill description SHALL be at most 1,024 characters (Unicode code p
 - **THEN** the description names every title and alias and the result reports no skipped names
 
 ### Requirement: Routing skill shards
-Repositories SHALL be assigned in id order to `my-repos` while each one's minimal entry (primary name and first effective alias) still fits that description, then to `my-repos-2`, and so on; each shard is then filled under the keyword budget and its body lists only its repositories. Installs and syncs SHALL add and remove shards like other generated skills.
+Repositories SHALL be split in id order into the fewest contiguous shards (`my-repos`, `my-repos-2`, ...) whose minimal entries (primary name and first effective alias) fit one description each, balanced so the largest shard's minimal entries are as short as possible; each shard is then filled under the keyword budget and its body lists only its repositories. Installs and syncs SHALL add and remove shards like other generated skills.
 
 #### Scenario: Too many repositories for one
 - **WHEN** a workspace registers enough repositories that their minimal entries exceed one description, and a caller installs agents
 - **THEN** each agent's skills include `my-repos` and `my-repos-2`, every repository is named by exactly one of them in id order, and each description is at most 1,024 characters
+
+#### Scenario: Balanced shards
+- **WHEN** twenty repositories, each with a long first alias, a short second alias and a keyword, need two shards
+- **THEN** each shard names ten repositories and nothing is skipped
 
 #### Scenario: Longest allowed names
 - **WHEN** a repository has an 80-character title and twenty 60-character aliases

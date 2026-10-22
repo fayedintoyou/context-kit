@@ -102,8 +102,11 @@ way a filtered keyword never reaches the budget.
 This change only depends on the registry returning, per repository,
 `{title|null, aliases[], keywords[]}`, already filtered. A name over its length
 bound (see below) is never effective. A repository's **primary name** is its
-effective title, else its first effective alias (which then leaves the alias
-round), else its id.
+effective title (not blank), else its first effective alias (which then leaves the
+alias round), else its id. An id over 80 characters can't be bounded that way, so
+such a repository fails `validate`, and rendering refuses it with the same message
+(add a title or an alias). `repos add` refuses titles, default titles included, and
+aliases over the bounds before writing.
 
 **Name bounds** (`validate`, new requirement *Repository keywords and name
 bounds*): titles at most 80 characters, aliases and keywords at most 60. Keywords
@@ -121,11 +124,14 @@ overflows an earlier one.
 **One algorithm** (deterministic: repositories in id order, names in concept order,
 names deduplicated case-insensitively against the repository's names already
 included):
-1. *Partition.* Walk repositories in id order. Add a repository to the current
-   shard if the description of the shard's minimal entries, with this one added,
-   still fits. A minimal entry is the primary name plus the first effective alias,
-   if any. Otherwise start the next shard. There is one shard iff all minimal
-   entries fit together.
+1. *Partition.* A minimal entry is the primary name plus the first effective
+   alias, if any. There is one shard iff all minimal entries fit together.
+   Otherwise the shard count is the fewest contiguous id-ordered groups whose
+   minimal entries fit one description each (a greedy walk). The split is then
+   balanced: the smallest cap on a group's minimal description that still needs
+   no more shards is found by binary search, and the greedy walk under that cap
+   gives the groups. So names are left out evenly, not all from the first shard
+   while the last has room (review round 1: twenty repositories split 16/4 before).
 2. *Fill each shard* in rounds: alias round k = 1, 2, … (every repository's k-th
    remaining alias in id order), then keyword round k = 1, 2, …. A name that doesn't
    fit is skipped and the round continues, since a shorter later name may fit.

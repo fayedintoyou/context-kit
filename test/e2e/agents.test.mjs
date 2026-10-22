@@ -380,11 +380,12 @@ const frontmatter = async path => parseYaml((await readFile(join(path, 'SKILL.md
 const padded = (prefix, length) => prefix + 'x'.repeat(length - points(prefix));
 
 // spec: repository-registry / Too many repositories for one
+// spec: repository-registry / Balanced shards
 // spec: repository-registry / Shards shrink back
-test('repositories whose minimal entries overflow one description shard into my-repos-2, and shrink back', async t => {
+test('repositories whose minimal entries overflow one description shard evenly into my-repos-2, and shrink back', async t => {
   const { base, workspace, run, agents } = await fixture(t);
   const ids = Array.from({ length: 20 }, (_, i) => `r${String(i + 1).padStart(2, '0')}`);
-  for (const id of ids) await repository(workspace, id, { title: `repo ${id}`, resource: `https://github.com/me/${id}`, aliases: [padded(`${id}-nickname-`, 40)] });
+  for (const id of ids) await repository(workspace, id, { title: `repo ${id}`, resource: `https://github.com/me/${id}`, aliases: [padded(`${id}-nickname-`, 40), `${id}-b`], keywords: [`${id} topic`] });
   const installed = await agents('install');
   assert.equal(installed.code, 0, JSON.stringify(installed.error));
   assert.deepEqual(installed.json.skipped, {});
@@ -396,7 +397,11 @@ test('repositories whose minimal entries overflow one description shard into my-
       const front = await frontmatter(join(base, agent, 'skills', skill));
       assert.equal(front.name, skill);
       assert.ok(points(front.description) <= 1024, `${skill} is ${points(front.description)} code points`);
-      named.push(...ids.filter(id => front.description.includes(`repo ${id} (${id}-nickname-`)));
+      const here = ids.filter(id => front.description.includes(`repo ${id} (${id}-nickname-`));
+      // Balanced: ten each, so both shards have room for every second alias and keyword.
+      assert.equal(here.length, 10, `${agent} ${skill}`);
+      for (const id of here) assert.ok(front.description.includes(`${id}-b, ${id} topic)`), `${skill} names all of ${id}`);
+      named.push(...here);
     }
     assert.deepEqual(named, ids, `${agent}: each repository once, in id order`);
   }

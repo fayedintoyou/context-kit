@@ -260,18 +260,21 @@ test('keywords reach the installed description on install and after sync', async
 test('validate names keywords that are not a list, long titles and keywords naming another repository', async t => {
   const { cli, register } = await fixture(t);
   await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room', keywords: 'portfolio' });
+  await register('personal', 'studio', { title: 'the studio', resource: 'https://github.com/me/studio', keywords: null });
   await register('personal', 'garden', { title: named('the garden ', 81), resource: 'https://github.com/me/garden' });
   await register('personal', 'kit', { title: 'the kit', resource: 'https://github.com/me/kit', aliases: ['hubs'] });
   await register('personal', 'blog', { title: 'the blog', resource: 'https://github.com/me/blog', keywords: ['hubs'] });
   const result = await cli('validate');
   assert.equal(result.error.code, 'INVALID_REPOSITORY');
   assert.match(result.error.message, /personal\/main\/room: keywords must be a list of strings/);
+  assert.match(result.error.message, /personal\/main\/studio: keywords must be a list of strings/);
   assert.match(result.error.message, /personal\/main\/garden: title is over 80 characters/);
   assert.match(result.error.message, /personal\/main\/blog: keyword "hubs" names personal\/main\/kit/);
   // Exactly at the bounds is fine.
   await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room', keywords: [named('k', 60)] });
   await register('personal', 'garden', { title: named('the garden ', 80), resource: 'https://github.com/me/garden', aliases: [named('a', 60)] });
   await register('personal', 'blog', { title: 'the blog', resource: 'https://github.com/me/blog', keywords: ['writing'] });
+  await register('personal', 'studio', { title: 'the studio', resource: 'https://github.com/me/studio' });
   assert.equal((await cli('validate')).code, 0);
 });
 
@@ -296,6 +299,55 @@ test('a repository whose title is too long is named by its first alias, or else 
   const text = await description(workspace);
   assert.ok(text.includes('personal/main/garden; room (fayelore.com)'), text);
   assert.ok(!text.includes(long), 'no long title');
+});
+
+// spec: repository-registry / Blank title
+test('a repository with a blank title is named by its first alias, or else its id', async t => {
+  const { workspace, cli, register } = await fixture(t);
+  await register('personal', 'room', { title: ' ', resource: 'https://github.com/me/room', aliases: ['room', 'fayelore.com'] });
+  await register('personal', 'garden', { title: ' ', resource: 'https://github.com/me/garden' });
+  const synced = await cli('repos', 'sync');
+  assert.equal(synced.code, 0, JSON.stringify(synced.error));
+  assert.ok((await description(workspace)).includes(': personal/main/garden; room (fayelore.com).'), await description(workspace));
+  assert.equal((await cli('validate')).code, 0);
+});
+
+// spec: repository-registry / Id too long to name
+test('a repository named only by an id over 80 characters fails validate and sync, asking for a title or alias', async t => {
+  const { workspace, cli, register } = await fixture(t);
+  const concept = named('a-repository-concept-with-a-very-long-path-', 70);
+  await register('personal', concept, { title: named('a long title ', 81), resource: 'https://github.com/me/long' });
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  for (const result of [await cli('validate'), await cli('repos', 'sync')]) {
+    assert.equal(result.error.code, 'INVALID_REPOSITORY');
+    assert.ok(result.error.message.includes(`personal/main/${concept}: has no title`), result.error.message);
+    assert.match(result.error.message, /give it a shorter title or an alias/);
+  }
+  await assert.rejects(readFile(join(workspace, '.state/generated/my-repos/SKILL.md')), { code: 'ENOENT' });
+  await register('personal', concept, { title: named('a long title ', 81), resource: 'https://github.com/me/long', aliases: ['long'] });
+  assert.equal((await cli('repos', 'sync')).code, 0);
+});
+
+// spec: repository-registry / Add refuses long names
+test('repos add refuses a title, default title or alias over its bound and writes nothing', async t => {
+  const { env, workspace, cli } = await fixture(t);
+  const refused = [
+    await cli('repos', 'add', 'personal/main', 'https://github.com/me/room', '--title', named('the room ', 81)),
+    await cli('repos', 'add', 'personal/main', 'https://github.com/me/room', '--alias', named('room ', 61)),
+    await cli('repos', 'add', 'personal/main', `https://github.com/me/${named('r', 81)}`, '--concept', 'long'),
+  ];
+  for (const result of refused) assert.equal(result.error?.code, 'INVALID_INPUT', JSON.stringify(result));
+  assert.match(refused[2].error.message, /defaults to the upstream's name.*--title/);
+  for (const file of ['room.md', 'long.md']) await assert.rejects(readFile(join(workspace, 'hubs/personal', file)), { code: 'ENOENT' });
+  const client = new Client({ name: 'bounds', version: '1.0.0' });
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', workspace, '--allow-write'], env, stderr: 'pipe' }));
+  t.after(() => client.close());
+  const tool = await client.callTool({ name: 'add_repo', arguments: { id: 'personal/main', upstream: 'https://github.com/me/room', aliases: ['🌊'.repeat(61)] } });
+  assert.equal(tool.isError, true);
+  await assert.rejects(readFile(join(workspace, 'hubs/personal/room.md')), { code: 'ENOENT' });
+  const fits = await client.callTool({ name: 'add_repo', arguments: { id: 'personal/main', upstream: 'https://github.com/me/room', title: '🌊'.repeat(80), aliases: ['é'.repeat(60)] } });
+  assert.equal(fits.isError, undefined, JSON.stringify(fits.content));
+  assert.equal((await cli('validate')).code, 0);
 });
 
 // spec: repository-registry / Invalid keyword never rendered
