@@ -161,7 +161,7 @@ try {
       }
     }
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-    if (result.valid === false || result.failed?.length || ['structurally_invalid', 'no_canonical_specs'].includes(result.status)) process.exitCode = 1;
+    if (result.valid === false || (command === 'mounts' && result.failed?.length) || ['structurally_invalid', 'no_canonical_specs'].includes(result.status)) process.exitCode = 1;
   }
 } catch (error) {
   process.stderr.write(JSON.stringify({ error: errorData(error) }) + '\n');

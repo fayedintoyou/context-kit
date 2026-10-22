@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { promisify } from 'node:util';
-import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -451,15 +451,22 @@ test('an annotated tag ref pins the commit it points at', async t => {
 // Review round 2 regression.
 
 // spec: hub-federation / Fresh machine fetches its mounts
-test('many takers of a stale lock never overlap: every pin is kept, one fetch exports', async t => {
+test('many takers of a stale lock (or stale breaker) never overlap: every pin is kept, one fetch exports', async t => {
   const { base, workspace, run, config, repository } = await fixture(t);
   const source = await repository('shared-context', hub('team/data'));
   const gone = Number((await exec(process.execPath, ['-e', 'console.log(process.pid)'])).stdout.trim());
   const stale = name => writeFile(join(workspace, '.state/mounts', name), JSON.stringify({ pid: gone, at: Date.now(), token: 'stale' }));
   await mkdir(join(workspace, '.state/mounts'), { recursive: true });
-  for (let round = 0; round < 3; round++) {
+  for (let round = 0; round < 4; round++) {
     await stale('.lock-config');
-    const names = Array.from({ length: 6 }, (_, i) => `r${round}-${i}`);
+    if (round === 3) {
+      // A breaker left by a process that stopped mid-takeover.
+      const breaker = join(workspace, '.state/mounts/.lock-config.break');
+      await writeFile(breaker, JSON.stringify({ pid: gone, at: Date.now() - 60000, token: 'stale-breaker' }));
+      const old = new Date(Date.now() - 60000);
+      await utimes(breaker, old, old);
+    }
+    const names = Array.from({ length: round === 3 ? 8 : 6 }, (_, i) => `r${round}-${i}`);
     const added = await Promise.all(names.map(name => run(['--root', workspace, 'mounts', 'add', name, source.url])));
     assert.deepEqual(added.map(result => result.code), names.map(() => 0), added.map(result => result.output).join('\n'));
     for (const name of names) assert.ok((await config()).mounts[name], `round ${round} lost the pin for ${name}`);
@@ -473,4 +480,6 @@ test('many takers of a stale lock never overlap: every pin is kept, one fetch ex
   assert.deepEqual(fetches.map(result => result.code), [0, 0, 0, 0, 0], fetches.map(result => result.output).join('\n'));
   assert.deepEqual(fetches.map(result => result.json.mounts[0].outcome).sort(), ['fetched', 'unchanged', 'unchanged', 'unchanged', 'unchanged']);
   assert.deepEqual((await readdir(join(copy, '.state/mounts'))).filter(entry => entry.startsWith('.lock')), []);
+  // A breaker can rarely outlive its owner (it is then stale in 10 s); no lock itself remains.
+  assert.deepEqual((await readdir(join(workspace, '.state/mounts'))).filter(entry => entry.startsWith('.lock') && !entry.endsWith('.break')), []);
 });
