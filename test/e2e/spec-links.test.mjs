@@ -44,7 +44,8 @@ async function fixture(t, { unplanned = false, plain = false } = {}) {
     await put(root, 'openspec/changes/plain/proposal.md', '# Why\n\nAdd filters.\n');
     await put(root, 'openspec/changes/plain/specs/locations/spec.md', `## ADDED Requirements\n${requirement('Filters')}`);
   }
-  const git = (...args) => exec('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { cwd: root, env });
+  const gitIn = (cwd, ...args) => exec('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { cwd, env });
+  const git = (...args) => gitIn(root, ...args);
   // A test file linking the given scenarios of `locations`, always including the canonical one.
   const link = async (...names) => put(root, 'test/e2e/locations.test.mjs',
     ['Search', ...names].map(name => `// spec: locations / Use ${name}\ntest('uses ${name}', () => {});\n`).join('\n'));
@@ -52,10 +53,22 @@ async function fixture(t, { unplanned = false, plain = false } = {}) {
   await git('init', '-q', '-b', 'main');
   await git('add', '.');
   await git('commit', '-qm', 'Propose deliver');
-  const land = async slice => {
-    await put(root, `src/${slice}.mjs`, `export const ${slice} = true;\n`);
-    await git('add', '.');
-    await git('commit', '-qm', `Build ${slice}\n\nOpenSpec-Change: deliver\nOpenSpec-Slice: ${slice}\n`);
+  const land = async (slice, where = root) => {
+    await put(where, `src/${slice}.mjs`, `export const ${slice} = true;\n`);
+    await gitIn(where, 'add', '.');
+    await gitIn(where, 'commit', '-qm', `Build ${slice}\n\nOpenSpec-Change: deliver\nOpenSpec-Slice: ${slice}\n`);
+  };
+  // A CI-like checkout: a clone detached at `at`, with origin's branches but no local branch and
+  // no origin/HEAD, as actions/checkout leaves a pull request's merge commit.
+  const detachedClone = async (at = 'origin/main') => {
+    const dir = join(base, 'ci');
+    await exec('git', ['clone', '-q', `file://${root}`, dir], { env });
+    await gitIn(dir, 'checkout', '-q', '--detach', at);
+    const branches = (await gitIn(dir, 'for-each-ref', '--format=%(refname:short)', 'refs/heads')).stdout.split('\n').filter(Boolean);
+    if (branches.length) await gitIn(dir, 'branch', '-q', '-D', ...branches);
+    await gitIn(dir, 'remote', 'set-head', 'origin', '-d').catch(() => {});
+    assert.equal((await gitIn(dir, 'for-each-ref', 'refs/heads', 'refs/remotes/origin/HEAD')).stdout, '');
+    return dir;
   };
   const check = async (where = root) => {
     try { return { code: 0, ...await exec(process.execPath, [join(kit, 'scripts/spec-links.mjs'), where], { env }) }; }
@@ -65,7 +78,7 @@ async function fixture(t, { unplanned = false, plain = false } = {}) {
     try { return JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', root, ...args], { env })).stdout); }
     catch (error) { return JSON.parse(error.stderr || error.stdout); }
   };
-  return { base, root, env, git, link, land, check, cli };
+  return { base, root, env, git, gitIn, link, land, detachedClone, check, cli };
 }
 const missing = (stderr, name) => stderr.includes(`scenario "locations / Use ${name}" has no linked test`);
 
@@ -81,13 +94,22 @@ test('scenarios of unstarted slices are pending and do not fail the link check',
 
 // spec: change-progress / Slice on the current branch
 test('a slice with a trailer commit on HEAD must link its scenarios, while other branches do not count', async t => {
-  const { git, link, land, check } = await fixture(t);
+  const { git, link, land, detachedClone, check } = await fixture(t);
   await git('checkout', '-qb', 'api-work');
   await land('api');
   await git('checkout', '-q', 'main');
+  // A CI checkout with only origin/main, whose slice commit is reachable from nothing but HEAD.
+  const ci = await detachedClone();
+  await land('storage', ci);
+  let result = await check(ci);
+  assert.equal(result.code, 1, result.stdout);
+  assert.ok(missing(result.stderr, 'Radius'), result.stderr);
+  assert.ok(!missing(result.stderr, 'Ordering'), result.stderr);
+  assert.match(result.stdout, /^○ locations \/ Use Ordering {2}pending: deliver slice api not started$/m);
+
   await git('checkout', '-qb', 'storage-work');
   await land('storage');
-  let result = await check();
+  result = await check();
   assert.equal(result.code, 1);
   assert.ok(missing(result.stderr, 'Radius'), result.stderr);
   assert.ok(!missing(result.stderr, 'Ordering'), result.stderr);
@@ -102,12 +124,16 @@ test('a slice with a trailer commit on HEAD must link its scenarios, while other
 
 // spec: change-progress / Landed slice
 test('a landed slice must link its scenarios', async t => {
-  const { git, link, land, check } = await fixture(t);
+  const { git, link, land, detachedClone, check } = await fixture(t);
   await land('storage');
   let result = await check();
   assert.equal(result.code, 1);
   assert.ok(missing(result.stderr, 'Radius'), result.stderr);
   assert.match(result.stdout, /^○ locations \/ Use Ordering/m);
+  // A checkout older than the fetched origin/main, as when main moved past a pull request's merge commit.
+  result = await check(await detachedClone('origin/main~1'));
+  assert.equal(result.code, 1, result.stdout);
+  assert.ok(missing(result.stderr, 'Radius'), result.stderr);
   await link('Radius');
   await git('add', '.');
   await git('commit', '-qm', 'Link radius');
@@ -127,14 +153,21 @@ test('requirements no slice implements and changes without a plan stay required'
 });
 
 // spec: change-progress / Shallow clone
-test('a shallow clone or an invalid plan requires every scenario of the change and says why', async t => {
-  const { base, root, env, check } = await fixture(t);
+test('a shallow clone, no default branch or an invalid plan requires every scenario of the change and says why', async t => {
+  const { base, root, env, git, check } = await fixture(t);
   const clone = join(base, 'shallow');
   await exec('git', ['clone', '-q', '--depth', '1', `file://${root}`, clone], { env });
   let result = await check(clone);
   assert.equal(result.code, 1);
   assert.ok(missing(result.stderr, 'Radius') && missing(result.stderr, 'Ordering'), result.stderr);
   assert.match(result.stderr, /deliver: every scenario is required, since slice progress can't be read: the clone is shallow/);
+
+  await git('branch', '-m', 'main', 'trunk');
+  result = await check();
+  assert.equal(result.code, 1);
+  assert.ok(missing(result.stderr, 'Radius') && missing(result.stderr, 'Ordering'), result.stderr);
+  assert.match(result.stderr, /deliver: every scenario is required, .*no default branch was found .*so trunk is no base/);
+  await git('branch', '-m', 'trunk', 'main');
 
   await put(root, 'openspec/changes/deliver/slices.yaml', plan.replace('depends_on: [storage]', 'depends_on: [client]'));
   result = await check();
