@@ -25,22 +25,29 @@ The `openspec` source SHALL list the canonical requirements of the workspace rep
 - **THEN** the request fails with `UNKNOWN_STORE` without reading specs
 
 ### Requirement: Linked-intent behaviors
-The `lid` source SHALL list each `**<ID>**:` entry in `docs/intent/**/*-specs.md` and `docs/specs/*.md` of the workspace repository, with its text and marker: `implemented` for `[x]`, `gap` for `[ ]`, `deferred` for `[D]`, and `none` without one. An ID defined twice SHALL fail with `INVALID_SOURCE` naming both files.
+The `lid` source SHALL list each entry of `docs/intent/**/*-specs.md` and `docs/specs/*.md` in the workspace repository written as a list item `**<ID>**: <text>`, preceded by a status marker `[x]`, `[ ]` or `[D]`, plain or in backticks, or by none. Markers SHALL be reported as `implemented`, `gap`, `deferred` or `none`. An ID defined twice SHALL fail with `INVALID_SOURCE` naming both files.
 
-#### Scenario: List linked-intent behaviors
-- **WHEN** a repository's specs file defines `TIP-001` marked `[x]`, `TIP-002` marked `[ ]` and `TIP-003` marked `[D]`
-- **THEN** `maps behaviors --source lid` lists the three IDs with markers `implemented`, `gap` and `deferred` and the file they come from
+#### Scenario: Upstream entry forms
+- **WHEN** a repository's specs files hold entries copied from the linked-intent development repository in backticked-marker form (`LID-CORE-001`), plain-marker form (`AUTH-UI-001`, `AUTH-API-001`, `AUTH-API-002`) and markerless form (`CART-UI-001`)
+- **THEN** `maps behaviors --source lid` lists every entry with its ID, text, marker and file
 
 #### Scenario: Duplicate linked-intent ID
-- **WHEN** two specs files both define `TIP-001`
-- **THEN** the request fails with `INVALID_SOURCE` naming `TIP-001` and both files
+- **WHEN** two specs files both define `AUTH-UI-001`
+- **THEN** the request fails with `INVALID_SOURCE` naming `AUTH-UI-001` and both files
 
 ### Requirement: Hub behaviors
-The `hub` source SHALL list a hub's concepts as `<hub-id>:/<concept-id>` with their title, OKF trust summary and freshness action, and with inbox notes only when the inbox is requested. Its fingerprint SHALL cover the concept file's full content.
+The `hub` source SHALL list the concepts of a hub in the workspace's own hub directories as `<hub-id>:/<concept-id>`, with title, OKF trust summary and freshness action, and inbox notes only when requested. `BehaviorMap` concepts SHALL NOT be listed. Its fingerprint SHALL cover the concept file's full content.
 
 #### Scenario: List hub behaviors
-- **WHEN** a hub has a human-reviewed concept, a stale concept and an inbox note
-- **THEN** `maps behaviors --source hub --hub <id>` lists the two concepts with their trust and freshness action and omits the note unless `--inbox` is given
+- **WHEN** a hub has a human-reviewed concept, a stale concept, a `BehaviorMap` concept and an inbox note
+- **THEN** `maps behaviors --source hub --hub <id>` lists the two concepts with their trust and freshness action, never the map, and the note only with `--inbox`
+
+### Requirement: Evaluation instant
+Every result that depends on freshness or staleness SHALL be evaluated at one instant: the `--at` (MCP `at`) ISO 8601 timestamp with an explicit offset, or the current time when omitted. The result SHALL report the instant used. A timestamp without an offset SHALL fail with `INVALID_INPUT`.
+
+#### Scenario: Reproducible freshness
+- **WHEN** a concept has a `stale_after` and no matching freshness rule, and hub behaviors are listed with `--at` one day before and one day after it
+- **THEN** the first result reports the concept's freshness action `read` and the second `refresh`, each reporting the instant given
 
 ### Requirement: Stable fingerprints
 A behavior's fingerprint SHALL depend only on its normalized text (Unicode NFKC, line endings and trailing whitespace normalized), so it is identical across runs and machines and changes when the text changes.

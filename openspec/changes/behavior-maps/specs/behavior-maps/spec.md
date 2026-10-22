@@ -2,23 +2,34 @@
 
 ## Purpose
 
-Let people and agents draw maps of user-visible states and the moves between them, each element citing the behaviors it represents, with evidence-based status, and let deterministic code check, pin and render those maps for repositories and hubs alike.
+Let people and agents draw maps of user-visible states and the moves between them, or of a persona's or team's working states, each state citing the behaviors it represents, with evidence-based status, and let deterministic code check, pin and render those maps.
 
 ## ADDED Requirements
 
 ### Requirement: Map files
-A map SHALL be an OKF concept with `type: BehaviorMap` holding exactly one fenced block whose info string is `yaml map`. A repository's maps are `maps/<name>.md`, named `<name>`; a hub's maps are its `BehaviorMap` concepts, named `<hub-id>:/<concept-id>`. A missing map SHALL fail with `UNKNOWN_MAP`.
+A map SHALL be an OKF concept with `type: BehaviorMap` holding exactly one fenced block whose info string is `yaml map`. A repository's maps are `maps/<name>.md` in the workspace repository, named `<name>`. A map name with no map SHALL fail with `UNKNOWN_MAP`.
 
 #### Scenario: List maps
-- **WHEN** a workspace repository has `maps/alerts.md` and a hub has a `BehaviorMap` concept `team/working-states`
-- **THEN** `maps list` and `list_maps` return `alerts` and `<hub-id>:/team/working-states` with title, source and scope
+- **WHEN** a workspace repository has `maps/alerts.md` and `maps/sign-in.md`
+- **THEN** `maps list` and `list_maps` return `alerts` and `sign-in` with title, source and scope
 
 #### Scenario: Unknown map
 - **WHEN** a caller checks a map name with no file
 - **THEN** the request fails with `UNKNOWN_MAP` naming it
 
+### Requirement: Hub maps
+`BehaviorMap` concepts in the workspace's own hub directories SHALL also be maps, named `<hub-id>:/<concept-id>`, listed, checked and rendered like repository maps. Inbox notes SHALL never be maps.
+
+#### Scenario: A team's working states
+- **WHEN** a hub holds a map of a fictional support team's working states (triage, waiting on a customer, escalated, solved) whose states cite the hub's concepts
+- **THEN** `maps list` includes it as `<hub-id>:/<concept-id>`, `maps check` reports it valid, and `maps render` draws it
+
+#### Scenario: A hub map does not cover itself
+- **WHEN** a hub map's scope is the whole hub and it cites every concept of the hub
+- **THEN** the check lists nothing as `uncovered`, neither the map itself nor another map in the hub
+
 ### Requirement: Map contents
-A map block SHALL declare `version: 1`, a `source` (`openspec` with optional store, `lid`, or `hub` with a hub ID), a nonempty `scope`, nodes and transitions. Each node SHALL have an ID, a kind (`start`, `state`, `choice`, `end`) and a label; each transition a `from`, a `to` and, leaving a choice, a `when` label. Unknown keys SHALL be errors.
+A map block SHALL declare `version: 1`, a `source` (`openspec` with optional store, `lid`, or `hub` with a hub ID), a nonempty `scope`, nodes and transitions. Each node SHALL have an ID, a label and a kind (`start`, `state`, `choice`, `end`; `state` when omitted); each transition a `from`, a `to` and, leaving a choice, a `when` label. Unknown keys SHALL be errors.
 
 #### Scenario: Unknown key
 - **WHEN** a map's node carries a `colour` key
@@ -36,18 +47,22 @@ A map block SHALL declare `version: 1`, a `source` (`openspec` with optional sto
 - **THEN** the check reports the map valid with no errors, over CLI and MCP alike
 
 ### Requirement: Citations resolve
-Nodes and transitions MAY cite behaviors of the map's source by their source IDs. A citation that names no behavior, or a name that is both a requirement and a scenario of one capability, SHALL be an error naming the element and the citation.
+Every `state` node SHALL cite at least one behavior of the map's source by its source ID; start, choice and end nodes and transitions MAY. A citation naming no behavior, or naming more than one (such as a requirement and a scenario, or two scenarios, sharing a name in one capability), SHALL be an error naming the element and the citation.
+
+#### Scenario: Uncited state
+- **WHEN** a map has a state with no citations and a choice with none
+- **THEN** the check reports an error for the state and none for the choice
 
 #### Scenario: Unknown citation
 - **WHEN** a state cites `alerts / Badge on mention` and the source has no such requirement or scenario
 - **THEN** the check reports an error naming the state and the citation
 
 #### Scenario: Ambiguous citation
-- **WHEN** a capability has a requirement and a scenario both named `Quiet hours` and a state cites `alerts / Quiet hours`
-- **THEN** the check reports the citation as ambiguous, naming the requirement and the scenario
+- **WHEN** two requirements of `alerts` each have a scenario named `Quiet hours` and a state cites `alerts / Quiet hours`
+- **THEN** the check reports the citation as ambiguous, naming both requirements
 
 ### Requirement: Coverage
-The check SHALL list as `uncovered` warnings the behaviors in the map's scope that no element cites: OpenSpec scenarios of the scoped capabilities or requirements, `lid` IDs with a scoped prefix, or hub concepts under a scoped directory. A cited requirement covers its scenarios.
+The check SHALL list as `uncovered` warnings the behaviors in the map's scope that no element cites: OpenSpec scenarios of the scoped capabilities or requirements, `lid` IDs with a scoped prefix, or hub concepts under a scoped directory. A cited requirement covers its scenarios. Maps are never behaviors, so no map is uncovered.
 
 #### Scenario: Uncovered scenario
 - **WHEN** a map's scope is `alerts` and one of its scenarios is cited by no element
@@ -64,66 +79,70 @@ The check SHALL list as `uncovered` warnings the behaviors in the map's scope th
 - **WHEN** a map is pinned and then the text of a scenario one state cites is edited
 - **THEN** the check reports that citation `stale`, naming the state, and after `maps pin` it reports no stale citation
 
+#### Scenario: Pin and render converge
+- **WHEN** a map is pinned, checked, rendered with `--write` and checked again, and then pinned and rendered with `--write` once more
+- **THEN** the second check reports no `unpinned`, `stale` or `diagram_outdated` warning and the second pin and render leave the file byte-identical
+
 ### Requirement: Plain-language labels
-The check SHALL report as errors node labels over 70 characters, `when` labels over 50, and labels containing backticks, identifiers with underscores or inner capitals, file paths, spec IDs such as `TIP-001`, or the words SHALL, MUST, WHEN or THEN. Terms in the map's `vocabulary` list SHALL be exempt.
+The check SHALL report as errors node labels over 70 characters, `when` labels over 50, and labels containing backticks, identifiers with underscores or inner capitals, file paths, spec IDs such as `AUTH-UI-001`, or the words SHALL, MUST, WHEN or THEN. Terms in the map's `vocabulary` list SHALL be exempt.
 
 #### Scenario: Label reads as code
 - **WHEN** a state's label is "Sets `unreadCount` on the room"
 - **THEN** the check reports a label error naming the state and the offending token
 
 #### Scenario: Allowed term
-- **WHEN** a transition's `when` is "A DM or an @mention" and the map's vocabulary lists `DM` and `@mention`
-- **THEN** the check reports no label error for it
+- **WHEN** a state's label is "A GitHub issue opens" and a transition's `when` is "A DM or an @mention", and the map's vocabulary lists `GitHub`, `DM` and `@mention`
+- **THEN** the check reports no label error, and without `GitHub` in the vocabulary it reports one naming that token
 
 ### Requirement: Declared status
-A node MAY declare status `works`, `issue` or `fixed` with evidence: repository paths, pull request numbers or https links. An `issue` SHALL say who found it (`model-checker`, `test`, `review`, `user-report` or `other`) and MAY name a `fixed_by` node, which SHALL declare `fixed`. A missing path or wrong fix target SHALL be an error.
+A node MAY declare status `works`, `issue` or `fixed`, with at least one evidence item: a repository path, a pull request number or an https link. An `issue` SHALL say who found it (`model-checker`, `test`, `review`, `user-report` or `other`) and MAY name a `fixed_by` node, which SHALL declare `fixed`. A missing path or wrong fix target SHALL be an error.
 
 #### Scenario: Issue and its fix
 - **WHEN** a state declares an issue found by a model checker, citing an existing model file, with `fixed_by` naming a state declared `fixed` with a pull request
-- **THEN** the check reports both statuses with their evidence and no error
+- **THEN** the check reports both statuses as declared, with their evidence, and no error
 
 #### Scenario: Missing evidence file
 - **WHEN** a declared issue's evidence names a repository path that does not exist
 - **THEN** the check reports an error naming the state and the path
 
 ### Requirement: Status from linked tests
-A node with no declared status citing behaviors of the repository's own `openspec` source SHALL get a derived status: `untested` when a cited scenario, or a scenario of a cited requirement, has no `// spec:` linked test, else `tested`. Other undeclared nodes SHALL be `unknown`. Each status SHALL carry its reason.
+Every node SHALL also get a derived status: for citations of the repository's own `openspec` source, `untested` when a cited scenario, or a scenario of a cited requirement, has no `// spec:` linked test, else `tested`; otherwise `unknown`. Derived status SHALL never be `works`, `issue` or `fixed`, and each status SHALL report its origin, `declared` or `derived`.
 
 #### Scenario: Tested and untested states
-- **WHEN** one state cites a scenario with a linked test and another cites a scenario without one
-- **THEN** the check reports the first `tested` and the second `untested`, naming the scenario that has no test
-
-### Requirement: Status from test results
-Given a JUnit XML results file inside the workspace with `--results` or `results`, a `tested` node SHALL become `works` when every linked test of its citations passed, and `issue` found by `test` when any failed; a skipped test leaves it `tested`. A declared `works` or `fixed` with a failed linked test SHALL be an error. An unreadable file SHALL fail with `RESULTS_FORMAT`.
-
-#### Scenario: Results decide status
-- **WHEN** a results file shows one state's linked test passed and another's failed
-- **THEN** the check reports the first `works` and the second `issue` found by `test`, naming the failed test
-
-#### Scenario: Declared fix contradicted
-- **WHEN** a state declares `fixed` and the results show a linked test of its citation failed
-- **THEN** the check reports a status conflict error naming the state and the test
+- **WHEN** one state cites a scenario with a linked test, another cites a scenario without one, and a third declares `works` with evidence and cites a scenario without one
+- **THEN** the check reports the first `tested` and the second `untested` as derived, naming the untested scenario, and the third `works` as declared with derived `untested` beside it
 
 ### Requirement: Mermaid rendering
-`maps render <map>` and `render_map` SHALL draw a map as a Mermaid flowchart with one shape per node kind, labels as written, a colour per status (grey works, red issue, green fixed) with a key listing only statuses present, and a dashed "with the fix" edge from each issue to its fix. The same inputs SHALL give byte-identical output.
+`maps render <map>` and `render_map` SHALL draw a map as a Mermaid flowchart with one shape per node kind, labels as written and choice exits labelled with their `when`. The same inputs SHALL give byte-identical output.
+
+#### Scenario: Render a map
+- **WHEN** a map with a start, two states, a choice and an end is rendered twice, over CLI and MCP
+- **THEN** both outputs are identical and match the expected diagram
+
+### Requirement: Status in diagrams
+A rendered diagram SHALL colour declared statuses (grey works, red issue, green fixed), draw derived `tested` and `untested` in distinct outlined styles, add a key naming only the statuses present and saying which are derived, and draw a dashed "with the fix" edge from each issue to its fix.
 
 #### Scenario: Render a map with a fix
-- **WHEN** a map with a working state, an issue and its fix is rendered twice, over CLI and MCP
-- **THEN** both outputs are identical, match the expected diagram, color the three states grey, red and green, and draw the fix edge
+- **WHEN** a map with a declared working state, a declared issue with its declared fix and an untested state is rendered
+- **THEN** the diagram colours the first three grey, red and green, outlines the last as untested, draws the fix edge and keys the untested style as derived
 
 ### Requirement: JSON rendering
-`--format json` SHALL return the map as normalized JSON: nodes and transitions in file order with their labels, resolved citations (ID, kind, title, fingerprint, pin state) and status with reason and evidence.
+`--format json` SHALL return the map as normalized JSON: nodes and transitions in file order with their labels, resolved citations (ID, kind, title, fingerprint, pin state) and each node's statuses with origin, reason and evidence.
 
 #### Scenario: Render as JSON
 - **WHEN** a map is rendered with `--format json`
-- **THEN** each node lists its resolved citations and its status and reason, in the order of the map file
+- **THEN** each node lists its resolved citations and its statuses with their origins, in the order of the map file
 
 ### Requirement: Generated diagram
-`maps render <map> --write` (CLI only) SHALL replace the map file's block between the generated-diagram markers with a rendering made without results, adding it after the map block when absent, and change nothing else. The check SHALL warn `diagram_outdated` when that block differs from such a rendering.
+`maps render <map> --write` (CLI only) SHALL replace the map file's block between the generated-diagram markers, adding it after the map block when absent, and change nothing else. The check SHALL warn `diagram_outdated` when that block differs from a fresh rendering.
 
 #### Scenario: Outdated diagram
 - **WHEN** a map's labels change after its diagram was written
 - **THEN** the check warns `diagram_outdated`, and after `maps render --write` it does not and the rest of the file is unchanged
+
+#### Scenario: Diagram shows on GitHub
+- **WHEN** a map file with a written diagram is pushed and viewed on GitHub
+- **THEN** GitHub draws the diagram with its shapes, labels and key
 
 ### Requirement: Check outcome
 The check report SHALL list each map with its errors and warnings, each with a code, element and message. The CLI SHALL exit nonzero when any error is reported, or any warning with `--strict`; MCP SHALL return the report either way.
@@ -137,21 +156,14 @@ Pinning and writing diagrams SHALL be offered only by the CLI. MCP SHALL offer t
 
 #### Scenario: No write tools over MCP
 - **WHEN** a client lists tools on a server started with `--allow-write`
-- **THEN** `list_maps`, `check_map`, `render_map`, `list_behaviors` and `context_states` are listed and no map-writing tool is
-
-### Requirement: Context states
-`maps context <hub-id>` and `context_states` SHALL place each concept of a hub in one state, first match wins: inbox note, retired, needs rewriting, due for a check, draft, unchecked, checked by a tool, checked by a person. It SHALL render the kit's lifecycle map with each state's count and list its concepts.
-
-#### Scenario: A hub's context state
-- **WHEN** a hub has a deprecated concept, a stale concept, a draft and two human-reviewed concepts, and an inbox note
-- **THEN** the result counts one retired, one needs rewriting, one draft and two checked by a person, lists their IDs, and counts the inbox note only with `--inbox`
+- **THEN** `list_maps`, `check_map`, `render_map` and `list_behaviors` are listed and no map-writing tool is
 
 ### Requirement: Context map warnings
-For a map with a `hub` source, the check SHALL warn `context_stale` for each cited concept whose freshness action is `verify` or `refresh` or whose status is `deprecated`, naming the citing element and the reason.
+For a map with a `hub` source, the check SHALL warn `context_stale` for each cited concept whose freshness action is `verify` or `refresh`, or whose status is `deprecated`, at the evaluation instant, naming the citing element and the reason.
 
-#### Scenario: Map cites a retired concept
-- **WHEN** a team's working-states map cites a concept that is later marked deprecated
-- **THEN** the check warns `context_stale` naming the citing state and `deprecated`
+#### Scenario: Map cites an outdated concept
+- **WHEN** a team's working-states map cites a concept whose `stale_after` falls between two `--at` instants, and another concept marked deprecated
+- **THEN** the check at the earlier instant warns only about the deprecated concept and at the later one also about the stale concept, naming the citing states
 
 ### Requirement: Maps addon
 A `maps` addon SHALL provide the map operations and the `behavior-map` skill. When it is not enabled, map commands SHALL fail with `ADDON_DISABLED` and map tools SHALL be absent from MCP.

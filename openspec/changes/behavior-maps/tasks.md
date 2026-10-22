@@ -1,66 +1,50 @@
 # Tasks
 
 Slices are in `slices.yaml`. Every implementation commit carries
-`OpenSpec-Change: behavior-maps` and `OpenSpec-Slice: <id>` trailers. After
-`sources`, `lid-source` and `check` can be built in parallel; after `check`,
-`pins`, `render` and `derived-status` can. Scenario tests go in
-`test/e2e/maps.test.mjs` unless named otherwise, with fixtures (a fictional
-Pigeon chat app's OpenSpec and LID specs, hubs, JUnit files, golden diagrams)
-under `test/e2e/fixtures/maps/`.
+`OpenSpec-Change: behavior-maps` and `OpenSpec-Slice: <id>` trailers. `journey`
+lands first and is usable alone; `pins`, `lid-source`, `hub-maps` and `evidence`
+can then be built in parallel. Scenario tests go in `test/e2e/maps.test.mjs`
+unless named otherwise, with fixtures (a fictional Pigeon chat app's OpenSpec
+specs, a fictional Brightdesk support team's hub, LID entries copied from
+upstream, golden diagrams) under `test/e2e/fixtures/maps/`.
 
-## 1. Slice `sources`
+## 1. Slice `journey`
 
-- [ ] 1.1 `lib/behavior/sources.mjs`: the source table (`openspec`, `hub`), `Behavior` shape, normalization and 12-hex SHA-256 fingerprints (design decisions 1 to 3); `openspec` maps `openSpec(...).read()` results through `specSource`'s store rule, a requirement's text including its scenarios
-- [ ] 1.2 `hub` source over `lib/workspace.mjs` concept reads: `<hub-id>:/<concept-id>`, title, `okf`, freshness action, inbox only on request, fingerprint of the whole file
-- [ ] 1.3 `addons/maps/addon.json` (`operations: "maps"`, `skills: []` until slice `skill-docs`); `list_behaviors` in `lib/operations.mjs` (group `maps`, read-only), `maps behaviors --source <s> [--store] [--hub] [--inbox]` in `bin/hub.mjs` and its usage line
-- [ ] 1.4 Link tests to "Unknown source", "List OpenSpec behaviors" (CLI and MCP, pending delta excluded), "Undeclared store", "List hub behaviors" and "Fingerprint follows the text"
-- [ ] 1.5 `maps` help topic and `skills/context-kit/references/maps.md` started with `maps behaviors`, `list_behaviors` and `INVALID_SOURCE`; `test/e2e/help.test.mjs` stays green
+- [ ] 1.1 `lib/behavior/sources.mjs`: the source table, `Behavior` shape, normalization and 12-hex SHA-256 fingerprints, and the `openspec` source over `openSpec(...).read()` and `specSource`'s store rule, a requirement's text including its scenarios (design decisions 1 to 3)
+- [ ] 1.2 `lib/behavior/maps.mjs`: find `maps/*.md`, extract the single `yaml map` block, closed zod schema with `kind` defaulting to `state` (decision 5), `UNKNOWN_MAP`; structure checks, citation resolution (every `state` cites; every ambiguous ID rejected), coverage by scope, label lint with `vocabulary` (decision 10); the report and exit codes (decision 9)
+- [ ] 1.3 `lib/behavior/render.mjs`: Mermaid shapes, labels and edges (decision 12, without status classes yet) and JSON (decision 13); the generated block and `maps render --write` (decision 14)
+- [ ] 1.4 `addons/maps/addon.json` (`operations: "maps"`, skill `behavior-map`); `list_behaviors`, `list_maps`, `check_map`, `render_map` in `lib/operations.mjs` (group `maps`, read-only) and `write_map_diagram` (CLI only, write); `maps behaviors|list|check|render` in `bin/hub.mjs` with usage lines
+- [ ] 1.5 `skills/behavior-map/SKILL.md` per decision 17 with the Pigeon example; `maps` help topic (`skills/context-kit/references/maps.md`) with every command, tool and code; the topic in `skills/context-kit/SKILL.md`'s table and `test/e2e/help.test.mjs`'s topic list, `maps` among the two-word commands it reads; `docs/maps.md` ("behavior maps", with "statecharts" as the familiar term), README (addons table, a Maps paragraph), `docs/format.md` (the `BehaviorMap` type), `docs/next.md`
+- [ ] 1.6 Link tests to "Unknown source", "List OpenSpec behaviors" (CLI and MCP, pending delta excluded), "Undeclared store", "Fingerprint follows the text", "List maps", "Unknown map", "Unknown key", "Unreachable state", "Valid map" (CLI and MCP), "Uncited state", "Unknown citation", "Ambiguous citation" (two scenarios sharing a name), "Uncovered scenario", "Scope narrowed to a requirement", "Label reads as code", "Allowed term" (with and without `GitHub` in the vocabulary), "Strict check in CI", "Render a map" (twice, CLI and MCP, byte-identical with a golden file), "Render as JSON" and "Outdated diagram"
+- [ ] 1.7 Link `test/e2e/mcp.test.mjs` to "No write tools over MCP" and `test/e2e/addons.test.mjs` to "Maps addon disabled"
+- [ ] 1.8 Add to `test/manual-checks.md`: "Diagram shows on GitHub" (push a fixture map with a written diagram to a scratch branch and view it) and "Draft from specs" (an agent drafts a map for the fixture's `alerts` capability from the skill alone; `maps check` passes and a reviewer confirms the labels are plain)
 
-## 2. Slice `lid-source`
+## 2. Slice `pins`
 
-- [ ] 2.1 `lib/behavior/lid.mjs`: files `docs/intent/**/*-specs.md` and `docs/specs/*.md`, the entry grammar and markers, title from the nearest `##` heading, marker excluded from the fingerprint, `INVALID_SOURCE` on duplicate IDs (design decision 4); register `lid` in the source table
-- [ ] 2.2 Link tests to "List linked-intent behaviors" and "Duplicate linked-intent ID"
+- [ ] 2.1 `pin_map` (CLI only, write) rewriting only `pins` through `yaml`'s Document API; `unpinned` and `stale` warnings naming the citing elements
+- [ ] 2.2 Link tests to "Spec changed after pinning" (the rest of the file byte-identical after pinning) and "Pin and render converge"
+- [ ] 2.3 Skill and help: when to pin (after a person reviews the map)
 
-## 3. Slice `check`
+## 3. Slice `lid-source`
 
-- [ ] 3.1 `lib/behavior/maps.mjs`: find repository maps (`maps/*.md`) and hub `BehaviorMap` concepts, extract the single `yaml map` block, closed zod schema (design decisions 5 and 6), `UNKNOWN_MAP`
-- [ ] 3.2 Structure checks, citation resolution with ambiguity, coverage by scope per source, label lint with `vocabulary` (design decision 8)
-- [ ] 3.3 `lib/behavior/status.mjs`: declared status, evidence (confined repository paths, `#<n>`, `https://`), `fixed_by` targets, fix edges counting for reachability
-- [ ] 3.4 Report shape and codes (design decision 7); `list_maps` and `check_map` operations, `maps list` and `maps check [<map>] [--strict]`, exit codes
-- [ ] 3.5 Link tests to "List maps", "Unknown map", "Unknown key", "Unreachable state", "Valid map" (CLI and MCP), "Unknown citation", "Ambiguous citation", "Uncovered scenario", "Scope narrowed to a requirement", "Label reads as code", "Allowed term", "Issue and its fix", "Missing evidence file" and "Strict check in CI"
-- [ ] 3.6 Help topic and reference: map format, check codes, `UNKNOWN_MAP`
+- [ ] 3.1 Fixtures from `jszmajda/lid` at `9679360`: `LID-CORE-001`…`004` from `docs/intent/linked-intent-dev/core/core-specs.md` (backticked markers), `AUTH-UI-001`, `AUTH-UI-002`, `AUTH-API-001`, `AUTH-API-002` and `CART-UI-001` from `plugins/linked-intent-dev/skills/linked-intent-dev/references/ears-syntax.md` (plain markers and markerless), laid out as `docs/intent/**/*-specs.md` and `docs/specs/*.md`, with upstream's MIT `LICENSE` and a README naming the source files and commit
+- [ ] 3.2 `lid` source per design decision 4; `INVALID_SOURCE` on duplicate IDs
+- [ ] 3.3 Link tests to "Upstream entry forms" and "Duplicate linked-intent ID"; help and docs list the `lid` source
 
-## 4. Slice `pins`
+## 4. Slice `hub-maps`
 
-- [ ] 4.1 `pin_map` (CLI only, write) rewriting only `pins` through `yaml`'s Document API; `unpinned` and `stale` warnings naming the citing elements
-- [ ] 4.2 Link a test to "Spec changed after pinning" (asserts the rest of the file is byte-identical after pinning)
+- [ ] 4.1 `hub` source over workspace hubs only (decision 14), `BehaviorMap` concepts excluded, inbox on request, `--at`/`at` through `summarize` and `freshness` (decision 8)
+- [ ] 4.2 Hub `BehaviorMap` concepts as maps named `<hub-id>:/<concept-id>`; `context_stale` warnings; if `hub-federation` has landed, filter mounted hubs and test that a mount's map is unlisted and `maps pin <mount>:/<id>` fails `UNKNOWN_MAP`, otherwise note on #48 that maps ignore mounts
+- [ ] 4.3 Brightdesk hub fixture and the skill's second worked example (decision 7)
+- [ ] 4.4 Link tests to "List hub behaviors", "Reproducible freshness", "A team's working states", "A hub map does not cover itself" and "Map cites an outdated concept"
 
-## 5. Slice `render`
+## 5. Slice `evidence`
 
-- [ ] 5.1 `lib/behavior/render.mjs`: Mermaid per design decision 11 and JSON per decision 12; `render_map` and `maps render <map> [--format]`
-- [ ] 5.2 Generated block markers, `maps render --write` (CLI only, write) and the `diagram_outdated` warning (design decision 13)
-- [ ] 5.3 Golden diagram fixtures; link tests to "Render a map with a fix" (twice, CLI and MCP, byte-identical), "Render as JSON" and "Outdated diagram"
-
-## 6. Slice `derived-status`
-
-- [ ] 6.1 Derived `tested`/`untested`/`unknown` from `testLinks()` in `lib/specs/links.mjs`, with reasons; store sources `unknown` (design decision 9)
-- [ ] 6.2 `lib/behavior/junit.mjs`: strict small XML reader, 16 MiB bound, `<!DOCTYPE` rejected, `RESULTS_FORMAT`; test-name extraction from the linked `test(` call; matching by name and `file` (design decision 10)
-- [ ] 6.3 `--results` / `results` on check and render (never on `--write`); `status_conflict` for declared `works` or `fixed`
-- [ ] 6.4 Link tests to "Tested and untested states", "Results decide status" (a JUnit file produced by `node --test --test-reporter=junit` on a fixture) and "Declared fix contradicted"
-
-## 7. Slice `context-states`
-
-- [ ] 7.1 `maps/context-states.md` in this repository, scoped to and citing the requirements named in design decision 14; `maps check --strict` on this repository passes
-- [ ] 7.2 `lib/behavior/context.mjs`: placement by the precedence in design decision 14, counts, bounded concept lists; `context_states` and `maps context <hub-id> [--format] [--inbox]`
-- [ ] 7.3 `context_stale` warnings for `hub`-source maps
-- [ ] 7.4 Link tests to "A hub's context state" and "Map cites a retired concept"
-
-## 8. Slice `skill-docs`
-
-- [ ] 8.1 `skills/behavior-map/SKILL.md` per design decision 17, with a worked fictional example; add it to `addons/maps/addon.json`
-- [ ] 8.2 Link `test/e2e/addons.test.mjs` to "Maps addon disabled" and `test/e2e/mcp.test.mjs` to "No write tools over MCP"; add "Draft from specs" to `test/manual-checks.md` with how it is checked (an agent drafts a map for the fixture's `alerts` capability from the skill alone; `maps check` passes and a reviewer confirms the labels are plain)
-- [ ] 8.3 `docs/maps.md` (format, sources, statuses, CI use with `maps check --strict` and a JUnit file), README (addons table and a Maps paragraph), `docs/next.md`, `docs/format.md` (the `BehaviorMap` concept type), finished `maps` help topic and reference covering every command, tool and code
-- [ ] 8.4 Run `npm test`, `node bin/hub.mjs validate`, `npx openspec validate behavior-maps --strict`, `node bin/hub.mjs --root . maps check --strict` and `specs reconcile behavior-maps`
+- [ ] 5.1 Declared status, evidence (confined repository paths, `#<n>`, `https://`), `fixed_by` targets, fix edges counting for reachability
+- [ ] 5.2 Derived `tested`/`untested`/`unknown` from `testLinks()` in `lib/specs/links.mjs`, store sources `unknown`, both origins in the report and JSON (decision 11)
+- [ ] 5.3 Status classes, the key and fix edges in Mermaid (decision 12); update golden files
+- [ ] 5.4 Link tests to "Issue and its fix", "Missing evidence file", "Tested and untested states" and "Render a map with a fix"
+- [ ] 5.5 Run `npm test`, `node bin/hub.mjs validate`, `npx openspec validate behavior-maps --strict` and `specs reconcile behavior-maps`
 
 ## Workflow follow-up
 
