@@ -128,11 +128,20 @@ npm run agents -- uninstall [--agent claude,codex]
     `MCP_REPLACED` until `--force`, and uninstall skips it. A file rewritten in
     place since install (the harness saving it) still loses our entry, but the
     file and `mcpServers` the install created are then left.
-  - What an interrupted write leaves beside the file is cleaned up by the next
-    install or uninstall only when it holds exactly what Context Kit expected
-    (each name carries that content's hash). Anything else is kept under a
-    displaced name and listed in the result (`displaced`, with a `note`). A file
-    an interrupted uninstall moved aside is put back.
+  - A file Context Kit replaced or deleted is kept beside it as a previous version
+    (`.<file>.context-kit-<pid>-<ms>-v<hash>`), since a harness that has it open
+    may still write to it. A later install, uninstall or `repos sync` deletes it once
+    it is an hour old and still holds exactly what it held (the hash in its name);
+    one that holds anything else is moved to a displaced copy and listed in the
+    result (`displaced`). What an interrupted write leaves follows the same rule; a
+    file an interrupted uninstall moved aside is put back. A directory the install
+    created goes once only such files were in it, even after uninstall
+    (`.state/leftovers.json` remembers them).
+- One install, uninstall or `repos sync` runs at a time per workspace: each takes
+  `.state/.lock-agents` (created exclusively, with its pid; a dead holder's lock is
+  taken over), and another waits up to five minutes, then fails with
+  `AGENTS_BUSY`. Records are read back after each save (`RECORDS_CHANGED` if they
+  differ).
 - A harness CLI that fails is reported with a fixed code (`MCP_ADD_FAILED`,
   `MCP_REMOVE_FAILED`, `MCP_CLI_TIMEOUT`, `MCP_CLI_NOT_RUNNABLE`) and never its
   output. A remove that failed while the server is still registered is reported
