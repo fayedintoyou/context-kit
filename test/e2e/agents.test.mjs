@@ -1135,3 +1135,47 @@ test('a routing skill in the shared ~/.agents/skills location alone also makes a
   assert.ok(refused.error.message.startsWith(`${join(env.HOME, '.agents/skills/my-repos')} belongs to the workspace at ${workspace};`), refused.error.message);
   assert.equal(await exists(join(base, 'claude/skills')), false, 'nothing written');
 });
+
+// Every configuration install reads is read before its first write, so a broken one refuses
+// with INVALID_CONFIG and nothing is written: no launcher, records, skills or agent CLI calls.
+test('install refuses a corrupt configuration with INVALID_CONFIG before writing anything', async t => {
+  const broken = {
+    'checkouts file': [async workspace => {
+      await mkdir(join(workspace, '.state'), { recursive: true });
+      await writeFile(join(workspace, '.state/checkouts.json'), '{ not json');
+    }, /checkouts\.json/],
+    'context-kit.json': [workspace => writeFile(join(workspace, 'context-kit.json'), '{ "version": 1, "addons": ['), /context-kit\.json/],
+    'unknown enabled addon': [workspace => writeFile(join(workspace, 'context-kit.json'), JSON.stringify({ version: 1, addons: ['reflect', 'nonesuch'] })), /nonesuch/],
+    'addon manifest': [async workspace => {
+      await workspaceAddon(workspace);
+      await writeFile(join(workspace, 'addons/drafting/addon.json'), '{ "name": "drafting", ');
+    }, /drafting/],
+  };
+  for (const [label, [breakIt, message]] of Object.entries(broken)) {
+    const { base, env, workspace, agents, calls } = await fixture(t);
+    await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+    await breakIt(workspace);
+    const refused = await agents('install');
+    assert.equal(refused.code, 1, label);
+    assert.equal(refused.error.code, 'INVALID_CONFIG', `${label}: ${JSON.stringify(refused.error)}`);
+    assert.match(refused.error.message, message, label);
+    assert.equal(await exists(join(env.HOME, '.local/bin')), false, `${label}: no launcher directory`);
+    assert.equal(await exists(join(workspace, '.state/agents.json')), false, `${label}: no records`);
+    assert.equal(await exists(join(base, 'claude/skills')), false, `${label}: no Claude Code skills`);
+    assert.equal(await exists(join(env.HOME, '.agents')), false, `${label}: no shared skills`);
+    assert.deepEqual(await calls(), [], `${label}: no agent CLI calls`);
+  }
+});
+
+// spec: agent-installation / Foreign launcher
+test('install sweeps launcher temporaries over an hour old by their exact name, and nothing else', async t => {
+  const { env, agents } = await fixture(t);
+  const directory = join(env.HOME, '.local/bin');
+  await mkdir(directory, { recursive: true });
+  const stale = `.context-kit.context-kit-123-${Date.now() - 2 * 3600000}`;
+  const fresh = `.context-kit.context-kit-124-${Date.now() - 60000}`;
+  const others = [`${stale}-x`, `.context-kit.context-kit-${Date.now() - 2 * 3600000}`, `.other.context-kit-1-${Date.now() - 2 * 3600000}`];
+  for (const name of [stale, fresh, ...others]) await writeFile(join(directory, name), 'temporary\n');
+  assert.equal((await agents('install')).code, 0);
+  assert.deepEqual((await readdir(directory)).sort(), ['context-kit', fresh, ...others].sort());
+});
