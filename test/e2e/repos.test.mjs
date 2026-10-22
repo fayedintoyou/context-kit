@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -302,7 +302,7 @@ test('setup never reports the credentials in a wrong checkout\'s remote, on stde
 
 test('setup shows remotes only by their normalized identity, whatever credentials their URLs hold', async t => {
   const { base, cli, cliInput, register, checkout } = await fixture(t);
-  const secrets = ['SECRET-ACCESS', 'SECRET-ENCODED', 'SECRET-OAUTH', 'p@ss-SECRET', 'SECRET-CLONE', 'SECRET-SLASH', 'SECRET-FILE', 'SECRET-SCP'];
+  const secrets = ['SECRET-ACCESS', 'SECRET-ENCODED', 'SECRET-OAUTH', 'p@ss-SECRET', 'SECRET-CLONE', 'SECRET-SLASH', 'SECRET-FILE', 'SECRET-SCP', 'SECRET-VAULT', 'SECRET-QUERY', 'SECRET-SPLIT'];
   const lower = secrets.map(secret => secret.toLowerCase());
   // A derived title, from an upstream carrying a token.
   await register('personal', 'room', { resource: 'https://github.com/me/room?access_token=SECRET-ACCESS' });
@@ -314,7 +314,11 @@ test('setup shows remotes only by their normalized identity, whatever credential
     backup: 'https://faye:p@ss-SECRET@github.com/me/other.git',
     slash: 'https://faye:pa/SECRET-SLASH@github.com/me/room',
     local: 'file://u:SECRET-FILE@host/srv/room',
-    scp: 'git@github.com:me/garden?token=SECRET-SCP' });
+    scp: 'git@github.com:me/garden?token=SECRET-SCP',
+    // A password whose start reads as a port, holding # or ? before its @.
+    vault: 'https://faye:2024/vault/SECRET-VAULT#1@github.com/me/room',
+    query: 'https://faye:2024/vault/SECRET-QUERY?x@github.com/me/other',
+    split: 'https://fa/ye:x/SECRET-SPLIT#@github.com/me/room' });
   // A password holding an unescaped / leaves no valid upstream: it isn't registered at all.
   await register('personal', 'studio', { title: 'studio', resource: 'https://faye:pa/SECRET-SLASH@github.com/me/studio' });
   // Prompts in id order: garden (clone fails, then skip), then the room (a wrong checkout, then skip).
@@ -324,7 +328,7 @@ test('setup shows remotes only by their normalized identity, whatever credential
   const failed = Object.fromEntries(setup.json.failed.map(item => [item.id, item]));
   assert.equal(failed['personal/main/garden'].code, 'CLONE_FAILED');
   assert.equal(failed['personal/main/garden'].message, 'Could not clone 127.0.0.1/me/garden: network error');
-  assert.equal(failed['personal/main/room'].message, `${wrong} has remotes github.com/me/garden, github.com/me/other, gitlab.com/me/other and 2 unrecognized, not github.com/me/room`);
+  assert.equal(failed['personal/main/room'].message, `${wrong} has remotes file:host/srv/room, github.com/me/garden, github.com/me/other, gitlab.com/me/other and 4 unrecognized, not github.com/me/room`);
   assert.deepEqual(setup.json.missing.map(item => item.upstream), ['127.0.0.1/me/garden', 'github.com/me/room']);
   const locate = await cli('repos', 'locate', 'room', wrong);
   assert.equal(locate.error.code, 'REMOTE_MISMATCH');
@@ -335,6 +339,48 @@ test('setup shows remotes only by their normalized identity, whatever credential
   for (const text of [setup.stderr, JSON.stringify(setup.json), JSON.stringify(locate.error), JSON.stringify(clone.error), JSON.stringify(validate.error)]) {
     for (const secret of [...secrets, ...lower]) assert.ok(!text.includes(secret), `${secret} in ${text}`);
     assert.ok(!text.includes('faye'), text);
+  }
+});
+
+test('no secret placed anywhere in a remote URL reaches setup, locate or validate output', async t => {
+  const { base, cli, cliInput, register, checkout } = await fixture(t);
+  const secrets = ['S3CR3T-ALPHA', 'tok_SECRETbeta', 'Zq9SECRETgamma'];
+  const separators = ['/', '?', '#', ':', '@', '%2F'];
+  const placements = [(s, x) => `${x}${s}`, (s, x) => `${s}${x}`, (s, x) => `pre${x}${s}${x}post`, (s, x) => `${x}${x}${s}`, (s, x) => `2024${x}${s}`];
+  // The host part stays intact in each; well-formed userinfo has no raw / ? or #, and a query
+  // or fragment holding an @ makes the URL ambiguous. Either way, never shown.
+  const families = [
+    [pw => `https://user:${pw}@github.com/o/r`, pw => /[/?#]/.test(pw)],
+    [pw => `ssh://git:${pw}@github.com/o/r.git`, pw => /[/?#]/.test(pw)],
+    [pw => `https://github.com/o/r?${pw}`, pw => pw.includes('@')],
+    [pw => `git@github.com:o/r#${pw}`, pw => pw.includes('@')]];
+  const cases = [];
+  for (const secret of secrets) for (const separator of separators) for (const place of placements) for (const [build, ambiguous] of families) {
+    const pw = place(secret, separator);
+    cases.push({ id: `personal/main/c${cases.length}`, url: build(pw), expected: ambiguous(pw) ? null : 'github.com/o/r' });
+  }
+  for (const [i, item] of cases.entries()) await register('personal', `c${i}`, { title: `c${i}`, resource: item.url });
+  await register('personal', 'target', { title: 'target', resource: 'https://github.com/x/target' });
+  // One checkout with every URL as a remote; quoted, so git reads # and ; literally.
+  const wrong = await checkout(join(base, 'wrong'));
+  const urls = [...new Set(cases.map(item => item.url))];
+  await appendFile(join(wrong, '.git/config'), urls.map((url, i) => `[remote "r${i}"]\n\turl = "${url}"\n`).join(''));
+  await mkdir(join(base, 'empty'));
+  const setup = await cliInput('', 'repos', 'setup', '--ask', '--scan', join(base, 'empty'));
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  assert.equal(setup.json.missing.length, cases.filter(item => item.expected).length + 1);
+  const shown = new Map(setup.json.missing.map(item => [item.id, item.upstream]));
+  for (const item of cases) assert.equal(shown.get(item.id) ?? null, item.expected, item.url);
+  const locate = await cli('repos', 'locate', 'target', wrong);
+  assert.equal(locate.error.code, 'REMOTE_MISMATCH');
+  const unrecognized = urls.filter(url => cases.find(item => item.url === url).expected === null).length;
+  assert.equal(locate.error.message, `${wrong} has remotes github.com/o/r and ${unrecognized} unrecognized, not github.com/x/target`);
+  const validate = await cli('validate');
+  assert.equal(validate.error.code, 'INVALID_REPOSITORY');
+  // The routing skill and repos listing show a hub concept's resource as written; that is
+  // their own requirement's output, not this one's.
+  for (const text of [setup.stderr, JSON.stringify(setup.json), JSON.stringify(locate.error), JSON.stringify(validate.error)].map(text => text.toLowerCase())) {
+    for (const secret of secrets) assert.ok(!text.includes(secret.toLowerCase()), `${secret} shown in ${text.slice(Math.max(0, text.indexOf(secret.toLowerCase()) - 200), text.indexOf(secret.toLowerCase()) + 50)}`);
   }
 });
 
