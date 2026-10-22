@@ -325,8 +325,11 @@ Whichever change lands second updates one table entry and its test.
   <checkout>` by hand. Deleting an ordinary main checkout deletes the git directory
   its worktrees point to, so git can't read them at all. Scan detects that from the
   worktree's `.git` file and reports the path and reason without a repository id.
-- Reported text never carries credentials: remote URLs and git diagnostics in
-  errors, prompts and results have URL userinfo and token parameters redacted.
+- Reported text never carries credentials. Errors, prompts, derived titles and
+  results name a remote only by its normalized identity (host/owner/name, which has
+  no userinfo, port, query or fragment), never the URL as given. A failed clone
+  reports a fixed category (authentication failed, not found, network error, git
+  failed) with that identity, not git's stderr.
 - `repos setup`: CLI-only, a write (`cliOnly: true, write: true`). Steps: scan (default
   `$HOME`, depth 2), then a missing list. Prompts happen when `process.stdin.isTTY`
   or `--ask`, reading one line per missing repository: a path (locate), `clone`,

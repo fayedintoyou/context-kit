@@ -90,7 +90,9 @@ there, or nothing to skip it. A wrong path is reported and asked again. It never
 clones a repository you didn't name or answer `clone` for. Prompts go to stderr and
 the JSON result to stdout: what was `recorded`, `cloned`, `located`, `skipped` or
 `failed`, and each repository still `missing` with its `repos locate` and
-`repos clone` commands. It ends by refreshing the installed `my-repos` skill; if
+`repos clone` commands. Remotes are shown only as host/owner/name, so a token in
+a remote URL never reaches the output, and a failed clone says only whether it was
+authentication, not found, the network or git. It ends by refreshing the installed `my-repos` skill; if
 none is installed yet, it says to run `agents install`.
 
 ### Worktrees

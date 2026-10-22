@@ -293,10 +293,40 @@ test('setup never reports the credentials in a wrong checkout\'s remote, on stde
   const setup = await cliInput(`${wrong}\n\n`, 'repos', 'setup', '--ask');
   assert.equal(setup.code, 0, JSON.stringify(setup.error));
   assert.equal(setup.json.failed[0].code, 'REMOTE_MISMATCH');
-  assert.match(setup.json.failed[0].message, /https:\/\/\*\*\*@github\.com\/me\/other/);
+  assert.equal(setup.json.failed[0].message, `${wrong} has remotes github.com/me/other, not github.com/me/room`);
   assert.match(setup.stderr, /REMOTE_MISMATCH/);
   for (const text of [setup.stderr, JSON.stringify(setup.json)]) {
     assert.ok(!text.includes(token) && !text.includes('faye:'), text);
+  }
+});
+
+test('setup shows remotes only by their normalized identity, whatever credentials their URLs hold', async t => {
+  const { base, cli, cliInput, register, checkout } = await fixture(t);
+  const secrets = ['SECRET-ACCESS', 'SECRET-ENCODED', 'SECRET-OAUTH', 'p@ss-SECRET', 'SECRET-CLONE'];
+  // A derived title, from an upstream carrying a token.
+  await register('personal', 'room', { resource: 'https://github.com/me/room?access_token=SECRET-ACCESS' });
+  // A clone that fails, from an upstream with a password holding an unescaped @.
+  await register('personal', 'garden', { title: 'garden', resource: 'https://faye:p@ss-SECRET@127.0.0.1:1/me/garden.git?oauth_token=SECRET-CLONE' });
+  const wrong = await checkout(join(base, 'wrong'), {
+    origin: 'https://github.com/me/other?%74oken=SECRET-ENCODED',
+    mirror: 'https://gitlab.com/me/other?oauth_token=SECRET-OAUTH',
+    backup: 'https://faye:p@ss-SECRET@github.com/me/other.git' });
+  // Prompts in id order: garden (clone fails, then skip), then the room (a wrong checkout, then skip).
+  const setup = await cliInput(`clone\n\n${wrong}\n\n`, 'repos', 'setup', '--ask', '--scan', join(base, 'wrong'), '--depth', '0');
+  assert.equal(setup.code, 0, JSON.stringify(setup.error));
+  assert.match(setup.stderr, /^room \(personal\/main\/room, github\.com\/me\/room\) is missing/m);
+  const failed = Object.fromEntries(setup.json.failed.map(item => [item.id, item]));
+  assert.equal(failed['personal/main/garden'].code, 'CLONE_FAILED');
+  assert.equal(failed['personal/main/garden'].message, 'Could not clone 127.0.0.1/me/garden: network error');
+  assert.equal(failed['personal/main/room'].message, `${wrong} has remotes github.com/me/other, gitlab.com/me/other, not github.com/me/room`);
+  assert.deepEqual(setup.json.missing.map(item => item.upstream), ['127.0.0.1/me/garden', 'github.com/me/room']);
+  const locate = await cli('repos', 'locate', 'room', wrong);
+  assert.equal(locate.error.code, 'REMOTE_MISMATCH');
+  const clone = await cli('repos', 'clone', 'garden');
+  assert.deepEqual(clone.error.details, { reason: 'network error', upstream: '127.0.0.1/me/garden' });
+  for (const text of [setup.stderr, JSON.stringify(setup.json), JSON.stringify(locate.error), JSON.stringify(clone.error)]) {
+    for (const secret of secrets) assert.ok(!text.includes(secret), `${secret} in ${text}`);
+    assert.ok(!text.includes('faye'), text);
   }
 });
 
@@ -346,8 +376,8 @@ test('repos setup --ask locates and clones what the answers say, then refreshes 
   // Prompts come in id order: garden, then the room.
   const setup = await cliInput(`clone\n${room}\n`, 'repos', 'setup', '--ask');
   assert.equal(setup.code, 0, JSON.stringify(setup.error));
-  assert.match(setup.stderr, /garden \(personal\/main\/garden, file:\/\/.*\) is missing/);
-  assert.match(setup.stderr, /the room \(personal\/main\/room, https:\/\/github.com\/me\/room\) is missing/);
+  assert.match(setup.stderr, /garden \(personal\/main\/garden, file:\/.*\/garden\) is missing/);
+  assert.match(setup.stderr, /the room \(personal\/main\/room, github\.com\/me\/room\) is missing/);
   const garden = await realpath(join(env.HOME, 'garden'));
   assert.deepEqual(setup.json.cloned, [{ id: 'personal/main/garden', path: garden }]);
   assert.deepEqual(setup.json.located, [{ id: 'personal/main/room', path: room }]);
