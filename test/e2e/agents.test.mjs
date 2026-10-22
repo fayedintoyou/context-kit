@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, chmod, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, link, rename, rm, realpath, symlink, utimes } from 'node:fs/promises';
+import { access, chmod, cp, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, link, rename, rm, realpath, symlink, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,7 +80,7 @@ test('install puts enabled skills and the MCP server into both agents', async t 
     ['claude', ['mcp', 'add', '-s', 'user', 'context-workspace', '--', ...server]],
     ['codex', ['mcp', 'add', 'context-workspace', '--', ...server]]]);
   const status = await agents('status');
-  assert.equal(status.json.items.length, 17);
+  assert.equal(status.json.items.length, 18);
   assert.ok(status.json.items.every(item => item.state === 'installed'), JSON.stringify(status.json.items));
 
   const again = await agents('install');
@@ -199,7 +199,8 @@ test('install and uninstall never touch skills they did not create or that were 
   assert.equal(await readFile(join(base, 'claude/skills/reflect/SKILL.md'), 'utf8'), 'mine');
   assert.equal(await exists(join(base, 'home/.agents/skills/reflect')), false);
   assert.ok((await calls()).some(call => call.agent === 'codex' && call.args.join(' ') === 'mcp remove context-workspace'));
-  assert.deepEqual((await agents('status')).json.items.map(item => [item.agent, item.name, item.state]), [['codex', 'independent-review', 'changed']]);
+  // The launcher serves every agent, so it stays while an edited skill is kept.
+  assert.deepEqual((await agents('status')).json.items.map(item => [item.agent, item.name, item.state]), [['codex', 'independent-review', 'changed'], [undefined, 'context-kit', 'installed']]);
 });
 
 // spec: agent-installation / Agent CLI missing
@@ -222,7 +223,7 @@ test('setup creates a pinned instance and installs it into agents', async t => {
   assert.deepEqual(JSON.parse(await readFile(join(target, 'package.json'), 'utf8')).dependencies, { 'context-kit': `file:${kit}` });
   assert.deepEqual(JSON.parse(await readFile(join(target, 'context-kit.json'), 'utf8')).addons, ['reflect']);
   assert.deepEqual((await readdir(join(base, 'claude/skills'))).sort(), ['context-kit', 'reflect']);
-  assert.deepEqual(result.json.agents.results.map(item => `${item.kind}:${item.name}:${item.action}`), ['skill:context-kit:installed', 'skill:reflect:installed', 'mcp:my-context:installed',
+  assert.deepEqual(result.json.agents.results.map(item => `${item.kind}:${item.name}:${item.action}`), ['launcher:context-kit:installed', 'skill:context-kit:installed', 'skill:reflect:installed', 'mcp:my-context:installed',
     'guard:merge-guard:installed', 'hook:post-merge:skipped', 'hook:post-rewrite:skipped']);
   const add = (await calls()).find(call => call.args.includes('add') && call.args.includes('my-context'));
   assert.ok(add.args.includes(join(target, 'node_modules/context-kit/bin/mcp.mjs')) || add.args.includes(join(kit, 'bin/mcp.mjs')));
@@ -825,9 +826,11 @@ test('a second workspace does not claim the first one\'s shared copies', async t
   assert.equal((await agents('install', '--agent', 'codex')).code, 0);
   const second = join(base, 'second');
   await run(['init', second]);
-  const theirs = await run(['--root', second, 'agents', 'install', '--agent', 'codex']);
+  // Its own launcher directory: the one-workspace rule is about the launcher, not these copies.
+  const own = { XDG_BIN_HOME: join(base, 'bin-second') };
+  const theirs = await run(['--root', second, 'agents', 'install', '--agent', 'codex'], own);
   assert.ok(theirs.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'conflict' && item.code === 'SKILL_FOREIGN'));
-  await run(['--root', second, 'agents', 'uninstall']);
+  await run(['--root', second, 'agents', 'uninstall'], own);
   assert.deepEqual((await readdir(join(env.HOME, '.agents/skills'))).sort(), BUNDLED);
   assert.ok((await agents('status')).json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
 });
@@ -864,14 +867,271 @@ test('a workspace killed before its swap does not claim the copy another workspa
   assert.ok(pending, 'a pending record was saved before the swap');
   const second = join(base, 'second');
   await run(['init', second]);
-  assert.equal((await run(['--root', second, 'agents', 'install', '--agent', 'codex'])).code, 0);
+  // Its own launcher directory: the one-workspace rule is about the launcher, not these copies.
+  const own = { XDG_BIN_HOME: join(base, 'bin-second') };
+  assert.equal((await run(['--root', second, 'agents', 'install', '--agent', 'codex'], own)).code, 0);
   // Same version, so the same bytes: only the inode tells the copies apart.
   const again = await run(['--root', workspace, 'agents', 'install', '--agent', 'codex']);
   const theirs = again.json.results.find(item => item.path === pending.path);
   assert.deepEqual([theirs.action, theirs.code], ['conflict', 'SKILL_FOREIGN']);
   await run(['--root', workspace, 'agents', 'uninstall']);
   assert.ok(await exists(pending.path));
-  const status = await run(['--root', second, 'agents', 'status']);
+  const status = await run(['--root', second, 'agents', 'status'], own);
   assert.ok(status.json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
   assert.deepEqual((await readdir(shared)).filter(name => !name.startsWith('.')).sort(), BUNDLED);
+});
+
+// Runs a file the way an agent's shell would, from a directory unrelated to the workspace.
+async function launch(file, args, env, cwd) {
+  try { return { code: 0, json: JSON.parse((await exec(file, args, { env, cwd })).stdout) }; }
+  catch (error) { return { code: error.code, error: error.stderr ? JSON.parse(error.stderr).error : error.message }; }
+}
+const launcherItem = items => items.find(item => item.kind === 'launcher');
+const routingBody = async path => (await readFile(join(path, 'SKILL.md'), 'utf8')).split('\n---\n').slice(1).join('\n---\n');
+
+// spec: agent-installation / Run from anywhere
+test('the launcher runs the workspace from any directory, with or without its directory on PATH', async t => {
+  const { base, env, workspace, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const elsewhere = join(base, 'elsewhere');
+  await mkdir(elsewhere);
+  const installed = await agents('install');
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  const launcher = join(env.HOME, '.local/bin/context-kit');
+  assert.deepEqual([launcherItem(installed.json.results).path, launcherItem(installed.json.results).action, launcherItem(installed.json.results).onPath], [launcher, 'installed', false]);
+  assert.equal((await lstat(launcher)).mode & 0o777, 0o755);
+  // No node on this PATH: the launcher names this machine's Node itself.
+  const listed = await launch(launcher, ['repos'], { HOME: env.HOME, PATH: '/usr/bin:/bin' }, elsewhere);
+  assert.equal(listed.code, 0, JSON.stringify(listed.error));
+  assert.deepEqual([listed.json.root, listed.json.repositories.map(item => item.id)], [workspace, ['personal/main/room']]);
+  let status = launcherItem((await agents('status')).json.items);
+  assert.deepEqual([status.state, status.onPath], ['installed', false]);
+  assert.match(status.reason, /is not on PATH; add export PATH=/);
+  // Off PATH, the skill names the launcher by its absolute path.
+  assert.ok((await routingBody(join(base, 'claude/skills/my-repos'))).includes(`\`${launcher} repos\``));
+
+  // With its directory on PATH, `context-kit` alone works at a shell, but the skill keeps the
+  // absolute path: agent apps started outside a shell may not have that PATH.
+  const onPath = { PATH: `${dirname(launcher)}:${env.PATH}` };
+  const again = await run(['--root', workspace, 'agents', 'install'], onPath);
+  assert.equal(launcherItem(again.json.results).action, 'unchanged');
+  assert.equal(launcherItem(again.json.results).onPath, true);
+  status = launcherItem((await run(['--root', workspace, 'agents', 'status'], onPath)).json.items);
+  assert.deepEqual([status.state, status.onPath], ['installed', true]);
+  const body = await routingBody(join(env.HOME, '.agents/skills/my-repos'));
+  assert.ok(body.includes(`\`${launcher} repos\`. Both work from any directory. At a terminal,\n\`context-kit\` is the same launcher`), body);
+  const bare = await launch('/bin/sh', ['-c', 'context-kit repos'], { HOME: env.HOME, PATH: `${dirname(launcher)}:/usr/bin:/bin` }, elsewhere);
+  assert.deepEqual(bare.json.repositories.map(item => item.id), ['personal/main/room']);
+
+  const removed = await agents('uninstall');
+  assert.equal(launcherItem(removed.json.results).action, 'removed');
+  assert.equal(await exists(launcher), false);
+  async function run(args, extra) {
+    try { return { code: 0, json: JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), ...args], { env: { ...env, ...extra }, cwd: base })).stdout) }; }
+    catch (error) { return { code: error.code, error: error.stderr }; }
+  }
+});
+
+// spec: agent-installation / Foreign launcher
+test('install never overwrites a context-kit it did not write, nor writes through a symlinked directory', async t => {
+  const { base, env, workspace, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const launcher = join(env.HOME, '.local/bin/context-kit');
+  await mkdir(dirname(launcher), { recursive: true });
+  await writeFile(launcher, '#!/bin/sh\necho mine\n', { mode: 0o755 });
+  const installed = await agents('install');
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  const conflict = launcherItem(installed.json.results);
+  assert.equal(conflict.action, 'conflict');
+  assert.match(conflict.reason, new RegExp(`${launcher} exists and was not written by Context Kit; remove it or pass --force`));
+  assert.equal(await readFile(launcher, 'utf8'), '#!/bin/sh\necho mine\n');
+  assert.deepEqual(await readdir(dirname(launcher)), ['context-kit'], 'no temporary files left');
+  // The skill must not send agents to someone else's context-kit; it names the core directly.
+  const body = await routingBody(join(base, 'claude/skills/my-repos'));
+  assert.ok(!body.includes(`${launcher} `) && !body.includes('`context-kit '), body);
+  assert.ok(body.includes(`${process.execPath} ${join(kit, 'bin/hub.mjs')} --root ${workspace} repos`), body);
+  assert.doesNotMatch(body, /\bcd\s/);
+  assert.equal(launcherItem((await agents('status')).json.items), undefined);
+  await agents('uninstall');
+  assert.equal(await readFile(launcher, 'utf8'), '#!/bin/sh\necho mine\n');
+
+  const forced = await agents('install', '--force');
+  assert.equal(launcherItem(forced.json.results).action, 'updated');
+  assert.match(await readFile(launcher, 'utf8'), /Managed by Context Kit/);
+  await agents('uninstall');
+  assert.equal(await exists(launcher), false);
+
+  // A symlink among the launcher directory's components below HOME: nothing is written through it.
+  const target = join(base, 'elsewhere-local');
+  await mkdir(target);
+  await rm(join(env.HOME, '.local'), { recursive: true });
+  await symlink(target, join(env.HOME, '.local'));
+  const refused = launcherItem((await agents('install')).json.results);
+  assert.equal(refused.action, 'refused');
+  assert.match(refused.reason, /\.local is a symbolic link/);
+  assert.deepEqual(await readdir(target), []);
+});
+
+// spec: agent-installation / Second workspace
+test('a second workspace is refused with WORKSPACE_CONFLICT before writing, and --force takes over', async t => {
+  const { base, env, workspace, run, calls, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  assert.equal((await agents('install')).code, 0);
+  const second = join(base, 'second');
+  assert.equal((await run(['init', second])).code, 0);
+  await repository(second, 'garden', { title: 'the garden', resource: 'https://github.com/me/garden' });
+  const launcher = join(env.HOME, '.local/bin/context-kit');
+  const snapshot = async () => [await readFile(launcher, 'utf8'), await readFile(join(base, 'claude/skills/my-repos/SKILL.md'), 'utf8'),
+    await readFile(join(env.HOME, '.agents/skills/my-repos/SKILL.md'), 'utf8'), (await readdir(join(base, 'claude/skills'))).sort(), (await calls()).length];
+  const before = await snapshot();
+  const refused = await run(['--root', second, 'agents', 'install']);
+  assert.equal(refused.code, 1);
+  assert.equal(refused.error.code, 'WORKSPACE_CONFLICT');
+  assert.ok(refused.error.message.includes(`belongs to the workspace at ${workspace}`), refused.error.message);
+  assert.match(refused.error.message, /--force/);
+  assert.deepEqual(await snapshot(), before, 'nothing written');
+  assert.equal(await exists(join(second, '.state/agents.json')), false);
+
+  const forced = await run(['--root', second, 'agents', 'install', '--force']);
+  assert.equal(forced.code, 0, JSON.stringify(forced.error));
+  const listed = await launch(launcher, ['repos'], { HOME: env.HOME, PATH: '/usr/bin:/bin' }, base);
+  assert.deepEqual([listed.json.root, listed.json.repositories.map(item => item.id)], [second, ['personal/main/garden']]);
+  // Claude Code's copy and the shared one Codex reads.
+  for (const agent of [join(base, 'claude/skills'), join(env.HOME, '.agents/skills')]) {
+    const text = await readFile(join(agent, 'my-repos/SKILL.md'), 'utf8');
+    assert.match(text, /the garden/);
+    assert.ok(text.includes(`- Workspace: ${second}\n`), agent);
+  }
+  // The first workspace's other items are left alone: its MCP server is still registered.
+  const servers = JSON.parse(await readFile(join(base, 'claude-servers.json'), 'utf8'));
+  assert.deepEqual(Object.keys(servers).sort(), ['context-second', 'context-workspace']);
+});
+
+// spec: agent-installation / Move and repair
+test('a moved workspace reports moved, its old launcher fails naming it, and one install repairs everything', async t => {
+  const { base, env, run } = await fixture(t);
+  const before = join(base, 'mon espace ü');
+  assert.equal((await run(['init', before])).code, 0);
+  await repository(before, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const installed = await run(['--root', before, 'agents', 'install']);
+  assert.equal(installed.code, 0, JSON.stringify(installed.error));
+  const launcher = join(env.HOME, '.local/bin/context-kit');
+  const after = join(base, 'moved 🌊 dir');
+  await exec('mv', [before, after]);
+
+  const status = await run(['--root', after, 'agents', 'status']);
+  assert.equal(status.code, 0, JSON.stringify(status.error));
+  const state = (kind, name) => status.json.items.filter(item => item.kind === kind && item.name === name).map(item => [item.agent, item.state, item.from]);
+  assert.deepEqual(state('mcp', 'context-mon-espace'), [['claude', 'moved', before], ['codex', 'moved', before]]);
+  assert.deepEqual(state('launcher', 'context-kit'), [[undefined, 'moved', before]]);
+  assert.deepEqual(state('skill', 'my-repos'), [['claude', 'moved', before], ['codex', 'moved', before]]);
+
+  const elsewhere = join(base, 'elsewhere');
+  await mkdir(elsewhere);
+  const stale = await launch(launcher, ['repos'], { HOME: env.HOME, PATH: '/usr/bin:/bin' }, elsewhere);
+  assert.equal(stale.code, 1);
+  assert.equal(stale.error.code, 'WORKSPACE_MOVED');
+  assert.ok(stale.error.message.includes(before), stale.error.message);
+
+  const repaired = await run(['--root', after, 'agents', 'install']);
+  assert.equal(repaired.code, 0, JSON.stringify(repaired.error));
+  assert.deepEqual(repaired.json.results.filter(item => item.action === 'removed').map(item => [item.agent, item.kind, item.name]),
+    [['claude', 'mcp', 'context-mon-espace'], ['codex', 'mcp', 'context-mon-espace']]);
+  const listed = await launch(launcher, ['repos'], { HOME: env.HOME, PATH: '/usr/bin:/bin' }, elsewhere);
+  assert.equal(listed.code, 0, JSON.stringify(listed.error));
+  assert.deepEqual([listed.json.root, listed.json.repositories.map(item => item.id)], [after, ['personal/main/room']]);
+  const fixed = await run(['--root', after, 'agents', 'status']);
+  assert.ok(fixed.json.items.every(item => item.state === 'installed'), JSON.stringify(fixed.json.items.filter(item => item.state !== 'installed')));
+  assert.deepEqual(fixed.json.items.filter(item => item.kind === 'mcp').map(item => [item.agent, item.name]), [['claude', 'context-moved-dir'], ['codex', 'context-moved-dir']]);
+  for (const agent of ['claude', 'codex']) {
+    assert.deepEqual(Object.keys(JSON.parse(await readFile(join(base, `${agent}-servers.json`), 'utf8'))), ['context-moved-dir'], agent);
+    const copy = agent === 'claude' ? join(base, 'claude/skills') : join(env.HOME, '.agents/skills');
+    assert.ok((await readFile(join(copy, 'my-repos/SKILL.md'), 'utf8')).includes(`- Workspace: ${after}\n`));
+  }
+});
+
+// spec: agent-installation / Move and repair
+test('records written before roots were recorded, with the core inside the workspace, are repaired after a move', async t => {
+  const { base, env } = await fixture(t);
+  const before = join(base, "legacy it's ws");
+  const core = ws => join(ws, 'node_modules/context-kit');
+  const hub = async (ws, ...args) => {
+    try { return { code: 0, json: JSON.parse((await exec(process.execPath, [join(core(ws), 'bin/hub.mjs'), ...args], { env, cwd: base })).stdout) }; }
+    catch (error) { return { code: error.code, error: error.stderr }; }
+  };
+  assert.equal((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), 'init', before], { env })).stderr, '');
+  // The workspace's own pinned core, as npm install puts it, and a git checkout for the hooks.
+  for (const name of ['bin', 'lib', 'skills', 'addons', 'package.json']) await cp(join(kit, name), join(core(before), name), { recursive: true });
+  await symlink(join(kit, 'node_modules'), join(core(before), 'node_modules'));
+  await exec('git', ['init', '-q'], { cwd: before });
+  await repository(before, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const installed = await hub(before, '--root', before, 'agents', 'install');
+  assert.equal(installed.code, 0, installed.error);
+  const recordsFile = join(before, '.state/agents.json');
+  const records = JSON.parse(await readFile(recordsFile, 'utf8'));
+  await writeFile(recordsFile, JSON.stringify({ ...records, items: records.items.map(({ root, ...item }) => item) }));
+
+  const after = join(base, 'moved legacy');
+  await exec('mv', [before, after]);
+  const status = await hub(after, '--root', after, 'agents', 'status');
+  const states = kind => status.json.items.filter(item => item.kind === kind).map(item => item.state);
+  assert.deepEqual(states('guard'), ['moved']);
+  assert.deepEqual(states('hook'), ['moved', 'moved']);
+  assert.deepEqual(states('mcp'), ['moved', 'moved']);
+
+  const repaired = await hub(after, '--root', after, 'agents', 'install');
+  assert.equal(repaired.code, 0, repaired.error);
+  const settings = join(base, 'claude/settings.json');
+  const entries = JSON.parse(await readFile(settings, 'utf8')).hooks.PreToolUse;
+  assert.equal(entries.length, 1, JSON.stringify(entries));
+  assert.ok(entries[0].hooks[0].command.includes(join(core(after), 'bin/merge-guard.mjs')));
+  const fixed = await hub(after, '--root', after, 'agents', 'status');
+  assert.ok(fixed.json.items.every(item => item.state === 'installed'), JSON.stringify(fixed.json.items.filter(item => item.state !== 'installed')));
+
+  const removed = await hub(after, '--root', after, 'agents', 'uninstall');
+  assert.equal(removed.code, 0, removed.error);
+  assert.deepEqual(JSON.parse(await readFile(join(after, '.state/agents.json'), 'utf8')).items, []);
+  assert.equal(await exists(settings), false, 'the settings file the install created is gone');
+  assert.equal(await exists(join(env.HOME, '.local/bin/context-kit')), false);
+  assert.deepEqual(await readdir(join(base, 'claude/skills')), []);
+  for (const agent of ['claude', 'codex']) assert.deepEqual(JSON.parse(await readFile(join(base, `${agent}-servers.json`), 'utf8')), {}, agent);
+  assert.deepEqual((await readdir(join(after, '.git/hooks'))).filter(name => ['post-merge', 'post-rewrite'].includes(name)), []);
+});
+
+// spec: repository-registry / Remedies use the launcher
+// spec: agent-installation / Second workspace
+test('a workspace path with a backtick and a newline keeps the skill\'s commands runnable and its owner readable', async t => {
+  const { base, env, run, agents } = await fixture(t);
+  const odd = join(base, 'odd `tick`\nline');
+  assert.equal((await run(['init', odd])).code, 0);
+  await repository(odd, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  // Without its launcher (a foreign file is in the way), the skill names the core and the root by path.
+  const launcher = join(env.HOME, '.local/bin/context-kit');
+  await mkdir(dirname(launcher), { recursive: true });
+  await writeFile(launcher, 'mine\n');
+  assert.equal((await run(['--root', odd, 'agents', 'install', '--agent', 'claude'])).code, 0);
+  const text = await readFile(join(base, 'claude/skills/my-repos/SKILL.md'), 'utf8');
+  const read = text.match(/- the room: `` (.+? read personal\/main room) ``/s)?.[1];
+  assert.ok(read, text);
+  const { stdout } = await exec('/bin/sh', ['-c', read], { cwd: base, env: { HOME: env.HOME, PATH: '/usr/bin:/bin' } });
+  assert.equal(JSON.parse(stdout).okf.title, 'the room');
+  assert.ok(text.includes(`- Workspace: ${JSON.stringify(odd)}\n`));
+  // Another workspace reads that skill's owner exactly.
+  const refused = await agents('install', '--agent', 'claude');
+  assert.equal(refused.error.code, 'WORKSPACE_CONFLICT');
+  assert.ok(refused.error.message.includes(`belongs to the workspace at ${odd};`), refused.error.message);
+});
+
+// spec: agent-installation / Second workspace
+test('a routing skill in the shared ~/.agents/skills location alone also makes a second workspace conflict', async t => {
+  const { base, env, workspace, run, agents } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  await rm(join(env.HOME, '.local/bin/context-kit'));
+  const second = join(base, 'second');
+  assert.equal((await run(['init', second])).code, 0);
+  const refused = await run(['--root', second, 'agents', 'install', '--agent', 'claude']);
+  assert.equal(refused.error.code, 'WORKSPACE_CONFLICT');
+  assert.ok(refused.error.message.startsWith(`${join(env.HOME, '.agents/skills/my-repos')} belongs to the workspace at ${workspace};`), refused.error.message);
+  assert.equal(await exists(join(base, 'claude/skills')), false, 'nothing written');
 });

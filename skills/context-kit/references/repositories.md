@@ -149,3 +149,41 @@ You rarely need to: when the workspace is a git checkout, `agents install` adds
 repositories someone else registered reach your agents automatically. The hooks
 are per machine (they live in `.git/hooks`, not in the workspace), so each machine
 gets them from its own `agents install`.
+
+## Reaching the workspace from anywhere
+
+The skill never says `cd` into the workspace. It names one operation for resolving a
+repository (today `list_repos`): as a tool of the workspace's MCP server, by the
+name it is registered under, and as a command of the `context-kit` launcher. Every
+other command it gives, such as `repos clone`, `repos locate`, `read` and
+`repos sync`, also runs through the launcher.
+
+`agents install` writes the launcher to `$XDG_BIN_HOME/context-kit`, or
+`~/.local/bin/context-kit` without it. It is a small managed script that runs this
+workspace's pinned core with `--root <workspace>` from any directory, using this
+machine's Node by absolute path. The skill always names it by that absolute path,
+because agent apps started outside a shell often lack its directory on `PATH`. At a
+terminal, `context-kit` alone works once the directory is on `PATH` (and no other
+`context-kit` comes first); until then `agents status` reports `onPath: false`
+with the line to add to your shell profile. Install never overwrites a `context-kit` it didn't
+write (`conflict`, unless `--force`) and never writes through a symlinked
+directory below `HOME` (`refused`); either way the skill then names the core by
+path instead. Uninstall removes the launcher when it is unchanged and no agent
+items remain.
+
+**One workspace per user.** The launcher and `my-repos` belong to one workspace on
+a machine. When either belongs to another workspace that still exists,
+`agents install` fails with `WORKSPACE_CONFLICT`, naming it, before writing
+anything. `--force` takes over the launcher and routing skills and leaves the
+other workspace's other items, such as its MCP server and hooks, alone (bundled
+skills of the same name are replaced, as `--force` always does). Keep the
+repositories you work on in one workspace's hubs.
+
+**Moving a workspace.** After you move or rename the workspace directory, the
+skill's text still works, but what it points at doesn't: `agents status`, run from
+the new location, reports the MCP registrations, launcher and skills `moved`,
+naming the old path, and the launcher fails with `WORKSPACE_MOVED`. Run
+`npm run agents -- install` once in the new location. It rewrites the launcher,
+re-registers the MCP server (removing the registration under the old name, which
+follows the directory name), reinstalls the skills and replaces the merge
+tripwire's entry. Any tripwire entry whose script no longer exists is removed too.

@@ -2,14 +2,17 @@
 
 CLI: `context-kit [--root <dir>] <command>`; inside a workspace, `npm run hub --
 <command>` (the workspace is the root). Every result is JSON on stdout; errors are
-`{"error": {"code", "message"}}` on stderr with a nonzero exit.
+`{"error": {"code", "message"}}` on stderr with a nonzero exit. From any directory,
+the `context-kit` launcher that `agents install` writes (`~/.local/bin` or
+`$XDG_BIN_HOME`) runs the installed workspace's core with its root: `context-kit
+repos` works anywhere (see `repositories`).
 
 | CLI command | MCP tool | Does |
 |---|---|---|
 | `help [topic]` | `help` | Lists help topics, or shows one |
 | `init <dir>` | | Creates a workspace (`--kit`, `--addons`) |
 | `setup <dir>` | | Creates, installs and installs into agents |
-| `agents install` / `agents status` / `agents uninstall` | | Manages agent installs |
+| `agents install` / `agents status` / `agents uninstall` | | Manages agent installs and the `context-kit` launcher |
 | `addons` | `list_addons` | Available and enabled addons |
 | `list` | `list_hubs` | Hubs |
 | `validate` | `validate_hubs` | Checks every hub strictly |

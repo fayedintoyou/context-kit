@@ -125,7 +125,8 @@ async function machine(t) {
   const workspace = async (name, core = kit) => {
     const path = join(base, name);
     assert.equal((await run(core, ['init', path])).code, 0);
-    return { path, core, agents: (...args) => run(core, ['--root', path, 'agents', ...args]) };
+    // One workspace per user owns the launcher; these workspaces each get their own bin directory.
+    return { path, core, agents: (...args) => run(core, ['--root', path, 'agents', ...args], { XDG_BIN_HOME: join(base, `bin-${name}`) }) };
   };
   return { base, env, run, workspace, user: join(env.CLAUDE_CONFIG_DIR, 'settings.json') };
 }
@@ -144,7 +145,7 @@ test('user scope writes Claude Code\'s user settings, under CLAUDE_CONFIG_DIR or
   assert.deepEqual(status.json.items.filter(item => item.kind === 'guard').map(item => [item.scope, item.path, item.state]), [['user', user, 'installed']]);
   const two = await workspace('two');
   const result = await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', two.path, 'agents', 'install', '--agent', 'claude'],
-    { env: { ...env, CLAUDE_CONFIG_DIR: '' } });
+    { env: { ...env, CLAUDE_CONFIG_DIR: '', XDG_BIN_HOME: join(env.HOME, 'bin-two') } });
   assert.deepEqual(guards(JSON.parse(result.stdout).results), [['claude', 'installed']]);
   assert.deepEqual(await json(join(env.HOME, '.claude/settings.json')), { hooks: { PreToolUse: [entryFor(kit)] } });
 });

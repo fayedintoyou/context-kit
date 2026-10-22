@@ -32,6 +32,9 @@
 | `UNKNOWN_MOUNT` | No mount has that name; run `mounts` |
 | `NOT_A_HUB` | The mounted `--path` has no `hub.json`, or its curated documents are not OKF concepts |
 | `FETCH_FAILED` | A mount's source, ref or pinned commit could not be fetched; for "authentication failed", set up a git credential helper or SSH key (see `mounts`) |
+| `WORKSPACE_CONFLICT` | `agents install`: the launcher or `my-repos` belongs to another workspace on this machine; install from that one, or `--force` to take them over |
+| `WORKSPACE_MOVED` | The `context-kit` launcher's workspace is gone; run `npm run agents -- install` in its new location |
+| `LAUNCHER_BROKEN` | The Node or core the launcher runs is gone; run `npm install` and `agents install` in the workspace |
 
 ## Common problems
 
@@ -45,4 +48,8 @@
   checkout when you installed, or a hook you wrote was kept. Check `agents status`,
   run `agents install` again, and `repos sync`.
 - **Claude Code rejects a server name**: some names are reserved; pass `--name`.
+- **Moved or renamed the workspace**: `agents status` shows `moved` items; run
+  `agents install` once from the new location.
+- **`context-kit: command not found`**: the launcher's directory isn't on `PATH`;
+  `agents status` gives the line to add. The skill uses its absolute path meanwhile.
 - **`ls -t` fails**: your `ls` may be aliased; use `/bin/ls`.

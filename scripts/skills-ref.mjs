@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { initWorkspace } from '../lib/workspace.mjs';
-import { generatedSkills } from '../lib/repos.mjs';
+import { renderGeneratedSkills as generatedSkills } from '../lib/install.mjs';
 
 const exec = promisify(execFile);
 const SKILLS_REF = 'skills-ref==0.1.1';
