@@ -74,8 +74,11 @@ error, the ref or commit is not available there, timed out, git failed).
   It resolves the mount's `ref` (or `rev`: a branch, a tag, peeled to its commit,
   or a full 40-hex commit) to a commit, fetches exactly that commit, prepares its
   export aside and checks it is a loadable hub. Only then does it switch the
-  export in and rewrite the pin in `context-kit.json`, and remove the old
-  commit's export. A branch or tag `rev` also becomes the mount's `ref`; a commit
+  export in and rewrite the pin in `context-kit.json`. The old pin's export is
+  kept, so a read that loaded it just before can finish; older ones are
+  removed by the next upgrade or fetch. A read that fails because a pin moved
+  under it runs once more at the new pin, and content replaced mid-read is
+  `MOUNT_BUSY` ("try again"), never `MOUNT_BROKEN`. A branch or tag `rev` also becomes the mount's `ref`; a commit
   keeps it. The result gives `from` and `to` (commit and ref), `outcome`
   (`upgraded`, or `current` when the pin already names that commit) and
   `changes`: `concepts` and `repositories` (Repository concepts, matched by

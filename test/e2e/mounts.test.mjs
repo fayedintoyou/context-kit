@@ -863,6 +863,7 @@ async function observe({ workspace, cli }) {
     exports: await listing(join(workspace, '.state/mounts/shared')),
   };
 }
+const exportsOf = async path => (await readdir(path)).filter(entry => !entry.startsWith('.'));
 // No git diagnostics or local state paths in what a command printed.
 const clean = result => {
   assert.doesNotMatch(result.output, /fatal:|error: |hint:|warning: |remote: /);
@@ -904,8 +905,8 @@ test('upgrade --check reports what moves without moving the pin; upgrade then mo
   assert.equal(read.code, 0, read.output);
   assert.equal(read.json.mount.commit, next);
   assert.equal((await cli('read', 'shared:/old')).error?.code, 'UNKNOWN_CONCEPT');
-  // Only the new commit's export is left.
-  assert.equal((await readdir(join(f.workspace, '.state/mounts/shared'))).length, 1);
+  // The new commit's export, and the old pin's for reads that loaded it just before.
+  assert.equal((await exportsOf(join(f.workspace, '.state/mounts/shared'))).length, 2);
 
   // Nothing new upstream: current, nothing written.
   const before = await readFile(join(f.workspace, 'context-kit.json'), 'utf8');
@@ -1028,7 +1029,7 @@ test('upgrades and fetches running together serialize on the mount lock', async 
     const [mount] = (await run(['--root', workspace, 'mounts'])).json.mounts;
     assert.deepEqual({ status: mount.status, commit: mount.commit }, { status: 'fetched', commit: next });
     assert.equal((await run(['--root', workspace, 'read', `shared:/round-${round}`])).code, 0);
-    assert.equal((await readdir(join(workspace, '.state/mounts/shared'))).length, 1);
+    assert.equal((await exportsOf(join(workspace, '.state/mounts/shared'))).length, 2); // current and previous
     assert.deepEqual((await readdir(join(workspace, '.state/mounts'))).filter(entry => entry.startsWith('.lock')), []);
   }
 });
@@ -1056,8 +1057,42 @@ test('an upgrade that lost its mount lock before the switch keeps the old pin', 
   const [mount] = (await run(['--root', workspace, 'mounts'])).json.mounts;
   assert.deepEqual({ status: mount.status, commit: mount.commit }, { status: 'fetched', commit: source.first });
   assert.equal((await run(['--root', workspace, 'read', 'shared:/two'])).error?.code, 'UNKNOWN_CONCEPT');
-  // The unserved candidate is cleared by the next upgrade.
+  // The next upgrade uses the complete candidate already there; current and previous are left.
   const retried = await run(['--root', workspace, 'mounts', 'upgrade', 'shared']);
   assert.equal(retried.code, 0, retried.output);
-  assert.equal((await readdir(join(locks, 'shared'))).length, 1);
+  assert.equal((await exportsOf(join(locks, 'shared'))).length, 2);
+});
+
+// Review round 1 regression.
+
+// spec: hub-federation / Upstream moves on
+test('reads running during upgrades back and forth never fail', async t => {
+  const f = await fixture(t);
+  const { workspace, run, repository } = f;
+  const files = { ...hub('team/data') };
+  for (let i = 0; i < 300; i++) files[`c/n${i}.md`] = guide(`n${i}`);
+  const source = await repository('shared-context', files);
+  const a = source.first;
+  const b = await source.commit({ 'extra.md': guide('Extra') });
+  assert.equal((await run(['--root', workspace, 'mounts', 'add', 'shared', source.url, '--ref', 'main'])).code, 0);
+  let stop = false;
+  const failures = [];
+  let reads = 0;
+  const reader = async () => {
+    while (!stop) {
+      const result = await run(['--root', workspace, ...(reads % 2 ? ['read', 'shared:/README'] : ['search', 'n299'])]);
+      reads++;
+      if (result.code !== 0) failures.push(result.output.slice(0, 200));
+    }
+  };
+  const readers = Array.from({ length: 4 }, reader);
+  for (let i = 0; i < 8; i++) {
+    const result = await run(['--root', workspace, 'mounts', 'upgrade', 'shared', '--to', i % 2 ? b : a]);
+    assert.equal(result.code, 0, result.output);
+  }
+  stop = true;
+  await Promise.all(readers);
+  assert.ok(reads > 0);
+  assert.deepEqual(failures, [], `${failures.length}/${reads} reads failed`);
+  assert.ok((await exportsOf(join(workspace, '.state/mounts/shared'))).length <= 2);
 });

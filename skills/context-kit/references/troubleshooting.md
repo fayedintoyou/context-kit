@@ -28,7 +28,7 @@
 | `REPOSITORY_EXISTS`, `CONCEPT_EXISTS` | `repos add` found the upstream, an alias or the concept already in use |
 | `DESTINATION_EXISTS`, `CLONE_FAILED` | `repos clone` needs a new path and a reachable upstream |
 | `MOUNT_EXISTS` | A mount or workspace hub already has that name; pick another mount name |
-| `MOUNT_BUSY` | Another command is changing that mount or `context-kit.json`, or took over its lock (nothing was changed); run it again, or remove its `.state/mounts/.lock-*` file if no such command is running |
+| `MOUNT_BUSY` | Another command is changing that mount or `context-kit.json`, or took over its lock (nothing was changed), or a read met a mount mid-switch; run it again, or remove its `.state/mounts/.lock-*` file if no such command is running |
 | `UNKNOWN_MOUNT` | No mount has that name; run `mounts` |
 | `MOUNT_NOT_FETCHED` | The mount is declared but not fetched on this machine at its pin; run `mounts fetch <name>` |
 | `MOUNT_BROKEN` | The mount's fetched commit is not a loadable hub (the message names the file); pin a commit that is, or `mounts remove` it. From `mounts upgrade`, the candidate commit is not a hub and the pin did not move |
