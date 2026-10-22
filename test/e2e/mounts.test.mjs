@@ -752,7 +752,7 @@ test('validate passes with warnings naming the mount and each nonconformant file
   const found = await cli('search', 'Personal context', '--inbox');
   assert.equal(found.code, 0, found.output);
   assert.ok(found.json.results.some(result => result.hub === 'personal/main'));
-  for (const file of [note(1), note(2)]) assert.ok(found.json.warnings.some(warning => warning === `mount shared: ${file} skipped: not a readable note`), file);
+  for (const file of [note(1), note(2)]) assert.ok(found.json.warnings.some(warning => warning === `mount shared: ${file} skipped: not a readable file`), file);
   assert.doesNotMatch(found.output, /\.state/);
   const context = await cli('context', 'shared', '--inbox');
   assert.equal(context.code, 0, context.output);
@@ -790,6 +790,10 @@ test('capture and repository adds against a mount fail READ_ONLY_MOUNT over CLI 
   assert.equal((await call('add_repo', { id: 'shared', upstream: 'https://github.com/example/orders' })).error.code, 'READ_ONLY_MOUNT');
   assert.deepEqual(await listing(state), before);
   assert.equal((await cli('read', 'shared', 'README')).code, 0);
+  // Refused first, even where the workspace's own hubs would fail to load.
+  await writeFile(join(workspace, 'hubs/personal/hub.json'), '{ not json');
+  assert.equal((await run(['--root', workspace, 'capture', 'shared', 'A note'], {}, 'Body.\n')).error?.code, 'READ_ONLY_MOUNT');
+  assert.equal((await cli('repos', 'add', 'shared', 'https://github.com/example/orders')).error?.code, 'READ_ONLY_MOUNT');
 });
 
 // spec: hub-federation / Mount not fetched yet
