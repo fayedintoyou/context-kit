@@ -90,10 +90,22 @@ For a map others will rely on (committed to a shared repository, or used to plan
 or report work), hand it to `independent-review` with the specs in scope: the reviewer checks that the labels are plain and that each state really
 is what its citations describe.
 
+## 7. Pin once a person has reviewed it
+
+`maps check` warns `unpinned` for every citation until the map is pinned. Pin
+only after a person (the user, or the reviewer above) has read the map against
+its specs: `maps pin <name>` records each citation's fingerprint under `pins`
+and changes nothing else. Never write `pins` by hand. When a cited spec changes
+later, the check warns `stale` naming the state: reread that behavior, update
+the state or its label if it no longer shows it, render with `--write` if the
+map changed, and pin again once that is reviewed. A new citation is `unpinned`
+until then. Don't pin just to silence the warnings: the pin says someone checked.
+
 ## Example
 
 A fictional chat app, Pigeon, has an `alerts` capability with the requirements
-*Room post without a mention* and *Mention badge*. `maps/alerts.md`:
+*Room post without a mention* and *Mention badge*. `maps/alerts.md`, reviewed
+and pinned:
 
 ````markdown
 ---
@@ -125,6 +137,9 @@ transitions:
   - { from: what-kind, to: badge, when: A DM or an @mention }
   - { from: dot, to: seen }
   - { from: badge, to: seen }
+pins:
+  alerts / Room post without a mention: bd11b2c07e66
+  alerts / Mention badge: 5c5fa649501a
 ```
 ````
 

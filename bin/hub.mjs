@@ -31,6 +31,7 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   specs archivable | specs archive --ready | specs archive --rehearse   [--store <id>]
   maps behaviors --source openspec/lid [--store <id>] | maps list | maps check [<map>] [--strict]
   maps render <map> [--format mermaid/json] [--write]   (--write puts the diagram in the map file; CLI only)
+  maps pin <map>   (records each citation's fingerprint in the map file; CLI only)
   pr land <number> --sha <tested-sha> [--repo owner/name] [--wait] [--timeout <minutes>] [--method squash/rebase/merge]
       [--skip-review "<reason>"] [--no-checks "<reason>"] [--bootstrap-policy]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
@@ -145,6 +146,7 @@ try {
           result = options['--write'] ? await execute(selection, 'write_map_diagram', { map: args[1] })
             : await execute(selection, 'render_map', { map: args[1], ...(options['--format'] ? { format: options['--format'] } : {}) });
         }
+        else if (args[0] === 'pin' && args.length === 2) result = await execute(selection, 'pin_map', { map: args[1] });
         else fail('INVALID_INPUT', help);
       } else if (command === 'pr') {
         if (!(args[0] === 'land' && args.length === 2 && /^[1-9][0-9]*$/.test(args[1]))) fail('INVALID_INPUT', help);

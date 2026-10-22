@@ -20,7 +20,8 @@
 | `WORKSPACE_EXISTS` | `init`/`setup` only create new directories |
 | `TOO_LARGE` | A file or result exceeds its limit; split it |
 | `WRONG_SPEC_ROOT`, `ADAPTER_FAILED`, `ADAPTER_FORMAT` | OpenSpec resolved another root or failed; check the repository and stores |
-| `SNAPSHOT_CHANGED` | Files changed during an audit, or a map file while `maps render --write` ran; rerun on a stable tree |
+| `SNAPSHOT_CHANGED` | Files changed during an audit, or a map file while `maps render --write` or `maps pin` ran; rerun on a stable tree |
+| `PIN_UNSAFE` | `maps pin` would have changed more than the map's pins, or left it unparseable; nothing was written. Remove the `pins` key and pin again |
 | `DUPLICATE_REQUIREMENT` | A spec repeats a requirement name |
 | `INVALID_REPOSITORY` | A Repository concept lacks a git `resource`, has bad `aliases`, or shares an alias (see `repositories`) |
 | `UNKNOWN_REPOSITORY`, `AMBIGUOUS_REPOSITORY` | No repository, or more than one, has that name; use `repos` and the id |

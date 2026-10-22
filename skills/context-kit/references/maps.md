@@ -15,6 +15,7 @@ Maps are read from the selected root (`--root <repository>`, as for `specs`).
 | Check one map, or all | `maps check [<map>] [--strict]` | `check_map` |
 | Draw a map | `maps render <map> [--format mermaid/json]` | `render_map` |
 | Write the diagram into the map file | `maps render <map> --write` | CLI only (`write_map_diagram`) |
+| Pin each citation's fingerprint | `maps pin <map>` | CLI only (`pin_map`) |
 
 ## Behavior sources
 
@@ -94,6 +95,9 @@ transitions:
   - { from: what-kind, to: badge, when: A DM or an @mention }
   - { from: dot, to: seen }
   - { from: badge, to: seen }
+pins:
+  alerts / Room post without a mention: bd11b2c07e66
+  alerts / Mention badge: 5c5fa649501a
 ```
 ````
 
@@ -107,6 +111,8 @@ transitions:
   `state` when omitted) and `cites`, a list of behavior IDs.
 - `transitions`: `from`, `to`, `when` (needed when leaving a choice) and `cites`.
 - `vocabulary`: product words the label lint should accept as written.
+- `pins`: each citation's fingerprint when the map was last reviewed, written by
+  `maps pin`; don't edit it by hand.
 
 Every key is checked; an unknown one is an error. In YAML flow style (`{ ... }`),
 quote a label that contains a comma or starts with `@`.
@@ -126,6 +132,8 @@ transition as `from -> to`, `scope`, `diagram` or a behavior ID.
 | `ambiguous_citation` | error | A citation names more than one behavior (a requirement and a scenario, or two scenarios, sharing a name), listing them |
 | `label` | error | A node label over 70 characters or a `when` over 50, or a token that reads as code or spec language: a backtick, an underscore, an inner capital (`unreadCount`, also `GitHub` unless in `vocabulary`), a file path, `::`, `()`, `=>`, `==`, diagram or web markup (`<`, `>`, `{`, `}`, `%%`, `:::`, `->`, `[[`, `]]`), a spec ID such as `AUTH-UI-001`, or SHALL, MUST, WHEN, THEN |
 | `uncovered` | warning | A scenario in scope that no element cites, directly or through its requirement, or a `lid` entry in scope that no element cites |
+| `unpinned` | warning | An element cites a behavior the map has no pin for (one warning per citing element) |
+| `stale` | warning | An element cites a behavior whose fingerprint differs from its pin: its text changed since the map was pinned (one warning per citing element) |
 | `diagram_outdated` | warning | The generated diagram differs from a fresh rendering |
 
 The CLI exits 1 when any map has an error, and with `--strict` also on any
@@ -146,7 +154,8 @@ digits, spaces and `,.'!?@()/+-` becomes a Mermaid entity code (`#37;` for `%`,
 style, link or markup.
 `--format json` returns the map's model: `map`, `title`, `source`, `scope`, `nodes`
 and `transitions` in file order with their kinds and labels, and each element's
-`cites` resolved to `id`, `kind`, `title` and `fingerprint`. The same map and specs
+`cites` resolved to `id`, `kind`, `title`, `fingerprint` and `pin`: `current`,
+`stale` or `unpinned`, as the check reports it. The same map and specs
 give byte-identical output; nothing depends on the clock.
 
 `maps render <map> --write` (CLI only, never over MCP) puts the diagram in the map
@@ -157,3 +166,31 @@ map block, so GitHub shows the diagram. It needs an explicit root (`--root` or
 writing, replaces the file atomically, never follows a symlink, and reports
 `SNAPSHOT_CHANGED` without writing if the file changed while it rendered. Don't
 edit the block by hand: `--write` overwrites it and the check flags it.
+
+## Pinning
+
+`maps pin <map>` (CLI only, never over MCP) records each citation's current
+fingerprint under the map block's `pins` and changes nothing else in the file. It
+edits `pins` in place: a changed pin has only its value replaced, a pin nothing
+cites loses its line (and the `pins` line goes when no pins remain), and new pins
+follow the last one in citation order, indented like the rest of the block. A new
+`pins` key goes after the block's last key, before any `...` or trailing comments.
+A `{ ... }` pins value has changed values replaced in place, and is rewritten as
+one flow mapping only when pins are added or removed. The `pins` line, comments
+and the other keys keep their bytes, and when every pin is already current
+nothing is written (`written: false`).
+
+Pin after a person has reviewed the map against its specs; from then on the check
+warns `stale` when a cited requirement or scenario changes (editing a scenario
+also changes the requirement holding it), and `unpinned` for a citation added
+since. Review what changed, update the map if needed, and pin again.
+
+Like `--write` it needs an explicit root (otherwise `WRITE_DISABLED`), refuses a
+map with errors, and writes atomically. It also refuses (`INVALID_INPUT`) a block
+written as one `{ ... }` mapping, which has no line of its own for `pins`: write
+the block in block style, one key per line. Before writing, it reads the whole new
+file back as `maps check` does and refuses with `PIN_UNSAFE`, writing nothing, if
+the map would not parse, anything outside the pins would change, or the pins would
+not be the current fingerprints; remove the `pins` key and pin again. Pins never
+change the diagram, so pin, check, `render --write` and check converge: a second
+pin and render leave the file unchanged (`written: false`).

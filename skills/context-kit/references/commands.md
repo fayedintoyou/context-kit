@@ -53,6 +53,7 @@ repos` works anywhere (see `repositories`).
 | `maps check [<map>]` | `check_map` | Checks maps: errors and warnings (`--strict` also fails on warnings) |
 | `maps render <map>` | `render_map` | Mermaid diagram or, with `--format json`, the resolved model |
 | `maps render <map> --write` | — | Writes the generated diagram into the map file (CLI only; `write_map_diagram`) |
+| `maps pin <map>` | — | Records each citation's fingerprint under the map's `pins`, changing nothing else (CLI only; `pin_map`) |
 | `pr land <n> --sha <sha>` | — | Lands a pull request through its gates, merging pinned to the tested SHA (CLI only, never over MCP; `land_pull_request`) |
 
 ## Landing a pull request

@@ -21,9 +21,9 @@ upstream, golden diagrams) under `test/e2e/fixtures/maps/`.
 
 ## 2. Slice `pins`
 
-- [ ] 2.1 `pin_map` (CLI only, write) rewriting only `pins` through `yaml`'s Document API; `unpinned` and `stale` warnings naming the citing elements
-- [ ] 2.2 Link tests to "Spec changed after pinning" (the rest of the file byte-identical after pinning) and "Pin and render converge"
-- [ ] 2.3 JSON `pin` per citation; skill and help: when to pin (after a person reviews the map)
+- [x] 2.1 `pin_map` (CLI only, write) rewriting only `pins` through `yaml`'s Document API; `unpinned` and `stale` warnings naming the citing elements
+- [x] 2.2 Link tests to "Spec changed after pinning" (the rest of the file byte-identical after pinning) and "Pin and render converge", and "Pinning a flow-style map"
+- [x] 2.3 JSON `pin` per citation; skill and help: when to pin (after a person reviews the map)
 - [ ] 2.4 If `hub-maps` and `hub-federation` have both landed, test that `maps pin <mount>:/<id>` fails `UNKNOWN_MAP`; otherwise leave it to whichever of them lands last
 
 ## 3. Slice `lid-source`
@@ -35,7 +35,7 @@ upstream, golden diagrams) under `test/e2e/fixtures/maps/`.
 ## 4. Slice `hub-maps`
 
 - [ ] 4.1 `hub` source over workspace hubs only (decision 14), `BehaviorMap` concepts excluded, inbox on request, `--at`/`at` through `summarize` and `freshness` (decision 8)
-- [ ] 4.2 Hub `BehaviorMap` concepts as maps named `<hub-id>:/<concept-id>`; `context_stale` warnings; if `hub-federation` has landed, filter mounted hubs and test that a mount's map is unlisted and `maps check <mount>:/<id>` fails `UNKNOWN_MAP`, otherwise note on #48 that maps ignore mounts
+- [ ] 4.2 Hub `BehaviorMap` concepts as maps named `<hub-id>:/<concept-id>`; `context_stale` warnings; if `hub-federation` has landed, filter mounted hubs and test that a mount's map is unlisted and `maps check <mount>:/<id>` and, once `pins` has landed, `maps pin <mount>:/<id>` fail `UNKNOWN_MAP` (ticking 2.4 too), otherwise note on #48 that maps ignore mounts
 - [ ] 4.3 Brightdesk hub fixture and the skill's second worked example (decision 7)
 - [ ] 4.4 Link tests to "List hub behaviors", "Reproducible freshness", "A team's working states", "A hub map does not cover itself", "Map cites an outdated concept" and "Rendering ignores the clock"
 
