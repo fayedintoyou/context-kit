@@ -105,10 +105,15 @@ context. The job pushes with the workflow token, which doesn't trigger other
 workflows, so the archive commit neither loops nor redeploys. If the default
 branch is protected, the job needs a token allowed to push to it.
 
-Merge commits and rebases keep commit trailers. GitHub's default squash message
-keeps the PR's commit messages too; if you squash with a custom message, keep
-the trailers in the PR description and have `gh` installed so merged PRs still
-count as landed.
+Merge commits and rebases keep commit trailers. A squash keeps only its message, so
+`pr land` gives a squash of a pull request carrying trailers its own message: the
+commit messages, then each `OpenSpec-Change` and `OpenSpec-Slice` line its commits
+or description carry, once, then the co-authors GitHub would credit. The default
+branch then carries the landing without `gh`. It refuses `TRAILERS_CONFLICT` when
+they name slices for different changes and `TRAILERS_INVALID` for a value that
+isn't an id. If you squash another way with a custom message, keep the trailers in
+it, or in the PR description and have `gh` installed so merged PRs still count as
+landed.
 
 When a change's slices merge into an integration branch (the plan's `base`) that
 later merges to the default branch as one pull request, that branch is the

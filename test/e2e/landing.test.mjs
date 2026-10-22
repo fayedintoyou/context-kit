@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,6 +84,7 @@ const repository = (extra = {}) => ({ full_name: 'acme/widgets', default_branch:
 const ref = (name, sha) => ({ ref: `refs/heads/${name}`, object: { sha, type: 'commit' } });
 const pull = (extra = {}) => ({ number: 7, state: 'open', merged: false, draft: false, mergeable: true, mergeable_state: 'clean',
   merge_commit_sha: null, changed_files: 1, html_url: 'https://github.com/acme/widgets/pull/7', labels: [],
+  title: 'Widget guide', body: null, user: { login: 'faye' },
   base: { ref: 'main', sha: OLD, repo: { full_name: 'acme/widgets' } },
   head: { ref: 'feature', sha: A, repo: { full_name: 'acme/widgets' } }, ...extra });
 const file = (filename, status = 'modified', previous_filename) => ({ filename, status, ...(previous_filename ? { previous_filename } : {}) });
@@ -107,7 +108,11 @@ const record = (fields = {}) => {
 
 // The changed files are read from the three-dot compare of the base with the pinned head.
 const FILES = `GET ${R}/compare/${OLD}...${A}?per_page=100`;
-const diff = files => ({ status: 'ahead', ahead_by: 1, behind_by: 0, total_commits: 1, merge_base_commit: { sha: OLD }, files });
+// A compare commit as GitHub lists it: its message, its git author and the GitHub user behind it.
+const commitEntry = (sha, message, { name = 'Faye', email = 'faye@example.com', login = 'faye' } = {}) => ({ sha,
+  commit: { message, author: { name, email, date: '2026-10-19T09:00:00Z' } }, author: login === null ? null : { login } });
+const diff = (files, commits = [commitEntry(A, 'Edit the guide')]) => ({ status: 'ahead', ahead_by: commits.length, behind_by: 0,
+  total_commits: commits.length, merge_base_commit: { sha: OLD }, commits, files });
 const TEST = { name: 'test', app: 'github-actions', workflow: '.github/workflows/checks.yml', event: 'pull_request' };
 const POLICY = { expectedChecks: [TEST], routine: { paths: ['docs/**', 'README.md'], excludePaths: ['openspec/**'] } };
 
@@ -764,10 +769,11 @@ test('every GitHub response is parsed strictly: a corrupted field refuses with n
     [routes(), `GET ${R}/git/ref/heads/main`, ['body'], ['object', 'object.sha']],
     [routes(), `GET ${R}/contents/.context-kit/landing.json?ref=${TIP}`, ['body'], ['type', 'encoding', ['content', ['missing', 'type']]]],
     [routes({ pr: { labels: [{ name: 'docs' }] } }), `GET ${R}/pulls/7`, ['body'], ['number', 'state', 'merged', 'draft', 'mergeable', 'mergeable_state',
-      'merge_commit_sha', 'changed_files', 'labels', 'labels.0.name', 'base', 'base.ref', 'base.sha', 'head', 'head.ref', 'head.sha', 'head.repo', 'head.repo.full_name']],
+      'merge_commit_sha', 'changed_files', 'labels', 'labels.0.name', 'title', 'body', 'user', 'user.login', 'base', 'base.ref', 'base.sha', 'head', 'head.ref', 'head.sha', 'head.repo', 'head.repo.full_name']],
     [withRule, `GET ${R}/rules/branches/main?per_page=100`, ['pages', 0, 0], ['type']],
     [routes(), 'POST graphql', ['body'], ['data', 'data.repository', 'data.repository.mergeQueue']],
-    [routes(), FILES, ['body'], ['status', 'merge_base_commit', 'merge_base_commit.sha', 'files']],
+    [routes(), FILES, ['body'], ['status', 'merge_base_commit', 'merge_base_commit.sha', 'total_commits', 'commits', 'files']],
+    [routes(), FILES, ['body', 'commits', 0], ['sha', 'commit', ['commit.message', ['missing', 'type']], 'commit.author', ['commit.author.email', ['missing', 'type']]]],
     [routes({ files: [file('docs/new.md', 'renamed', 'docs/old.md')] }), FILES, ['body', 'files', 0], ['filename', 'status', 'previous_filename']],
     [routes(), `GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`, ['pages', 0], ['total_count', 'check_runs']],
     [routes(), `GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`, ['pages', 0, 'check_runs', 0],
@@ -957,4 +963,120 @@ test('pr land is never offered over MCP, even with writes on', async t => {
   const call = await client.callTool({ name: 'land_pull_request', arguments: { number: 7, sha: A } });
   assert.equal(call.isError, true);
   assert.equal(JSON.parse(call.content[0].text).error.code, 'UNKNOWN_OPERATION');
+});
+
+// A squash keeps only the message it is given. The pull request's slice trailers go into it, so
+// the default branch carries its own landing evidence without gh.
+const C1 = '1'.repeat(40);
+const C2 = '2'.repeat(40);
+const trailered = (commits, body = null, files = [file('docs/guide.md')]) => {
+  const fixtures = routes({ pr: { body }, files });
+  fixtures[FILES] = [{ body: diff(files, commits) }];
+  return fixtures;
+};
+// A repository with change `deliver` planned as slices `storage` then `api`, and only git on PATH.
+async function slicedRepository(t) {
+  const base = await realpath(await mkdtemp(join(tmpdir(), 'context-kit-squash-')));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const root = join(base, 'repo');
+  const bin = join(base, 'bin');
+  await mkdir(bin);
+  await symlink((await exec('sh', ['-c', 'command -v git'])).stdout.trim(), join(bin, 'git'));
+  const env = { PATH: bin, HOME: base, XDG_DATA_HOME: join(base, 'data'), XDG_CONFIG_HOME: join(base, 'config'), GIT_CONFIG_NOSYSTEM: '1',
+    OPENSPEC_TELEMETRY: '0', DO_NOT_TRACK: '1', OPENSPEC_NO_UPDATE_CHECK: '1' };
+  const put = async (path, text) => { await mkdir(join(root, path, '..'), { recursive: true }); await writeFile(join(root, path), text); };
+  const requirement = name => `### Requirement: ${name}\nThe service SHALL support ${name.toLowerCase()}.\n\n#### Scenario: Use ${name}\n- **WHEN** a caller uses ${name.toLowerCase()}\n- **THEN** it works\n`;
+  await put('openspec/config.yaml', 'schema: spec-driven\n');
+  await put('openspec/specs/locations/spec.md', `# Locations\n\n## Purpose\nFind locations by text for callers of the location service.\n\n## Requirements\n\n${requirement('Search')}`);
+  await put('openspec/changes/deliver/proposal.md', '# Why\n\nDeliver radius search.\n');
+  await put('openspec/changes/deliver/specs/locations/spec.md', `## ADDED Requirements\n${requirement('Radius')}\n${requirement('Ordering')}`);
+  await put('openspec/changes/deliver/slices.yaml', 'slices:\n  - id: storage\n    implements: [locations / Radius]\n  - id: api\n    implements: [locations / Ordering]\n    depends_on: [storage]\n');
+  const git = (args, input) => new Promise((resolve, reject) => {
+    const child = execFile('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { cwd: root, env },
+      (error, stdout) => error ? reject(error) : resolve(stdout));
+    if (input !== undefined) child.stdin.end(input);
+  });
+  await git(['init', '-q', '-b', 'main']);
+  await git(['add', '.']);
+  await git(['commit', '-qm', 'Propose deliver']);
+  const status = async () => JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', root, 'specs', 'status', 'deliver'], { env })).stdout);
+  return { root, put, git, status };
+}
+
+// spec: pull-request-landing / Slice trailers survive a squash
+test('a squash merge writes the pull request slice trailers into its message, and the landing reads without gh', async t => {
+  const { land } = await machine(t);
+  const commits = [
+    commitEntry(C1, 'Add storage\n\nOpenSpec-Change: deliver\nOpenSpec-Slice: storage\n'),
+    commitEntry(C2, 'Test storage\n\nCovers the radius.\n\nOpenSpec-Change: deliver\nOpenSpec-Slice: storage\n\nCo-authored-by: Claude <noreply@anthropic.com>\n'),
+    commitEntry(A, 'Tidy the guide', { name: 'Kit', email: 'kit@example.com', login: 'kit' }),
+  ];
+  const result = await land(trailered(commits, 'Adds storage.\r\n\r\nOpenSpec-Change: deliver\r\nOpenSpec-Slice: storage\r\n'), LAND);
+  const json = landed(result);
+  const merge = result.calls.find(call => call.method === 'PUT').body;
+  assert.equal(merge.sha, A, 'still pinned to the head');
+  assert.equal(merge.merge_method, 'squash');
+  assert.equal(merge.commit_title, 'Widget guide (#7)');
+  const trailers = 'OpenSpec-Change: deliver\nOpenSpec-Slice: storage\nCo-authored-by: Claude <noreply@anthropic.com>\nCo-authored-by: Kit <kit@example.com>';
+  assert.ok(merge.commit_message.endsWith(`\n\n${trailers}`), merge.commit_message);
+  assert.equal(merge.commit_message.match(/^OpenSpec-Slice: storage$/gm).length, 1, 'each trailer once');
+  assert.ok(merge.commit_message.startsWith('* Add storage\n\n* Test storage\n\nCovers the radius.\n\n* Tidy the guide\n\n'), merge.commit_message);
+  assert.deepEqual(json.merge, { sha: M, method: 'squash', trailers: { changes: ['deliver'], slices: ['storage'] } });
+
+  // The default branch after that squash: one commit with that message and no trailer commits
+  // from the branch, read with no gh on PATH.
+  const repo = await slicedRepository(t);
+  const before = await repo.status();
+  assert.equal(before.slices.find(slice => slice.id === 'storage').state, 'ready');
+  await repo.put('src/storage.mjs', 'export const storage = true;\n');
+  await repo.git(['add', '.']);
+  await repo.git(['commit', '-q', '-F', '-'], `${merge.commit_title}\n\n${merge.commit_message}\n`);
+  const after = await repo.status();
+  assert.deepEqual(after.pullRequests, { status: 'not_collected', reason: 'gh is not installed' });
+  assert.deepEqual(Object.fromEntries(after.slices.map(slice => [slice.id, slice.state])), { storage: 'landed', api: 'ready' });
+});
+
+// spec: pull-request-landing / No trailers are invented
+test('a squash of a pull request without slice trailers keeps GitHub\'s own message, as do rebase merges', async t => {
+  const { land } = await machine(t);
+  const plain = landed(await land(routes(), LAND));
+  assert.deepEqual(plain.merge, { sha: M, method: 'squash' });
+  const result = await land(trailered([commitEntry(A, 'Edit the guide\n\nMentions OpenSpec-Slice: storage in prose.')], 'No trailers here.'), LAND);
+  landed(result);
+  assert.deepEqual(result.calls.find(call => call.method === 'PUT').body, { sha: A, merge_method: 'squash' });
+  // A rebase keeps each commit's own message, trailers included, so none is written.
+  const rebase = trailered([commitEntry(A, 'Add storage\n\nOpenSpec-Change: deliver\nOpenSpec-Slice: storage')]);
+  rebase[`GET ${R}`] = [{ body: repository({ allow_rebase_merge: true, allow_squash_merge: false }) }, { body: repository({ allow_rebase_merge: true, allow_squash_merge: false }) }];
+  const rebased = await land(rebase, LAND);
+  landed(rebased);
+  assert.deepEqual(rebased.calls.find(call => call.method === 'PUT').body, { sha: A, merge_method: 'rebase' });
+});
+
+// spec: pull-request-landing / Conflicting or malformed trailers
+test('slices named for different changes, a slice without a change, or a malformed trailer refuse before anything is posted', async t => {
+  const { land } = await machine(t);
+  const cases = [
+    ['TRAILERS_CONFLICT', [commitEntry(C1, 'One\n\nOpenSpec-Change: deliver\nOpenSpec-Slice: storage'), commitEntry(A, 'Two\n\nOpenSpec-Change: other\nOpenSpec-Slice: api')]],
+    ['TRAILERS_CONFLICT', [commitEntry(A, 'One\n\nOpenSpec-Change: deliver\nOpenSpec-Slice: storage')], 'OpenSpec-Change: other\nOpenSpec-Slice: storage'],
+    ['TRAILERS_CONFLICT', [commitEntry(A, 'One\n\nOpenSpec-Slice: storage')]],
+    ['TRAILERS_INVALID', [commitEntry(A, 'One\n\nOpenSpec-Change: deliver\nOpenSpec-Slice: storage')], 'OpenSpec-Change: <change>\nOpenSpec-Slice: <slice>'],
+    ['TRAILERS_INVALID', [commitEntry(A, 'One\n\nOpenSpec-Change: deliver\nOpenSpec-Slice: storage api')]],
+  ];
+  for (const [code, commits, body] of cases) {
+    // Substantial, with a skip reason that would be posted once the gates pass.
+    const result = await land(trailered(commits, body ?? null, [file('lib/x.mjs')]), [...LAND, '--skip-review', 'trailer check']);
+    refused(result, code);
+    assert.ok(!result.keys.includes(`POST ${R}/issues/7/comments`), 'nothing posted');
+  }
+  // An unsliced change beside the sliced one is carried, as a squash always combined them.
+  const party = await land(trailered([commitEntry(C1, 'One\n\nOpenSpec-Change: shared:embed\nOpenSpec-Slice: game-guest'), commitEntry(A, 'Two\n\nOpenSpec-Change: accept-host')]), LAND);
+  assert.deepEqual(landed(party).merge.trailers, { changes: ['shared:embed', 'accept-host'], slices: ['game-guest'] });
+});
+
+// A squash whose commits can't all be read from the pinned compare refuses rather than drop trailers.
+test('a squash whose compare lists fewer commits than it counts refuses', async t => {
+  const { land } = await machine(t);
+  const fixtures = trailered([commitEntry(A, 'One\n\nOpenSpec-Change: deliver\nOpenSpec-Slice: storage')]);
+  fixtures[FILES][0].body.total_commits = 120;
+  refused(await land(fixtures, LAND), 'EVIDENCE_INCOMPLETE');
 });
