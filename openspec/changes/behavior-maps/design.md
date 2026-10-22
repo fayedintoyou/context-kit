@@ -106,7 +106,9 @@ or a person, and everything mechanical about them is the kit's.
 5. **A map is a Markdown concept with one YAML block.** One file holds the
    prose, the map and its generated diagram; in a hub it is an OKF concept with
    trust and freshness for free; and GitHub renders the diagram. Fictional
-   example, `maps/alerts.md` in the Pigeon chat app's repository:
+   example, `maps/alerts.md` in the Pigeon chat app's repository, as it looks
+   once every slice has landed (the `journey` fixture and skill example omit
+   `status` and `pins`, which `evidence` and `pins` add):
 
    ````markdown
    ---
@@ -261,11 +263,15 @@ or a person, and everything mechanical about them is the kit's.
     `stateDiagram-v2`. Rejected: choice nodes can't carry a label there, and edge
     styling is weaker.
 
-13. **JSON output** is the check's resolved model: `{ map, title, source, scope,
-    nodes: [{ id, kind, label, cites: [{ id, kind, title, fingerprint, pin:
-    current|stale|unpinned }], status: { declared?, derived } }], transitions,
-    fixes, warnings }`. It is the stable interchange for other renderers (SCXML
-    or XState later, outside the kit if need be).
+13. **JSON output** is the map's resolved model: `{ map, title, source, scope,
+    nodes: [{ id, kind, label, cites: [{ id, kind, title, fingerprint, pin }],
+    status: { declared?, derived } }], transitions, fixes }`. Slices add to it:
+    `journey` ships structure and citations; `pins` adds `pin`
+    (`current|stale|unpinned`); `evidence` adds `status` and `fixes`. It carries
+    no warnings that depend on the clock (`context_stale` stays in `maps check`,
+    which takes `--at`), so rendering needs no evaluation instant and is
+    reproducible. It is the stable interchange for other renderers (SCXML or
+    XState later, outside the kit if need be).
 
 14. **Writes and mounts.** The generated block is the text between
     `<!-- context-kit:diagram:start` and `<!-- context-kit:diagram:end -->`.
@@ -279,8 +285,8 @@ or a person, and everything mechanical about them is the kit's.
     Map discovery and the `hub` source use only hubs loaded from the workspace's
     own `hubs/` and `examples/`. If `hub-federation` lands first, its mounted
     hubs are filtered out here, so a mount's `BehaviorMap` is not listed and
-    `maps pin <mount>:/<id>` fails `UNKNOWN_MAP`; the `hub-maps` slice adds that
-    test. If this change lands first, #48 is told (on its PR) that maps ignore
+    `maps check <mount>:/<id>` fails `UNKNOWN_MAP`; the `hub-maps` slice adds that
+    test, and `pins` adds the same for `maps pin` once both have landed. If this change lands first, #48 is told (on its PR) that maps ignore
     mounts until a later change adds read-only mounted maps, where writes would
     fail `READ_ONLY_MOUNT` and unfetched mounts would degrade to warnings.
 
@@ -319,9 +325,13 @@ or a person, and everything mechanical about them is the kit's.
     with the fixing PR, and never declare `works` without evidence; run `maps
     check` until there are no errors and decide each `uncovered` warning (add a
     state, or note in the prose why it's out of the map); then `maps render
-    --write` and, after a person reviews it, `maps pin`. It has two worked
-    examples: Pigeon's alerts from specs and Brightdesk's working states from a
-    hub. It ends with the `independent-review` hand-off for consequential maps.
+    --write` and, after a person reviews it, `maps pin`. It ends with the
+    `independent-review` hand-off for consequential maps. The skill grows with
+    the slices, so it never teaches what isn't shipped: `journey` covers drafting,
+    citing, checking and rendering with a status-free Pigeon example; `pins`
+    adds pinning; `lid-source` the `lid` source; `hub-maps` the Brightdesk
+    working-states example; `evidence` status, evidence and the Pigeon example's
+    pop-up issue and its fix.
 
 ## Risks / Trade-offs
 

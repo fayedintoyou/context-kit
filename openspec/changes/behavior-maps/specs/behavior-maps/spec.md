@@ -73,11 +73,11 @@ The check SHALL list as `uncovered` warnings the behaviors in the map's scope th
 - **THEN** the check lists nothing as `uncovered`
 
 ### Requirement: Pinned citations
-`maps pin <map>` (CLI only) SHALL record each citation's current fingerprint in the map block and change nothing else in the file. The check SHALL warn `unpinned` for a citation with no pin and `stale` for one whose behavior's fingerprint differs from its pin, naming the elements that cite it.
+`maps pin <map>` (CLI only) SHALL record each citation's current fingerprint in the map block and change nothing else in the file. The check SHALL warn `unpinned` for a citation with no pin and `stale` for one whose behavior's fingerprint differs from its pin, naming the elements that cite it, and JSON rendering SHALL give each citation's pin state.
 
 #### Scenario: Spec changed after pinning
 - **WHEN** a map is pinned and then the text of a scenario one state cites is edited
-- **THEN** the check reports that citation `stale`, naming the state, and after `maps pin` it reports no stale citation
+- **THEN** the check reports that citation `stale`, naming the state, JSON rendering gives its pin state as `stale`, and after `maps pin` neither does
 
 #### Scenario: Pin and render converge
 - **WHEN** a map is pinned, checked, rendered with `--write` and checked again, and then pinned and rendered with `--write` once more
@@ -106,11 +106,15 @@ A node MAY declare status `works`, `issue` or `fixed`, with at least one evidenc
 - **THEN** the check reports an error naming the state and the path
 
 ### Requirement: Status from linked tests
-Every node SHALL also get a derived status: for citations of the repository's own `openspec` source, `untested` when a cited scenario, or a scenario of a cited requirement, has no `// spec:` linked test, else `tested`; otherwise `unknown`. Derived status SHALL never be `works`, `issue` or `fixed`, and each status SHALL report its origin, `declared` or `derived`.
+Every node SHALL also get a derived status: for citations of the repository's own `openspec` source, `untested` when a cited scenario, or a scenario of a cited requirement, has no `// spec:` linked test, else `tested`; otherwise `unknown`. Derived status SHALL never be `works`, `issue` or `fixed`. The check report and JSON rendering SHALL give each node's statuses with origin (`declared` or `derived`), reason and evidence.
 
 #### Scenario: Tested and untested states
 - **WHEN** one state cites a scenario with a linked test, another cites a scenario without one, and a third declares `works` with evidence and cites a scenario without one
 - **THEN** the check reports the first `tested` and the second `untested` as derived, naming the untested scenario, and the third `works` as declared with derived `untested` beside it
+
+#### Scenario: Statuses in JSON
+- **WHEN** that map is rendered with `--format json`
+- **THEN** each node carries the same statuses, origins, reasons and evidence the check reported
 
 ### Requirement: Mermaid rendering
 `maps render <map>` and `render_map` SHALL draw a map as a Mermaid flowchart with one shape per node kind, labels as written and choice exits labelled with their `when`. The same inputs SHALL give byte-identical output.
@@ -127,11 +131,11 @@ A rendered diagram SHALL colour declared statuses (grey works, red issue, green 
 - **THEN** the diagram colours the first three grey, red and green, outlines the last as untested, draws the fix edge and keys the untested style as derived
 
 ### Requirement: JSON rendering
-`--format json` SHALL return the map as normalized JSON: nodes and transitions in file order with their labels, resolved citations (ID, kind, title, fingerprint, pin state) and each node's statuses with origin, reason and evidence.
+`--format json` SHALL return the map as normalized JSON: nodes and transitions in file order with their kinds and labels, and each element's resolved citations (ID, kind, title, fingerprint). It SHALL include no warning that depends on the evaluation instant, so the same map and repository always give the same JSON.
 
 #### Scenario: Render as JSON
 - **WHEN** a map is rendered with `--format json`
-- **THEN** each node lists its resolved citations and its statuses with their origins, in the order of the map file
+- **THEN** its nodes and transitions appear in the order of the map file with their kinds and labels, and each lists its resolved citations with ID, kind, title and fingerprint
 
 ### Requirement: Generated diagram
 `maps render <map> --write` (CLI only) SHALL replace the map file's block between the generated-diagram markers, adding it after the map block when absent, and change nothing else. The check SHALL warn `diagram_outdated` when that block differs from a fresh rendering.
@@ -159,11 +163,15 @@ Pinning and writing diagrams SHALL be offered only by the CLI. MCP SHALL offer t
 - **THEN** `list_maps`, `check_map`, `render_map` and `list_behaviors` are listed and no map-writing tool is
 
 ### Requirement: Context map warnings
-For a map with a `hub` source, the check SHALL warn `context_stale` for each cited concept whose freshness action is `verify` or `refresh`, or whose status is `deprecated`, at the evaluation instant, naming the citing element and the reason.
+For a map with a `hub` source, the check SHALL warn `context_stale` for each cited concept whose freshness action is `verify` or `refresh`, or whose status is `deprecated`, at the evaluation instant, naming the citing element and the reason. Rendered output SHALL NOT include these warnings.
 
 #### Scenario: Map cites an outdated concept
 - **WHEN** a team's working-states map cites a concept whose `stale_after` falls between two `--at` instants, and another concept marked deprecated
 - **THEN** the check at the earlier instant warns only about the deprecated concept and at the later one also about the stale concept, naming the citing states
+
+#### Scenario: Rendering ignores the clock
+- **WHEN** that map is rendered as JSON and as Mermaid before and after the concept's `stale_after`
+- **THEN** each pair of outputs is byte-identical and neither contains a `context_stale` warning
 
 ### Requirement: Maps addon
 A `maps` addon SHALL provide the map operations and the `behavior-map` skill. When it is not enabled, map commands SHALL fail with `ADDON_DISABLED` and map tools SHALL be absent from MCP.
