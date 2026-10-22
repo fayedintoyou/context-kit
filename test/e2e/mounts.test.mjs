@@ -1208,3 +1208,23 @@ test('an export made before descriptors listed files is re-exported once, or kep
   assert.equal(fetched.json.mounts[0].outcome, 'unchanged');
   assert.equal((await cli('read', 'shared:/README')).code, 0);
 });
+
+// Review round 2 regression (#70).
+
+// spec: hub-federation / Fresh machine fetches its mounts
+test('the reserved .mount.json name is skipped in any case or form, file or directory', async t => {
+  const { workspace, cli, repository } = await fixture(t);
+  const variants = { upper: '.Mount.json', shout: '.MOUNT.JSON', longs: '.mount.jſon', directory: '.mount.json/inner.txt' };
+  for (const [name, file] of Object.entries(variants)) {
+    const source = await repository(`source-${name}`, { ...hub('team/data'), [file]: '{"commit": "planted"}\n' });
+    const added = await cli('mounts', 'add', name, source.url);
+    assert.equal(added.code, 0, `${name}: ${added.output}`);
+    for (let i = 0; i < 2; i++) assert.equal((await cli('mounts', 'fetch', name)).json.mounts[0].outcome, 'unchanged', `${name} fetch ${i + 1}`);
+    const [key] = await exportsOf(join(workspace, '.state/mounts', name));
+    const descriptor = JSON.parse(await readFile(join(workspace, '.state/mounts', name, key, '.mount.json'), 'utf8'));
+    assert.equal(descriptor.commit, source.first, name);
+    assert.deepEqual(descriptor.skipped, [file.split('/')[0]], name);
+    assert.ok(!descriptor.files.some(([path]) => path.split('/')[0] === file.split('/')[0]), name);
+    assert.ok((await cli('context', name)).json.warnings.some(warning => warning.startsWith(`${file.split('/')[0]}: not exported`)), name);
+  }
+});
