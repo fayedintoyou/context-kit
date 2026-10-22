@@ -1,6 +1,6 @@
-# Slices merge into the change's integration branch `remote-mcp-access`, which merges to
-# main once every scenario is linked; npm test's spec-link gate fails until then.
-base: remote-mcp-access
+# Slices merged into the integration branch `remote-mcp-access`, which merged to main in #33
+# and was deleted; landing evidence is now read from main.
+base: main
 slices:
   - id: http-origin
     title: Streamable HTTP origin with required token, host and origin checks, and sessions
