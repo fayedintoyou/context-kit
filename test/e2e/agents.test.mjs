@@ -761,24 +761,28 @@ test('an invalid server name fails before anything is written', async t => {
   assert.equal(await exists(join(workspace, '.state/agents.json')), false);
 });
 
-// Runs the CLI with a preload that kills it right after the first skill is swapped into the
-// shared directory: before its records are saved, as a power cut or a SIGKILL would.
-async function killedAfterFirstSwap(machine, args) {
-  const preload = join(machine.base, 'kill-after-swap.mjs');
+// Runs the CLI with a preload that SIGKILLs it at the first skill swap into a directory under
+// `inside`, just before or just after the rename: before its records are saved, as a power cut
+// would. The workspace defaults to the fixture's.
+async function killedAtFirstSwap(machine, args, { inside = '/.agents/skills/', when = 'after', root = machine.workspace } = {}) {
+  const preload = join(machine.base, 'kill-at-swap.mjs');
   await writeFile(preload, `import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { basename } from 'node:path';
 const rename = fs.rename;
 fs.rename = async (from, to) => {
+  const swap = String(to).includes(process.env.KILL_INSIDE) && !basename(String(to)).startsWith('.');
+  if (swap && process.env.KILL_WHEN === 'before') process.kill(process.pid, 'SIGKILL');
   const result = await rename(from, to);
-  if (String(to).includes('/.agents/skills/') && !basename(String(to)).startsWith('.')) process.kill(process.pid, 'SIGKILL');
+  if (swap && process.env.KILL_WHEN === 'after') process.kill(process.pid, 'SIGKILL');
   return result;
 };
 syncBuiltinESMExports();
 `);
-  return promisify(execFile)(process.execPath, ['--import', preload, join(kit, 'bin/hub.mjs'), '--root', machine.workspace, ...args], { env: machine.env })
+  return promisify(execFile)(process.execPath, ['--import', preload, join(kit, 'bin/hub.mjs'), '--root', root, ...args], { env: { ...machine.env, KILL_INSIDE: inside, KILL_WHEN: when } })
     .then(() => 'finished', error => error.signal);
 }
+const killedAfterFirstSwap = (machine, args) => killedAtFirstSwap(machine, args);
 
 // spec: agent-installation / Upgrade an existing Codex install
 test('an install killed right after a swap is completed by the next, without --force', async t => {
@@ -826,4 +830,48 @@ test('a second workspace does not claim the first one\'s shared copies', async t
   await run(['--root', second, 'agents', 'uninstall']);
   assert.deepEqual((await readdir(join(env.HOME, '.agents/skills'))).sort(), BUNDLED);
   assert.ok((await agents('status')).json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+});
+
+// spec: agent-installation / Iterate on a linked skill
+test('a kill right after a swap between --link and copy is completed by the next install, both ways', async t => {
+  for (const [from, to] of [[[], ['--link']], [['--link'], []]]) {
+    const machine = await fixture(t);
+    const { base, agents } = machine;
+    const skills = join(base, 'claude/skills');
+    assert.equal((await agents('install', '--agent', 'claude', ...from)).code, 0);
+    assert.equal(await killedAtFirstSwap(machine, ['agents', 'install', '--agent', 'claude', ...to], { inside: '/claude/skills/' }), 'SIGKILL', `${from} -> ${to}`);
+    const status = await agents('status');
+    assert.ok(status.json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'), JSON.stringify(status.json.items));
+    const recovered = await agents('install', '--agent', 'claude', ...to);
+    const skillsOut = recovered.json.results.filter(item => item.kind === 'skill');
+    assert.ok(skillsOut.every(item => !item.code), JSON.stringify(skillsOut));
+    assert.equal(skillsOut.filter(item => item.recovered).length, 1, `${from} -> ${to}`);
+    const linked = to.includes('--link');
+    for (const name of BUNDLED) assert.equal((await lstat(join(skills, name))).isSymbolicLink(), linked, `${name} ${from} -> ${to}`);
+    const removed = await agents('uninstall');
+    assert.ok(removed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'removed'));
+    assert.deepEqual((await readdir(skills)).filter(name => !name.startsWith('.')), []);
+  }
+});
+
+// spec: agent-installation / Foreign and edited skills are preserved
+test('a workspace killed before its swap does not claim the copy another workspace put there', async t => {
+  const machine = await fixture(t);
+  const { base, env, run, workspace } = machine;
+  const shared = join(env.HOME, '.agents/skills');
+  assert.equal(await killedAtFirstSwap(machine, ['agents', 'install', '--agent', 'codex'], { when: 'before' }), 'SIGKILL');
+  const pending = JSON.parse(await readFile(join(workspace, '.state/agents.json'), 'utf8')).items.find(item => item.pending);
+  assert.ok(pending, 'a pending record was saved before the swap');
+  const second = join(base, 'second');
+  await run(['init', second]);
+  assert.equal((await run(['--root', second, 'agents', 'install', '--agent', 'codex'])).code, 0);
+  // Same version, so the same bytes: only the inode tells the copies apart.
+  const again = await run(['--root', workspace, 'agents', 'install', '--agent', 'codex']);
+  const theirs = again.json.results.find(item => item.path === pending.path);
+  assert.deepEqual([theirs.action, theirs.code], ['conflict', 'SKILL_FOREIGN']);
+  await run(['--root', workspace, 'agents', 'uninstall']);
+  assert.ok(await exists(pending.path));
+  const status = await run(['--root', second, 'agents', 'status']);
+  assert.ok(status.json.items.filter(item => item.kind === 'skill').every(item => item.state === 'installed'));
+  assert.deepEqual((await readdir(shared)).filter(name => !name.startsWith('.')).sort(), BUNDLED);
 });

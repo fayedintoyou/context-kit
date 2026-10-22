@@ -70,10 +70,11 @@ npm run agents -- uninstall [--agent claude,codex]
   by temporary file and rename, and `install`, `uninstall` and `repos sync` first
   check they can be written: if not, they fail with `RECORDS_UNWRITABLE` before
   changing anything. An invalid `--name` fails before anything is written. Before
-  swapping a copy in, install records it as `pending` with the hash it is about to
-  write, so an install interrupted after the swap is completed by the next one
-  (`unchanged`, `recovered: true`). A copy with no record is never claimed, even if
-  identical: it stays `SKILL_FOREIGN`.
+  swapping a copy in, install records it as `pending`: its new mode, source, content
+  hash and the built copy's device and inode. An install interrupted after the swap
+  is completed by the next one (`unchanged`, `recovered: true`) only when that very
+  file is in place. A copy with no record, or one an equal hash alone would match,
+  is never claimed: it stays `SKILL_FOREIGN`.
 - `--link` symlinks skills so edits apply immediately (not possible in the shared
   location when a skill needs adapted frontmatter).
 - Project scope keeps Claude Code's server private to the project; Codex needs
