@@ -28,7 +28,7 @@ topics, so `help / Help covers the tool` keeps passing.
 
 ## 3. Upgrades (slice `mount-upgrade`)
 
-- [ ] 3.1 `mounts upgrade <name> [--to <rev>] [--check]` with the concept and repository diff between commits; check before switching, atomic config rewrite, old pin kept on failure; link `test/e2e/mounts.test.mjs` to "Upstream moves on" and "Failed upgrade keeps the pin"
+- [x] 3.1 `mounts upgrade <name> [--to <rev>] [--check]` with the concept and repository diff between commits; check before switching, atomic config rewrite, old pin kept on failure; link `test/e2e/mounts.test.mjs` to "Upstream moves on" and "Failed upgrade keeps the pin"
 
 ## 4. Links into mounts (slice `mount-links`)
 

@@ -24,6 +24,7 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   repos | repos locate <repo> <path> | repos clone <repo> [<path>] | repos scan <directory> [--depth <n>] | repos sync
   repos setup [--scan <directory>]... [--depth <n>] [--clone a,b] [--ask]   (scan, then clone only what is named or answered)
   mounts | mounts add <name> <source> [--ref <ref>] [--path <dir>] | mounts fetch [<name>] | mounts remove <name>
+  mounts upgrade <name> [--to <rev>] [--check]   (rev: a branch, tag or full commit)
   specs stores | specs list | specs read <spec-id> | specs audit | specs garden   [--store <id>]
   specs parties --store <id>
   specs status <change> | specs next <change> | specs slice <change> <slice> | specs reconcile <change>   [--store <id>]
@@ -32,7 +33,7 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
       [--skip-review "<reason>"] [--no-checks "<reason>"] [--bootstrap-policy]
 Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
-  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--adopt', '--allow-write', '--global-mcp', '--global-rule', '--no-global-rule', '--name', '--help', '--path', '--ref', '--alias', '--title', '--concept', '--description', '--ready', '--rehearse',
+  const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--adopt', '--allow-write', '--global-mcp', '--global-rule', '--no-global-rule', '--name', '--help', '--path', '--ref', '--to', '--check', '--alias', '--title', '--concept', '--description', '--ready', '--rehearse',
     '--sha', '--repo', '--wait', '--timeout', '--method', '--skip-review', '--no-checks', '--bootstrap-policy', '--depth', '--scan', '--clone', '--ask'], ['--scan']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
@@ -79,6 +80,8 @@ try {
       const mountAdd = command === 'mounts' && args[0] === 'add';
       if (mountAdd && ['--alias', '--title', '--concept', '--description'].some(flag => options[flag])) fail('INVALID_INPUT', 'mounts add takes only --ref and --path');
       if (options['--ref'] && !mountAdd) fail('INVALID_INPUT', '--ref applies only to mounts add');
+      const mountUpgrade = command === 'mounts' && args[0] === 'upgrade';
+      if ((options['--to'] || options['--check']) && !mountUpgrade) fail('INVALID_INPUT', '--to and --check apply only to mounts upgrade');
       if (addFlags.some(flag => options[flag]) && !(command === 'repos' && args[0] === 'add') && !mountAdd) fail('INVALID_INPUT', `${addFlags.join(', ')} apply only to repos add (and --path to mounts add)`);
       const setupFlags = ['--scan', '--clone', '--ask'];
       if (setupFlags.some(flag => options[flag]) && !(command === 'repos' && args[0] === 'setup')) fail('INVALID_INPUT', `${setupFlags.join(', ')} apply only to repos setup`);
@@ -90,6 +93,7 @@ try {
           ...(options['--ref'] ? { ref: options['--ref'] } : {}), ...(options['--path'] ? { path: options['--path'] } : {}) });
         else if (args[0] === 'fetch' && [1, 2].includes(args.length)) result = await execute(selection, 'fetch_mounts', args[1] === undefined ? {} : { name: args[1] });
         else if (args[0] === 'remove' && args.length === 2) result = await execute(selection, 'remove_mount', { name: args[1] });
+        else if (mountUpgrade && args.length === 2) result = await execute(selection, 'upgrade_mount', { name: args[1], check: Boolean(options['--check']), ...(options['--to'] ? { to: options['--to'] } : {}) });
         else fail('INVALID_INPUT', help);
       } else if (command === 'repos') {
         if (args[0] === 'add' && [2, 3].includes(args.length)) {

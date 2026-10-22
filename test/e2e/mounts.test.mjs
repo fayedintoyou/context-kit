@@ -350,7 +350,7 @@ test('mounts and list_mounts agree, and MCP cannot change mounts even with write
   assert.deepEqual(tools.filter(tool => /mount/.test(tool.name)).map(tool => tool.name), ['list_mounts']);
   assert.equal(tools.find(tool => tool.name === 'list_mounts').annotations.readOnlyHint, true);
   assert.deepEqual((await client.callTool({ name: 'list_mounts', arguments: {} })).structuredContent, listed);
-  for (const name of ['add_mount', 'fetch_mounts', 'remove_mount']) {
+  for (const name of ['add_mount', 'fetch_mounts', 'upgrade_mount', 'remove_mount']) {
     const result = await client.callTool({ name, arguments: {} });
     assert.equal(result.isError, true);
     assert.equal(JSON.parse(result.content[0].text).error.code, 'UNKNOWN_OPERATION');
@@ -847,4 +847,252 @@ test('a broken mount fails when addressed with MOUNT_BROKEN naming the file, and
   const validated = await cli('validate');
   assert.equal(validated.code, 0, validated.output);
   assert.ok(validated.json.warnings.some(warning => /shared is broken/.test(warning)));
+});
+
+// Upgrades (slice mount-upgrade).
+
+const guide = title => `---\ntype: Guide\ntitle: ${title}\n---\n\n# ${title}\n`;
+const repositoryConcept = (title, resource) => `---\ntype: Repository\ntitle: ${title}\nresource: ${resource}\n---\n\n# ${title}\n`;
+// What a caller sees of a mount: its declaration bytes, listing, a read and the export on disk.
+async function observe({ workspace, cli }) {
+  return {
+    config: await readFile(join(workspace, 'context-kit.json'), 'utf8'),
+    mounts: (await cli('mounts')).json.mounts,
+    browse: (await cli('browse', 'shared')).json?.concepts?.map(concept => concept.id),
+    readme: (await cli('read', 'shared:/README')).json?.content,
+    exports: await listing(join(workspace, '.state/mounts/shared')),
+  };
+}
+const exportsOf = async path => (await readdir(path)).filter(entry => !entry.startsWith('.'));
+// No git diagnostics or local state paths in what a command printed.
+const clean = result => {
+  assert.doesNotMatch(result.output, /fatal:|error: |hint:|warning: |remote: /);
+  assert.doesNotMatch(result.output, /\.state\/mounts\/(\.git|shared)\//);
+};
+
+// spec: hub-federation / Upstream moves on
+test('upgrade --check reports what moves without moving the pin; upgrade then moves it', async t => {
+  const f = await fixture(t);
+  const { cli, config, repository } = f;
+  const source = await repository('shared-context', { ...hub('team/data'), 'old.md': guide('Old'), 'tables/orders.md': guide('Orders'),
+    'repos/billing.md': repositoryConcept('Billing', 'https://github.com/example/billing') });
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  const next = await source.commit({ 'tables/customers.md': guide('Customers'), 'tables/orders.md': guide('Orders, now with refunds'), 'old.md': null,
+    'repos/api.md': repositoryConcept('API', 'https://github.com/example/api') });
+
+  const first = await observe(f);
+  assert.equal((await cli('read', 'shared:/tables/customers')).error?.code, 'UNKNOWN_CONCEPT');
+  const checked = await cli('mounts', 'upgrade', 'shared', '--check');
+  assert.equal(checked.code, 0, checked.output);
+  assert.equal(checked.json.outcome, 'available');
+  assert.deepEqual(checked.json.from, { commit: source.first, ref: 'main', status: 'fetched' });
+  assert.deepEqual(checked.json.to, { commit: next, ref: 'main', manifestId: 'team/data' });
+  assert.deepEqual(checked.json.changes, {
+    concepts: { added: ['shared:/repos/api', 'shared:/tables/customers'], removed: ['shared:/old'], changed: ['shared:/tables/orders'] },
+    repositories: { added: [{ ref: 'shared:/repos/api', title: 'API', upstream: 'https://github.com/example/api' }], removed: [], changed: [] } });
+  assert.equal(checked.json.mount.commit, source.first);
+  // The check moved nothing: same pin, listing, reads and export.
+  assert.deepEqual(await observe(f), first);
+  assert.equal((await cli('read', 'shared:/tables/customers')).error?.code, 'UNKNOWN_CONCEPT');
+
+  const upgraded = await cli('mounts', 'upgrade', 'shared');
+  assert.equal(upgraded.code, 0, upgraded.output);
+  assert.equal(upgraded.json.outcome, 'upgraded');
+  assert.deepEqual(upgraded.json.changes, checked.json.changes);
+  assert.deepEqual((await config()).mounts.shared, { source: source.url, ref: 'main', commit: next });
+  assert.deepEqual({ status: upgraded.json.mount.status, commit: upgraded.json.mount.commit }, { status: 'fetched', commit: next });
+  const read = await cli('read', 'shared:/tables/customers');
+  assert.equal(read.code, 0, read.output);
+  assert.equal(read.json.mount.commit, next);
+  assert.equal((await cli('read', 'shared:/old')).error?.code, 'UNKNOWN_CONCEPT');
+  // The new commit's export, and the old pin's for reads that loaded it just before.
+  assert.equal((await exportsOf(join(f.workspace, '.state/mounts/shared'))).length, 2);
+
+  // Nothing new upstream: current, nothing written.
+  const before = await readFile(join(f.workspace, 'context-kit.json'), 'utf8');
+  const again = await cli('mounts', 'upgrade', 'shared');
+  assert.equal(again.code, 0, again.output);
+  assert.equal(again.json.outcome, 'current');
+  assert.equal(await readFile(join(f.workspace, 'context-kit.json'), 'utf8'), before);
+});
+
+// spec: hub-federation / Upstream moves on
+test('upgrade --to a commit, an annotated tag, and from an unfetched pin', async t => {
+  const f = await fixture(t);
+  const { base, workspace, run, cli, config, repository, git } = f;
+  const source = await repository('shared-context', hub('team/data'));
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  const second = await source.commit({ 'two.md': guide('Two') });
+  await git(source.path, 'tag', '-a', 'v2', '-m', 'release two');
+  const tagObject = await git(source.path, 'rev-parse', 'v2');
+  const tip = await source.commit({ 'three.md': guide('Three') });
+
+  // A commit: exactly that commit, not the tip; the ref stays.
+  const toCommit = await cli('mounts', 'upgrade', 'shared', '--to', second);
+  assert.equal(toCommit.code, 0, toCommit.output);
+  assert.deepEqual((await config()).mounts.shared, { source: source.url, ref: 'main', commit: second });
+  assert.equal((await cli('read', 'shared', 'three')).error?.code, 'UNKNOWN_CONCEPT');
+  // An annotated tag pins the commit it points at and becomes the ref.
+  await cli('mounts', 'upgrade', 'shared', '--to', source.first);
+  const toTag = await cli('mounts', 'upgrade', 'shared', '--to', 'v2');
+  assert.equal(toTag.code, 0, toTag.output);
+  assert.deepEqual(toTag.json.changes.concepts, { added: ['shared:/two'], removed: [], changed: [] });
+  assert.deepEqual((await config()).mounts.shared, { source: source.url, ref: 'v2', commit: second });
+  assert.notEqual(tagObject, second);
+  // A tag object's SHA is not a commit: refused, pin kept.
+  const object = await cli('mounts', 'upgrade', 'shared', '--to', tagObject);
+  assert.equal(object.error?.code, 'FETCH_FAILED', object.output);
+  assert.match(object.error.message, /not a commit/);
+  assert.equal((await config()).mounts.shared.commit, second);
+  for (const bad of ['--oops', 'a..b']) assert.equal((await cli('mounts', 'upgrade', 'shared', '--to', bad)).error?.code, 'INVALID_INPUT', bad);
+  assert.equal((await cli('mounts', 'upgrade', 'nothing')).error?.code, 'UNKNOWN_MOUNT');
+  assert.equal((await cli('mounts', 'fetch', 'shared', '--check')).error?.code, 'INVALID_INPUT');
+
+  // On a machine that has not fetched the pin, there is nothing to compare with, but the
+  // candidate is still checked and the upgrade works.
+  const copy = join(base, 'other-machine');
+  await cp(workspace, copy, { recursive: true, filter: path => !path.startsWith(join(workspace, '.state')) });
+  const unfetched = await run(['--root', copy, 'mounts', 'upgrade', 'shared', '--to', 'main', '--check']);
+  assert.equal(unfetched.code, 0, unfetched.output);
+  assert.deepEqual({ outcome: unfetched.json.outcome, status: unfetched.json.from.status, changes: unfetched.json.changes, to: unfetched.json.to.commit },
+    { outcome: 'available', status: 'unfetched', changes: null, to: tip });
+  assert.match(unfetched.json.baseline, /mounts fetch shared/);
+  assert.equal(JSON.parse(await readFile(join(copy, 'context-kit.json'), 'utf8')).mounts.shared.commit, second);
+  const moved = await run(['--root', copy, 'mounts', 'upgrade', 'shared', '--to', 'main']);
+  assert.equal(moved.code, 0, moved.output);
+  assert.deepEqual({ status: moved.json.mount.status, commit: moved.json.mount.commit, ref: moved.json.mount.ref }, { status: 'fetched', commit: tip, ref: 'main' });
+});
+
+// spec: hub-federation / Failed upgrade keeps the pin
+test('a broken candidate and an unknown commit fail and keep the pin, content and reads', async t => {
+  const f = await fixture(t);
+  const { cli, repository } = f;
+  const source = await repository('shared-context', { ...hub('team/data'), 'tables/orders.md': guide('Orders') });
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  await source.commit({ 'README.md': '# No frontmatter\n', 'tables/customers.md': guide('Customers') });
+  const before = await observe(f);
+
+  for (const args of [[], ['--check']]) {
+    const broken = await cli('mounts', 'upgrade', 'shared', ...args);
+    assert.equal(broken.error?.code, 'MOUNT_BROKEN', broken.output);
+    assert.match(broken.error.message, /README\.md/);
+    assert.match(broken.error.message, new RegExp(`pin stays at ${source.first}`));
+    clean(broken);
+    assert.deepEqual(await observe(f), before);
+  }
+  const unknown = await cli('mounts', 'upgrade', 'shared', '--to', 'f'.repeat(40));
+  assert.equal(unknown.error?.code, 'FETCH_FAILED', unknown.output);
+  clean(unknown);
+  const noRef = await cli('mounts', 'upgrade', 'shared', '--to', 'no-such-branch');
+  assert.equal(noRef.error?.code, 'FETCH_FAILED', noRef.output);
+  clean(noRef);
+  assert.deepEqual(await observe(f), before);
+  assert.equal((await cli('read', 'shared:/tables/customers')).error?.code, 'UNKNOWN_CONCEPT');
+  assert.deepEqual((await readdir(join(f.workspace, '.state/mounts/shared'))).filter(entry => entry.startsWith('.tmp-')), []);
+});
+
+// spec: hub-federation / Failed upgrade keeps the pin
+test('offline, upgrade and --check fail with FETCH_FAILED and reads keep the pin', async t => {
+  const f = await fixture(t);
+  const { cli, repository } = f;
+  const source = await repository('shared-context', hub('team/data'));
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  await source.commit({ 'two.md': guide('Two') });
+  const before = await observe(f);
+  await rm(source.path, { recursive: true, force: true });
+  for (const args of [[], ['--check'], ['--to', source.first.replace(/^./, c => c === 'a' ? 'b' : 'a')]]) {
+    const result = await cli('mounts', 'upgrade', 'shared', ...args);
+    assert.equal(result.error?.code, 'FETCH_FAILED', result.output);
+    assert.match(result.error.message, /repository not found|not available|does not have commit|git failed/);
+    clean(result);
+  }
+  assert.deepEqual(await observe(f), before);
+  assert.equal(before.mounts[0].status, 'fetched');
+});
+
+// spec: hub-federation / Upstream moves on
+test('upgrades and fetches running together serialize on the mount lock', async t => {
+  const f = await fixture(t);
+  const { workspace, run, config, repository } = f;
+  const source = await repository('shared-context', hub('team/data'));
+  assert.equal((await run(['--root', workspace, 'mounts', 'add', 'shared', source.url])).code, 0);
+  for (let round = 0; round < 3; round++) {
+    const next = await source.commit({ [`round-${round}.md`]: guide(`Round ${round}`) });
+    const results = await Promise.all([
+      run(['--root', workspace, 'mounts', 'upgrade', 'shared']), run(['--root', workspace, 'mounts', 'fetch', 'shared']),
+      run(['--root', workspace, 'mounts', 'upgrade', 'shared']), run(['--root', workspace, 'mounts', 'fetch']),
+      run(['--root', workspace, 'mounts', 'upgrade', 'shared', '--check'])]);
+    assert.deepEqual(results.map(result => result.code), [0, 0, 0, 0, 0], results.map(result => result.output).join('\n'));
+    // Exactly one upgrade moved the pin; the other found it current.
+    assert.deepEqual([results[0], results[2]].map(result => result.json.outcome).sort(), ['current', 'upgraded']);
+    assert.equal((await config()).mounts.shared.commit, next);
+    const [mount] = (await run(['--root', workspace, 'mounts'])).json.mounts;
+    assert.deepEqual({ status: mount.status, commit: mount.commit }, { status: 'fetched', commit: next });
+    assert.equal((await run(['--root', workspace, 'read', `shared:/round-${round}`])).code, 0);
+    assert.equal((await exportsOf(join(workspace, '.state/mounts/shared'))).length, 2); // current and previous
+    assert.deepEqual((await readdir(join(workspace, '.state/mounts'))).filter(entry => entry.startsWith('.lock')), []);
+  }
+});
+
+// spec: hub-federation / Failed upgrade keeps the pin
+test('an upgrade that lost its mount lock before the switch keeps the old pin', async t => {
+  const f = await fixture(t);
+  const { workspace, run, config, repository } = f;
+  const source = await repository('shared-context', hub('team/data'));
+  assert.equal((await run(['--root', workspace, 'mounts', 'add', 'shared', source.url])).code, 0);
+  await source.commit({ 'two.md': guide('Two') });
+  const locks = join(workspace, '.state/mounts');
+  // Hold the config lock (as a live process), so the upgrade waits just before rewriting the pin.
+  await writeFile(join(locks, '.lock-config'), JSON.stringify({ pid: process.pid, at: Date.now(), token: 'test' }));
+  const upgrading = run(['--root', workspace, 'mounts', 'upgrade', 'shared']);
+  const mountLock = join(locks, '.lock-mount-shared');
+  // Wait until the candidate export is in place next to the old one.
+  for (let i = 0; i < 800 && (await readdir(join(locks, 'shared'))).filter(entry => !entry.startsWith('.')).length < 2; i++) await new Promise(done => setTimeout(done, 25));
+  await writeFile(mountLock, JSON.stringify({ pid: process.pid, at: Date.now(), token: 'usurper' }));
+  await rm(join(locks, '.lock-config'));
+  const upgraded = await upgrading;
+  assert.equal(upgraded.error?.code, 'MOUNT_BUSY', upgraded.output);
+  assert.equal((await config()).mounts.shared.commit, source.first);
+  await rm(mountLock);
+  const [mount] = (await run(['--root', workspace, 'mounts'])).json.mounts;
+  assert.deepEqual({ status: mount.status, commit: mount.commit }, { status: 'fetched', commit: source.first });
+  assert.equal((await run(['--root', workspace, 'read', 'shared:/two'])).error?.code, 'UNKNOWN_CONCEPT');
+  // The next upgrade uses the complete candidate already there; current and previous are left.
+  const retried = await run(['--root', workspace, 'mounts', 'upgrade', 'shared']);
+  assert.equal(retried.code, 0, retried.output);
+  assert.equal((await exportsOf(join(locks, 'shared'))).length, 2);
+});
+
+// Review round 1 regression.
+
+// spec: hub-federation / Upstream moves on
+test('reads running during upgrades back and forth never fail', async t => {
+  const f = await fixture(t);
+  const { workspace, run, repository } = f;
+  const files = { ...hub('team/data') };
+  for (let i = 0; i < 300; i++) files[`c/n${i}.md`] = guide(`n${i}`);
+  const source = await repository('shared-context', files);
+  const a = source.first;
+  const b = await source.commit({ 'extra.md': guide('Extra') });
+  assert.equal((await run(['--root', workspace, 'mounts', 'add', 'shared', source.url, '--ref', 'main'])).code, 0);
+  let stop = false;
+  const failures = [];
+  let reads = 0;
+  const reader = async () => {
+    while (!stop) {
+      const result = await run(['--root', workspace, ...(reads % 2 ? ['read', 'shared:/README'] : ['search', 'n299'])]);
+      reads++;
+      if (result.code !== 0) failures.push(result.output.slice(0, 200));
+    }
+  };
+  const readers = Array.from({ length: 4 }, reader);
+  for (let i = 0; i < 8; i++) {
+    const result = await run(['--root', workspace, 'mounts', 'upgrade', 'shared', '--to', i % 2 ? b : a]);
+    assert.equal(result.code, 0, result.output);
+  }
+  stop = true;
+  await Promise.all(readers);
+  assert.ok(reads > 0);
+  assert.deepEqual(failures, [], `${failures.length}/${reads} reads failed`);
+  assert.ok((await exportsOf(join(workspace, '.state/mounts/shared'))).length <= 2);
 });
