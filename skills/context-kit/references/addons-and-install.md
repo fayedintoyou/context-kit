@@ -100,14 +100,27 @@ npm run agents -- uninstall [--agent claude,codex]
   by hand), and the skills still install. A server of that name that Context Kit
   didn't add is a conflict (`MCP_FOREIGN`) until `--force`; an entry you edited is
   kept and reported `edited` by install and uninstall until `--force`.
-  - Every write is a compare-and-swap: a temporary file beside the target, keeping
-    its mode (a new file is `0600`), swapped in only while the file still holds
-    what the edit was computed from. A change made meanwhile, by the harness or by
-    hand, is read and the one entry applied to it again; one made during the swap
-    itself is detected afterwards and folded in. Uninstall removes the entry from
-    what the file holds at that moment and deletes a file it created only while
-    nothing else is in it. What can't be reconciled is reported `MCP_CONFLICT` and
-    the other version kept beside the file (`<file>.context-kit-displaced-<time>`).
+  - Every write is checked against the file it was computed from: a temporary file
+    beside the target, keeping its mode (a new file is `0600`), swapped in only
+    while a hard-link snapshot shows the very file that was read, unchanged, and
+    the path still holds it just before the rename. A change made before that, by
+    the harness or by hand, means nothing is written and the edit is computed
+    again from the new content, up to four times; then it stops with
+    `MCP_CONFLICT` and the file as the other writer left it. A change made in
+    place during the swap itself is detected afterwards and that writer's bytes
+    are put back, also reported `MCP_CONFLICT`; rerun install to apply the entry.
+    A version that can't be put back is kept beside the file under a new
+    `<file>.context-kit-displaced-<time>-<pid>-<n>` name, never over an existing
+    one. Uninstall removes the entry from what the file holds at that moment and
+    deletes a file it created only while nothing else is in it.
+  - **Residual:** there is no conditional rename on POSIX, so a writer that
+    replaces the file by its own rename in the instant between the last check
+    and Context Kit's rename loses its change, with no copy kept. Measured on one
+    Mac with a writer replacing the file by rename continuously (random gaps of
+    up to 1–200 ms) during 1,840 installs and uninstalls: 3 of 16,581 writes
+    were lost, all with gaps of 60–200 ms and 2 of them while the machine was
+    under load; with shorter gaps installs stopped with `MCP_CONFLICT` instead.
+    Installing while the harness isn't running avoids it.
   - The record holds the file's resolved target and identity. A symbolic link to
     the file or its directory is written through and kept; a link to nothing is
     refused (`CONFIG_LINK_BROKEN`). A link retargeted to another file since
@@ -116,8 +129,10 @@ npm run agents -- uninstall [--agent claude,codex]
     place since install (the harness saving it) still loses our entry, but the
     file and `mcpServers` the install created are then left.
   - What an interrupted write leaves beside the file is cleaned up by the next
-    install or uninstall, and a file an interrupted uninstall moved aside is put
-    back.
+    install or uninstall only when it holds exactly what Context Kit expected
+    (each name carries that content's hash). Anything else is kept under a
+    displaced name and listed in the result (`displaced`, with a `note`). A file
+    an interrupted uninstall moved aside is put back.
 - A harness CLI that fails is reported with a fixed code (`MCP_ADD_FAILED`,
   `MCP_REMOVE_FAILED`, `MCP_CLI_TIMEOUT`, `MCP_CLI_NOT_RUNNABLE`) and never its
   output. A remove that failed while the server is still registered is reported

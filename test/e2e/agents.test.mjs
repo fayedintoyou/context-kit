@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access, chmod, cp, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, link, rename, rm, realpath, symlink, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
@@ -1849,21 +1850,31 @@ const racePreload = `import fs from 'node:fs/promises';
 import sync from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 const { RACE_AT: at, RACE_FLAG: flag, RACE_KEY: key } = process.env;
+const log = process.env.RACE_LOG;
 const edit = (path, inPlace) => {
   if (!flag || !sync.existsSync(flag)) return;
-  sync.rmSync(flag);
-  const data = JSON.parse(sync.readFileSync(path, 'utf8'));
-  if (key === 'top') data.harness = true;
-  else (data.mcpServers ??= {})['harness-added'] = { command: 'h' };
-  const text = JSON.stringify(data, null, 2) + '\\n';
+  if (!process.env.RACE_REPEAT) sync.rmSync(flag);
+  let text;
+  if (key === 'broken') text = '{ not json';
+  else {
+    const data = JSON.parse(sync.readFileSync(path, 'utf8'));
+    if (key === 'top') data.harness = true;
+    else if (key === 'later') data.later = true;
+    else if (key === 'ours') (data.mcpServers ??= {})['context-workspace'] = { command: 'theirs' };
+    else (data.mcpServers ??= {})['harness-added'] = { command: 'h' };
+    if (process.env.RACE_REPEAT) data.writes = (data.writes ?? 0) + 1;
+    text = JSON.stringify(data, null, 2) + '\\n';
+  }
   if (inPlace) sync.writeFileSync(path, text);
   else { sync.writeFileSync(path + '.harness', text); sync.renameSync(path + '.harness', path); }
+  // What the writer left, for the test to compare with (NUL-separated when it writes again).
+  if (log) sync.appendFileSync(log, (sync.existsSync(log) && sync.readFileSync(log, 'utf8') ? '\\u0000' : '') + text);
 };
 const { link, rename } = fs;
-fs.link = async (from, to) => { if (at === 'capture' && String(to).endsWith('-prev')) edit(from, false); return link(from, to); };
+fs.link = async (from, to) => { if (at === 'capture' && /-p[0-9a-f]{16}$/.test(String(to))) edit(from, false); return link(from, to); };
 fs.rename = async (from, to) => {
   if (at === 'swap' && String(from).includes('.context-kit-') && /mcp(-config)?\\.json$/.test(String(to))) edit(to, true);
-  if (at === 'aside' && String(to).endsWith('-old') && /mcp(-config)?\\.json$/.test(String(from))) edit(from, true);
+  if (at === 'aside' && /-o[0-9a-f]{16}$/.test(String(to)) && /mcp(-config)?\\.json$/.test(String(from))) edit(from, true);
   return rename(from, to);
 };
 syncBuiltinESMExports();
@@ -1884,25 +1895,60 @@ test('a harness writing its config while install or uninstall edits it keeps its
   const servers = async () => Object.keys(JSON.parse(await readFile(cursorConfig(env), 'utf8')).mcpServers).sort();
   await mkdir(join(env.HOME, '.cursor'));
   await writeFile(cursorConfig(env), '{\n  "mcpServers": {\n    "notes": { "command": "notes-mcp" }\n  }\n}\n');
-  // Before the capture: the edit is computed again from the new content.
+  // Before the capture: nothing is written, and the edit is computed again from the new content.
   const first = await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'], await race('capture'));
-  assert.equal(first.json.results.find(item => item.kind === 'mcp').action, 'installed');
   assert.ok(await racer.fired(), 'the racing write ran');
+  assert.equal(first.json.results.find(item => item.kind === 'mcp').action, 'installed');
   assert.deepEqual(await servers(), ['context-workspace', 'harness-added', 'notes']);
-  // During the swap, in place: detected from the captured link and folded in.
+  // During the swap, in place: the file is put back exactly as the writer left it, and the
+  // install says so; the next one applies the entry to it.
   await cursor('uninstall');
   assert.deepEqual(await servers(), ['harness-added', 'notes']);
-  const second = await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'], await race('swap', 'top'));
-  assert.equal(second.json.results.find(item => item.kind === 'mcp').action, 'installed');
+  const writerLeft = [];
+  const second = await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'], { ...await race('swap', 'top'), RACE_LOG: join(base, 'race.log') });
   assert.ok(await racer.fired(), 'the racing write ran');
+  writerLeft.push(await readFile(join(base, 'race.log'), 'utf8'));
+  const conflicted = second.json.results.find(item => item.kind === 'mcp');
+  assert.deepEqual([conflicted.action, conflicted.code], ['failed', 'MCP_CONFLICT']);
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), writerLeft[0], 'byte-identical to what the writer left');
+  assert.equal((await cursor('install', '--agent', 'cursor')).json.results.find(item => item.kind === 'mcp').action, 'installed');
   const both = JSON.parse(await readFile(cursorConfig(env), 'utf8'));
   assert.deepEqual([Object.keys(both.mcpServers).sort(), both.harness], [['context-workspace', 'harness-added', 'notes'], true]);
-  // Uninstall racing a writer removes only its entry from what the file holds then.
-  const removed = await run(['--root', workspace, 'agents', 'uninstall'], await race('swap'));
-  assert.equal(removed.json.results.find(item => item.kind === 'mcp').action, 'removed');
-  assert.deepEqual(await servers(), ['harness-added', 'notes']);
+  // Uninstall racing a writer the same way: the writer's file stays, and the record with it.
+  const removed = await run(['--root', workspace, 'agents', 'uninstall'], { ...await race('swap', 'later'), RACE_LOG: join(base, 'race2.log') });
   assert.ok(await racer.fired(), 'the racing write ran');
+  assert.deepEqual(removed.json.results.filter(item => item.kind === 'mcp').map(item => [item.action, item.code]), [['kept', 'MCP_CONFLICT']]);
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), await readFile(join(base, 'race2.log'), 'utf8'));
+  assert.equal((await cursor('uninstall')).json.results.find(item => item.kind === 'mcp').action, 'removed');
+  assert.deepEqual(await servers(), ['harness-added', 'notes']);
   assert.deepEqual((await readdir(join(env.HOME, '.cursor'))).sort(), ['mcp.json'], 'no temporary or displaced copy is left');
+});
+
+// spec: agent-installation / Other servers are kept
+test('a writer racing every attempt, or racing before an early stop, ends with exactly its bytes and MCP_CONFLICT', async t => {
+  const { base, env, run, workspace } = await fixture(t, { agents: [] });
+  const race = await racer(base);
+  await mkdir(join(env.HOME, '.cursor'));
+  await writeFile(cursorConfig(env), '{"mcpServers":{},"original":true}');
+  // A write before every capture: four attempts, nothing written.
+  const exhausted = await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'], { ...await race('capture'), RACE_REPEAT: '1', RACE_LOG: join(base, 'every.log') });
+  const result = exhausted.json.results.find(item => item.kind === 'mcp');
+  assert.deepEqual([result.action, result.code], ['failed', 'MCP_CONFLICT']);
+  assert.match(result.reason, /nothing was written/);
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), (await readFile(join(base, 'every.log'), 'utf8')).split('\u0000').at(-1));
+  assert.deepEqual(JSON.parse(await readFile(cursorConfig(env), 'utf8')).writes, 4);
+  // The writer adds a server of our name before the capture: the next attempt stops early
+  // (MCP_FOREIGN) and writes nothing.
+  await writeFile(cursorConfig(env), '{"mcpServers":{},"original":true}');
+  const foreign = await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'], { ...await race('capture', 'ours'), RACE_LOG: join(base, 'ours.log') });
+  assert.equal(foreign.json.results.find(item => item.kind === 'mcp').code, 'MCP_FOREIGN');
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), await readFile(join(base, 'ours.log'), 'utf8'));
+  // The writer leaves something that isn't JSON: nothing is written.
+  await writeFile(cursorConfig(env), '{"mcpServers":{},"original":true}');
+  const broken = await run(['--root', workspace, 'agents', 'install', '--agent', 'cursor'], { ...await race('capture', 'broken'), RACE_LOG: join(base, 'broken.log') });
+  assert.equal(broken.json.results.find(item => item.kind === 'mcp').code, 'MCP_CONFLICT');
+  assert.equal(await readFile(cursorConfig(env), 'utf8'), '{ not json');
+  assert.deepEqual(await readdir(join(env.HOME, '.cursor')), ['mcp.json']);
 });
 
 // spec: agent-installation / Other servers are kept
@@ -1999,13 +2045,52 @@ test('a config file an interrupted uninstall moved aside is put back, or kept as
   await mkdir(join(env.HOME, '.cursor'));
   // A process that no longer exists (pid 999999) moved the file aside and was killed.
   const before = '{"mcpServers": {"notes": {"command": "notes-mcp"}}}';
-  const aside = join(env.HOME, '.cursor/.mcp.json.context-kit-999999-1-old');
+  const aside = join(env.HOME, '.cursor/.mcp.json.context-kit-999999-1-o0123456789abcdef');
   await writeFile(aside, before);
   assert.equal((await agents('install', '--agent', 'cursor')).json.results.find(item => item.kind === 'mcp').action, 'installed');
   assert.deepEqual(Object.keys(JSON.parse(await readFile(cursorConfig(env), 'utf8')).mcpServers), ['notes', 'context-workspace']);
   assert.deepEqual(await readdir(join(env.HOME, '.cursor')), ['mcp.json']);
   await writeFile(aside, before);
-  await agents('install', '--agent', 'cursor');
-  assert.deepEqual((await readdir(join(env.HOME, '.cursor'))).sort(), ['mcp.json', 'mcp.json.context-kit-displaced-1']);
-  assert.equal(await readFile(join(env.HOME, '.cursor/mcp.json.context-kit-displaced-1'), 'utf8'), before);
+  const again = (await agents('install', '--agent', 'cursor')).json.results.find(item => item.kind === 'mcp');
+  const files = (await readdir(join(env.HOME, '.cursor'))).sort();
+  assert.equal(files.length, 2);
+  assert.match(files[1], /^mcp\.json\.context-kit-displaced-\d+-\d+-0$/);
+  assert.deepEqual(again.displaced, [join(env.HOME, '.cursor', files[1])]);
+  assert.equal(await readFile(join(env.HOME, '.cursor', files[1]), 'utf8'), before);
+});
+
+// spec: agent-installation / Other servers are kept
+test('recovery removes only what holds the bytes Context Kit wrote, and never replaces a displaced copy', async t => {
+  const { env, agents } = await fixture(t, { agents: [] });
+  const directory = join(env.HOME, '.cursor');
+  await mkdir(directory);
+  await writeFile(cursorConfig(env), '{"mcpServers":{},"live":"keep"}');
+  const hash = text => createHash('sha256').update(text).digest('hex').slice(0, 16);
+  // A dead process's capture whose bytes diverged (a write landed in it before a kill), its own
+  // temporary, an existing displaced copy, and a moved-aside file whose place is taken.
+  const diverged = '{"mcpServers":{},"user":"edit made during the swap"}';
+  await writeFile(join(directory, `.mcp.json.context-kit-999999-1-p${hash('{"mcpServers":{}}')}`), diverged);
+  const temporary = '{"mcpServers":{"context-workspace":{}}}';
+  await writeFile(join(directory, `.mcp.json.context-kit-999999-1-t${hash(temporary)}`), temporary);
+  await writeFile(join(directory, `.mcp.json.context-kit-999999-2-p${hash('same')}`), 'same');
+  await writeFile(join(directory, 'mcp.json.context-kit-displaced-1'), 'USER-BACKUP-MUST-SURVIVE');
+  await writeFile(join(directory, '.mcp.json.context-kit-999999-1-o0123456789abcdef'), 'OTHER-USER-BYTES');
+  const result = (await agents('install', '--agent', 'cursor')).json.results.find(item => item.kind === 'mcp');
+  assert.equal(result.action, 'installed');
+  assert.equal(await readFile(join(directory, 'mcp.json.context-kit-displaced-1'), 'utf8'), 'USER-BACKUP-MUST-SURVIVE');
+  const kept = await Promise.all(result.displaced.map(path => readFile(path, 'utf8')));
+  assert.deepEqual(kept.sort(), ['OTHER-USER-BYTES', diverged].sort());
+  assert.match(result.note, /may hold changes of yours/);
+  assert.deepEqual((await readdir(directory)).filter(name => name.startsWith('.')), [], 'the matching temporary and capture are gone');
+  assert.equal((await readdir(directory)).length, 4);
+});
+// spec: agent-installation / Other servers are kept
+test('a directory the install created goes once empty, even when its file was recreated after an interrupted uninstall', async t => {
+  const { env, agents } = await fixture(t, { agents: [] });
+  assert.equal((await agents('install', '--agent', 'cursor')).code, 0);
+  // An uninstall killed after deleting the file, before removing the directory or its record.
+  await rm(cursorConfig(env));
+  assert.equal((await agents('install', '--agent', 'cursor')).json.results.find(item => item.kind === 'mcp').action, 'installed');
+  assert.equal((await agents('uninstall')).json.results.find(item => item.kind === 'mcp').action, 'removed');
+  assert.equal(await exists(join(env.HOME, '.cursor')), false);
 });
