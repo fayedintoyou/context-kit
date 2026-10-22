@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { promisify } from 'node:util';
-import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1095,4 +1095,136 @@ test('reads running during upgrades back and forth never fail', async t => {
   assert.ok(reads > 0);
   assert.deepEqual(failures, [], `${failures.length}/${reads} reads failed`);
   assert.ok((await exportsOf(join(workspace, '.state/mounts/shared'))).length <= 2);
+});
+
+// Exports verified before reuse (follow-up to review of #68).
+
+// The export directory holding the given commit, made writable so a test can damage it.
+async function exportAt(workspace, commit) {
+  const parent = join(workspace, '.state/mounts/shared');
+  for (const key of await exportsOf(parent)) {
+    const descriptor = JSON.parse(await readFile(join(parent, key, '.mount.json'), 'utf8'));
+    if (descriptor.commit === commit) { await exec('chmod', ['-R', 'u+w', join(parent, key)]); return join(parent, key); }
+  }
+  throw new Error(`no export of ${commit}`);
+}
+
+// spec: hub-federation / Failed upgrade keeps the pin
+test('an export with its descriptor but missing files is rebuilt by upgrade, not reused', async t => {
+  const f = await fixture(t);
+  const { workspace, cli, config, repository } = f;
+  const source = await repository('shared-context', { ...hub('team/data'), 'tables/orders.md': guide('Orders'), 'tables/customers.md': guide('Customers') });
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  const next = await source.commit({ 'two.md': guide('Two') });
+  assert.equal((await cli('mounts', 'upgrade', 'shared')).code, 0);
+  // The previous pin's export, as an interrupted delete could leave it: descriptor kept, files gone.
+  const previous = await exportAt(workspace, source.first);
+  await rm(join(previous, 'tables/orders.md'));
+  await writeFile(join(previous, 'tables/customers.md'), guide('Customerz'));
+  const back = await cli('mounts', 'upgrade', 'shared', '--to', source.first);
+  assert.equal(back.code, 0, back.output);
+  assert.equal((await config()).mounts.shared.commit, source.first);
+  const orders = await cli('read', 'shared:/tables/orders');
+  assert.equal(orders.code, 0, orders.output);
+  assert.match((await cli('read', 'shared:/tables/customers')).json.content, /# Customers\n/);
+  assert.equal((await cli('mounts')).json.mounts[0].status, 'fetched');
+  assert.notEqual(next, source.first);
+});
+
+// spec: hub-federation / Fresh machine fetches its mounts
+test('fetch repairs an export at the pin whose files are missing or changed', async t => {
+  const f = await fixture(t);
+  const { workspace, cli, repository } = f;
+  const source = await repository('shared-context', { ...hub('team/data'), 'tables/orders.md': guide('Orders') });
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  assert.equal((await cli('mounts', 'fetch', 'shared')).json.mounts[0].outcome, 'unchanged');
+  for (const damage of [dir => rm(join(dir, 'tables/orders.md')), dir => writeFile(join(dir, 'tables/orders.md'), guide('Orderz'))]) {
+    await damage(await exportAt(workspace, source.first));
+    const fetched = await cli('mounts', 'fetch', 'shared');
+    assert.equal(fetched.code, 0, fetched.output);
+    assert.equal(fetched.json.mounts[0].outcome, 'fetched');
+    const read = await cli('read', 'shared:/tables/orders');
+    assert.equal(read.code, 0, read.output);
+    assert.match(read.json.content, /# Orders\n/);
+    assert.equal((await cli('mounts', 'fetch', 'shared')).json.mounts[0].outcome, 'unchanged');
+  }
+});
+
+// spec: hub-federation / Fresh machine fetches its mounts
+test('a mount with thousands of files is fetched and verified, its long descriptor read', async t => {
+  const { workspace, cli, repository } = await fixture(t);
+  const assets = Object.fromEntries(Array.from({ length: 4000 }, (_, i) => [`assets/a${i}.txt`, `asset ${i}\n`]));
+  const source = await repository('shared-context', { ...hub('team/data'), ...assets });
+  const added = await cli('mounts', 'add', 'shared', source.url);
+  assert.equal(added.code, 0, added.output);
+  // The descriptor is over the 128 KiB document limit, and is still read back by a new process.
+  const [key] = await exportsOf(join(workspace, '.state/mounts/shared'));
+  assert.ok((await stat(join(workspace, '.state/mounts/shared', key, '.mount.json'))).size > 128 * 1024);
+  assert.equal((await cli('mounts')).json.mounts[0].status, 'fetched');
+  assert.equal((await cli('read', 'shared:/README')).code, 0);
+  assert.equal((await cli('mounts', 'fetch', 'shared')).json.mounts[0].outcome, 'unchanged');
+});
+
+// Review round 1 regressions (#70).
+
+// spec: hub-federation / Fresh machine fetches its mounts
+test('a source with its own top-level .mount.json: not exported, warned, and fetch finds the export intact', async t => {
+  const { workspace, cli, repository } = await fixture(t);
+  const source = await repository('shared-context', { ...hub('team/data'), '.mount.json': '{"commit": "planted"}\n' });
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  for (let i = 0; i < 2; i++) assert.equal((await cli('mounts', 'fetch', 'shared')).json.mounts[0].outcome, 'unchanged', `fetch ${i + 1}`);
+  const [key] = await exportsOf(join(workspace, '.state/mounts/shared'));
+  const descriptor = JSON.parse(await readFile(join(workspace, '.state/mounts/shared', key, '.mount.json'), 'utf8'));
+  assert.equal(descriptor.commit, source.first);
+  assert.ok(!descriptor.files.some(([path]) => path === '.mount.json'));
+  assert.deepEqual(descriptor.skipped, ['.mount.json']);
+  assert.ok((await cli('context', 'shared')).json.warnings.some(warning => /^\.mount\.json: not exported/.test(warning)));
+});
+
+// spec: hub-federation / Fresh machine fetches its mounts
+test('an export made before descriptors listed files is re-exported once, or kept when offline', async t => {
+  const { base, workspace, cli, repository } = await fixture(t);
+  const source = await repository('shared-context', hub('team/data'));
+  assert.equal((await cli('mounts', 'add', 'shared', source.url)).code, 0);
+  const legacy = async () => {
+    const [key] = await exportsOf(join(workspace, '.state/mounts/shared'));
+    const directory = join(workspace, '.state/mounts/shared', key);
+    await exec('chmod', ['-R', 'u+w', directory]);
+    const { files, tree, ...old } = JSON.parse(await readFile(join(directory, '.mount.json'), 'utf8'));
+    await writeFile(join(directory, '.mount.json'), JSON.stringify(old));
+    return directory;
+  };
+  let directory = await legacy();
+  let fetched = await cli('mounts', 'fetch', 'shared');
+  assert.equal(fetched.json.mounts[0].outcome, 'fetched', fetched.output);
+  assert.ok(Array.isArray(JSON.parse(await readFile(join(directory, '.mount.json'), 'utf8')).files));
+  assert.equal((await cli('mounts', 'fetch', 'shared')).json.mounts[0].outcome, 'unchanged');
+  // Offline: kept as it is, and fetch still succeeds.
+  directory = await legacy();
+  await cp(source.path, join(base, 'away'), { recursive: true });
+  await rm(source.path, { recursive: true, force: true });
+  fetched = await cli('mounts', 'fetch', 'shared');
+  assert.equal(fetched.code, 0, fetched.output);
+  assert.equal(fetched.json.mounts[0].outcome, 'unchanged');
+  assert.equal((await cli('read', 'shared:/README')).code, 0);
+});
+
+// Review round 2 regression (#70).
+
+// spec: hub-federation / Fresh machine fetches its mounts
+test('the reserved .mount.json name is skipped in any case or form, file or directory', async t => {
+  const { workspace, cli, repository } = await fixture(t);
+  const variants = { upper: '.Mount.json', shout: '.MOUNT.JSON', longs: '.mount.jſon', directory: '.mount.json/inner.txt' };
+  for (const [name, file] of Object.entries(variants)) {
+    const source = await repository(`source-${name}`, { ...hub('team/data'), [file]: '{"commit": "planted"}\n' });
+    const added = await cli('mounts', 'add', name, source.url);
+    assert.equal(added.code, 0, `${name}: ${added.output}`);
+    for (let i = 0; i < 2; i++) assert.equal((await cli('mounts', 'fetch', name)).json.mounts[0].outcome, 'unchanged', `${name} fetch ${i + 1}`);
+    const [key] = await exportsOf(join(workspace, '.state/mounts', name));
+    const descriptor = JSON.parse(await readFile(join(workspace, '.state/mounts', name, key, '.mount.json'), 'utf8'));
+    assert.equal(descriptor.commit, source.first, name);
+    assert.deepEqual(descriptor.skipped, [file.split('/')[0]], name);
+    assert.ok(!descriptor.files.some(([path]) => path.split('/')[0] === file.split('/')[0]), name);
+    assert.ok((await cli('context', name)).json.warnings.some(warning => warning.startsWith(`${file.split('/')[0]}: not exported`)), name);
+  }
 });
