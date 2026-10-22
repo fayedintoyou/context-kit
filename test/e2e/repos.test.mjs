@@ -182,7 +182,7 @@ test('the routing skill names every repository and alias and carries upstreams a
   assert.deepEqual(Object.keys(front), ['name', 'description', 'metadata']);
   for (const name of ['the room', 'room', 'fayelore.com']) assert.ok(front.description.includes(name), name);
   // Agent Skills metadata is a string-to-string map.
-  assert.deepEqual(front.metadata, { 'personal/main/room': `https://github.com/me/room at ${path} (aliases: room, fayelore.com)` });
+  assert.deepEqual(front.metadata, { 'personal/main/room': `https://github.com/me/room at ${path}; aliases: room, fayelore.com` });
   assert.match(text, /Do not search the filesystem/);
 });
 
