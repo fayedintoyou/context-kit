@@ -11,10 +11,11 @@ or parallel regions.
 Drawing a map is interpretation, so a model or a person drafts it, following the
 [behavior-map](../skills/behavior-map/SKILL.md) skill. Keeping it honest is
 mechanical, so Context Kit does that: whether every state cites a real behavior,
-which behaviors in scope no state covers, whether labels are in plain words, and
-how the map is drawn. Context Kit never runs tests, checkers or models; it reads
-OpenSpec specs only through the pinned OpenSpec CLI and linked-intent development
-spec files as plain text.
+which behaviors in scope no state covers, whether a cited behavior changed since
+someone reviewed the map, whether labels are in plain words, and how the map is
+drawn. Context Kit never runs tests, checkers or models; it reads OpenSpec specs
+only through the pinned OpenSpec CLI and linked-intent development spec files as
+plain text.
 
 The `maps` addon provides the operations and the skill. It is opt-in: enable it
 with `init --addons maps,...` or in `context-kit.json`. The `maps` help topic
@@ -38,16 +39,23 @@ with `init --addons maps,...` or in `context-kit.json`. The `maps` help topic
 3. **Check.** `maps check [<name>]` (MCP `check_map`) reports errors (schema,
    structure, an uncited state, a citation that names no behavior or more than
    one, a label that reads as code or spec language) and warnings (a scenario in
-   scope nothing covers, an outdated diagram). The CLI exits non-zero on an error,
+   scope nothing covers, a citation not yet pinned or changed since it was, an
+   outdated diagram). The CLI exits non-zero on an error,
    and with `--strict` on a warning too, so `context-kit maps check --strict` can
    gate CI.
 4. **Render.** `maps render <name>` (MCP `render_map`) draws a map with no errors
    as a Mermaid flowchart; `--format json` gives its normalized model with each
-   citation resolved to its kind, title and fingerprint. The same map and specs
+   citation resolved to its kind, title, fingerprint and pin state. The same map and specs
    always give byte-identical output.
 5. **Show it.** `maps render <name> --write` (CLI only) puts the diagram in the map
    file between generated-diagram markers, changing nothing else, so GitHub draws
    it. MCP offers only the read-only map tools, even with writes allowed.
+6. **Pin.** Once a person has reviewed the map, `maps pin <name>` (CLI only)
+   records each citation's fingerprint under the block's `pins`, changing nothing
+   else. When a cited spec changes, the check warns `stale` naming the state that
+   cites it, until someone reviews the map again and re-pins. Pins don't affect
+   the diagram, so pin, check, render and check converge, and pinning and
+   rendering again leave the file as it is.
 
 ## An example
 
@@ -72,7 +80,5 @@ to review.
 
 ## Later
 
-Planned in the `behavior-maps` change: pinning citations' fingerprints so a map
-says when a cited spec changed, hub maps of a
-persona's or team's working states, and declared status with evidence beside
-status derived from linked tests.
+Planned in the `behavior-maps` change: hub maps of a persona's or team's working
+states, and declared status with evidence beside status derived from linked tests.

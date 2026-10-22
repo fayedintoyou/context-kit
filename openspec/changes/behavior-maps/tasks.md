@@ -21,9 +21,9 @@ upstream, golden diagrams) under `test/e2e/fixtures/maps/`.
 
 ## 2. Slice `pins`
 
-- [ ] 2.1 `pin_map` (CLI only, write) rewriting only `pins` through `yaml`'s Document API; `unpinned` and `stale` warnings naming the citing elements
-- [ ] 2.2 Link tests to "Spec changed after pinning" (the rest of the file byte-identical after pinning) and "Pin and render converge"
-- [ ] 2.3 JSON `pin` per citation; skill and help: when to pin (after a person reviews the map)
+- [x] 2.1 `pin_map` (CLI only, write) rewriting only `pins` through `yaml`'s Document API; `unpinned` and `stale` warnings naming the citing elements
+- [x] 2.2 Link tests to "Spec changed after pinning" (the rest of the file byte-identical after pinning) and "Pin and render converge"
+- [x] 2.3 JSON `pin` per citation; skill and help: when to pin (after a person reviews the map)
 - [ ] 2.4 If `hub-maps` and `hub-federation` have both landed, test that `maps pin <mount>:/<id>` fails `UNKNOWN_MAP`; otherwise leave it to whichever of them lands last
 
 ## 3. Slice `lid-source`

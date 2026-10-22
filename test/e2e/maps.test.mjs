@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { parse as parseYaml } from 'yaml';
 
 const exec = promisify(execFile);
 const kit = await realpath(fileURLToPath(new URL('../../', import.meta.url)));
@@ -66,6 +67,7 @@ async function fixture(t, name = 'pigeon') {
 const mapText = (title, block) => `---\ntype: BehaviorMap\ntitle: ${title}\n---\n\n# ${title}\n\n\`\`\`yaml map\n${block.trim()}\n\`\`\`\n`;
 const report = (result, name = 'alerts') => result.json.maps.find(map => map.map === name);
 const codes = entries => entries.map(entry => entry.code);
+const notPin = entry => !['unpinned', 'stale'].includes(entry.code);
 const withoutDiagram = text => text.slice(0, text.indexOf(marker)) + text.slice(text.indexOf(endMarker) + endMarker.length);
 
 // spec: behavior-sources / Unknown source
@@ -239,7 +241,8 @@ test('a scenario in scope that nothing cites is an uncovered warning on a valid 
   assert.equal(checked.code, 0);
   const map = report(checked);
   assert.equal(map.valid, true);
-  assert.deepEqual(map.warnings.map(({ code, element }) => [code, element]), [['uncovered', 'alerts / Badge clears when read']]);
+  // The new citation has no pin yet, which is its own warning.
+  assert.deepEqual(map.warnings.map(({ code, element }) => [code, element]), [['uncovered', 'alerts / Badge clears when read'], ['unpinned', 'badge']]);
 });
 
 // spec: behavior-maps / Scope narrowed to a requirement
@@ -260,9 +263,9 @@ transitions:
   - { from: badge, to: seen }`;
   await writeFile(mapFile, mapText('Mentions', block('alerts / Mention badge')));
   const narrowed = report(await checkBoth('alerts'));
-  assert.deepEqual([narrowed.valid, narrowed.errors, narrowed.warnings], [true, [], []]);
+  assert.deepEqual([narrowed.valid, narrowed.errors, narrowed.warnings.filter(notPin)], [true, [], []]);
   await writeFile(mapFile, mapText('Mentions', block('alerts')));
-  assert.deepEqual(report(await checkBoth('alerts')).warnings.map(({ code, element }) => [code, element]),
+  assert.deepEqual(report(await checkBoth('alerts')).warnings.filter(notPin).map(({ code, element }) => [code, element]),
     [['uncovered', 'alerts / Quiet dot for a room post']]);
 });
 
@@ -298,7 +301,7 @@ test('--strict fails on warnings while the report stays the same', async t => {
   assert.equal(strict.code, 1);
   assert.equal(strict.error, undefined);
   assert.equal(strict.stdout, plain.stdout);
-  assert.deepEqual(codes(report(plain).warnings), ['uncovered']);
+  assert.deepEqual(codes(report(plain).warnings), ['uncovered', 'unpinned']);
   assert.deepEqual(await mcp('check_map', {}), plain.json);
 });
 
@@ -334,7 +337,7 @@ test('JSON rendering lists nodes and transitions in file order with resolved cit
     ['dot', 'seen', null], ['badge', 'seen', null]]);
   const behaviors = new Map((await cli('maps', 'behaviors', '--source', 'openspec')).json.behaviors.map(item => [item.id, item]));
   const badge = behaviors.get('alerts / Mention badge');
-  assert.deepEqual(json.nodes[3].cites, [{ id: badge.id, kind: 'requirement', title: 'Mention badge', fingerprint: badge.fingerprint }]);
+  assert.deepEqual(json.nodes[3].cites, [{ id: badge.id, kind: 'requirement', title: 'Mention badge', fingerprint: badge.fingerprint, pin: 'current' }]);
   assert.deepEqual(json.nodes[0].cites, []);
   assert.equal((await cli('maps', 'render', 'alerts', '--format', 'json')).stdout, rendered.stdout);
   assert.deepEqual(await mcp('render_map', { map: 'alerts', format: 'json' }), json);
@@ -676,4 +679,99 @@ nodes:
 transitions: []`));
   const checked = report(await checkBoth('sign-in'), 'sign-in');
   assert.deepEqual(checked.errors.map(({ code, element }) => [code, element]), [['schema', 'source']]);
+});
+
+// The map's text with its pins entry taken out, to show pinning changed nothing else.
+const withoutPins = text => text.replace(/^pins:\r?\n(?: {2}.*\r?\n)*/m, '');
+const pinWarnings = map => map.warnings.filter(entry => !notPin(entry)).map(({ code, element }) => [code, element]);
+
+// spec: behavior-maps / Spec changed after pinning
+test('a cited scenario edited after pinning is stale in the check and the JSON until pinned again', async t => {
+  const { cli, mcp, mapFile, specFile, original, editMap, checkBoth } = await fixture(t);
+  const spec = await readFile(specFile, 'utf8');
+  await editMap(text => text.replace('cites: [alerts / Room post without a mention]', 'cites: [alerts / Quiet dot for a room post]'));
+  const edited = await readFile(mapFile, 'utf8');
+  assert.deepEqual(pinWarnings(report(await checkBoth('alerts'))), [['unpinned', 'dot']]);
+  const pinned = await cli('maps', 'pin', 'alerts');
+  assert.deepEqual(pinned.json, { map: 'alerts', file: 'maps/alerts.md', written: true });
+  const afterPin = await readFile(mapFile, 'utf8');
+  assert.equal(withoutPins(afterPin), withoutPins(edited));
+  assert.ok(afterPin.includes('  alerts / Quiet dot for a room post: '));
+  assert.ok(!afterPin.includes('alerts / Room post without a mention:'), 'a pin nothing cites is dropped');
+  assert.deepEqual(report(await checkBoth('alerts')).warnings, []);
+
+  await writeFile(specFile, spec.replace('a dot appears beside the room', 'a grey dot appears beside the room'));
+  const stale = report(await checkBoth('alerts'));
+  assert.equal(stale.valid, true);
+  assert.deepEqual(pinWarnings(stale), [['stale', 'dot']]);
+  assert.match(stale.warnings[0].message, /alerts \/ Quiet dot for a room post/);
+  const pins = cites => Object.fromEntries(cites.flatMap(node => node.cites.map(cite => [`${node.id}: ${cite.id}`, cite.pin])));
+  const json = (await cli('maps', 'render', 'alerts', '--format', 'json')).json;
+  assert.deepEqual(await mcp('render_map', { map: 'alerts', format: 'json' }), json);
+  assert.deepEqual(pins(json.nodes), { 'dot: alerts / Quiet dot for a room post': 'stale', 'badge: alerts / Mention badge': 'current' });
+  assert.equal(await readFile(mapFile, 'utf8'), afterPin, 'checking and rendering never write');
+
+  assert.equal((await cli('maps', 'pin', 'alerts')).json.written, true);
+  assert.equal(withoutPins(await readFile(mapFile, 'utf8')), withoutPins(edited));
+  assert.deepEqual(report(await checkBoth('alerts')).warnings, []);
+  assert.deepEqual(pins((await cli('maps', 'render', 'alerts', '--format', 'json')).json.nodes),
+    { 'dot: alerts / Quiet dot for a room post': 'current', 'badge: alerts / Mention badge': 'current' });
+
+  // Pinning an unpinned map adds only the pins entry, in citation order, whatever the line endings.
+  await writeFile(specFile, spec);
+  for (const eol of ['\n', '\r\n']) {
+    await writeFile(mapFile, withoutPins(original).replace(/\n/g, eol));
+    assert.deepEqual(pinWarnings(report(await checkBoth('alerts'))), [['unpinned', 'dot'], ['unpinned', 'badge']]);
+    assert.equal((await cli('maps', 'pin', 'alerts')).json.written, true);
+    assert.equal(await readFile(mapFile, 'utf8'), original.replace(/\n/g, eol));
+  }
+  // Comments and the other keys keep their bytes; an existing pins entry is rewritten in place.
+  const pinsText = original.match(/pins:\n(?: {2}.*\n)*/)[0];
+  const commented = original.replace('scope: [alerts]', 'scope: [alerts]  # the whole capability');
+  await writeFile(mapFile, commented.replace(pinsText, 'pins: { alerts / Room post without a mention: abcdefabcdef } # reviewed\n'));
+  assert.deepEqual(pinWarnings(report(await checkBoth('alerts'))), [['stale', 'dot'], ['unpinned', 'badge']]);
+  await cli('maps', 'pin', 'alerts');
+  assert.equal(await readFile(mapFile, 'utf8'), commented.replace(pinsText, pinsText.replace(/\n$/, ' # reviewed\n')));
+});
+
+// spec: behavior-maps / Pin and render converge
+test('pin, check, render and check converge, and pinning and rendering again change nothing', async t => {
+  const { cli, mapFile, original, checkBoth } = await fixture(t);
+  await writeFile(mapFile, withoutPins(original).replace('label: The room shows a number badge', 'label: A number badge appears on the room'));
+  assert.deepEqual(codes(report(await checkBoth('alerts')).warnings), ['unpinned', 'unpinned', 'diagram_outdated']);
+  assert.equal((await cli('maps', 'pin', 'alerts')).json.written, true);
+  assert.deepEqual(codes(report(await checkBoth('alerts')).warnings), ['diagram_outdated']);
+  assert.equal((await cli('maps', 'render', 'alerts', '--write')).json.written, true);
+  const second = await checkBoth('alerts');
+  assert.deepEqual(report(second).warnings, []);
+  assert.equal((await cli('maps', 'check', 'alerts', '--strict')).code, 0);
+  const converged = await readFile(mapFile, 'utf8');
+  assert.equal((await cli('maps', 'pin', 'alerts')).json.written, false);
+  assert.equal((await cli('maps', 'render', 'alerts', '--write')).json.written, false);
+  assert.equal(await readFile(mapFile, 'utf8'), converged);
+});
+
+test('pinning is CLI-only, needs an explicit root and refuses a map it cannot pin without other changes', async t => {
+  const { root, env, cli, mcp, mapFile, editMap } = await fixture(t);
+  assert.equal((await mcp('pin_map', { map: 'alerts' })).error.code, 'UNKNOWN_OPERATION');
+  const implicit = await exec(process.execPath, [join(kit, 'bin/hub.mjs'), 'maps', 'pin', 'alerts'], { cwd: root, env }).catch(error => error);
+  assert.equal(JSON.parse(implicit.stderr).error.code, 'WRITE_DISABLED');
+  assert.equal((await cli('maps', 'pin', 'sign-out')).error.code, 'UNKNOWN_MAP');
+
+  await editMap(text => withoutPins(text).replace('cites: [alerts / Mention badge]', 'cites: [alerts / Badge on mention]'));
+  const broken = await readFile(mapFile, 'utf8');
+  const refused = await cli('maps', 'pin', 'alerts');
+  assert.equal(refused.error.code, 'INVALID_INPUT');
+  assert.match(refused.error.message, /maps check alerts/);
+  assert.equal(await readFile(mapFile, 'utf8'), broken);
+
+  // A block written as one flow mapping has no line of its own for pins, so it is refused.
+  const block = 'version: 1\nsource: { kind: openspec }\nscope: [alerts]\nnodes:\n  - { id: posted, kind: start, label: A teammate posts }\n  - { id: badge, label: The room shows a number badge, cites: [alerts / Mention badge] }\n  - { id: seen, kind: end, label: You have seen it }\ntransitions:\n  - { from: posted, to: badge }\n  - { from: badge, to: seen }';
+  const flow = mapText('Flow', JSON.stringify(parseYaml(block)));
+  await writeFile(mapFile, flow);
+  assert.equal((await cli('maps', 'check', 'alerts')).json.valid, true);
+  const flowRefused = await cli('maps', 'pin', 'alerts');
+  assert.equal(flowRefused.error.code, 'INVALID_INPUT');
+  assert.match(flowRefused.error.message, /block mapping/);
+  assert.equal(await readFile(mapFile, 'utf8'), flow);
 });
