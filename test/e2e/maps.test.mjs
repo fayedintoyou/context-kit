@@ -586,6 +586,42 @@ test('fenced code at any indentation is never an entry, and an entry-like item t
   assert.match(listed.json.skipped[1].reason, /not a linked-intent ID/);
 });
 
+test('code blocks opened on a list line, indented at the top level or in a block quote hold no entries', async t => {
+  const { root, cli, mcp } = await fixture(t, 'lid');
+  await writeFile(join(root, 'docs/specs/examples-specs.md'), [
+    '## Examples', '',
+    '    ```',
+    '    - [x] **A-001**: Indented code at the top level, not a fence that never closes.', '',
+    '- [x] **A-001**: The real entry.',
+    '- ```markdown',
+    '  - [x] **A-001**: An example opened on a list line.',
+    '  ```',
+    '1. ```',
+    '   - [x] **A-001**: An example in an ordered item.',
+    '   ```',
+    '- Nested:',
+    '  - ```',
+    '    - [x] **A-001**: An example in a nested item.',
+    '    ```', '',
+    '> ```',
+    '> - [x] **A-001**: An example in a block quote.',
+    '> ```', '',
+    '> - Quoted list:',
+    '>   ```',
+    '>   - [x] **A-001**: An example in a list in a block quote.',
+    '>   ```', '',
+    '- [ ] **A-002**: Listed: nothing above swallowed it.',
+    '- [x] **ＡＵＴＨ-００１**: Full-width letters are no ID.', ''].join('\n'));
+  const listed = await lidListing(cli, mcp);
+  const added = listed.json.behaviors.filter(behavior => behavior.file === 'docs/specs/examples-specs.md');
+  assert.deepEqual(added.map(({ id, marker, text }) => [id, marker, text]), [
+    ['A-001', 'implemented', 'The real entry.'], ['A-002', 'gap', 'Listed: nothing above swallowed it.']]);
+  assert.deepEqual(listed.json.skipped.map(({ file, line, id }) => [file, line, id]), [['docs/specs/examples-specs.md', 28, 'ＡＵＴＨ-００１']]);
+  // A label that only looks like an ID in another script is reported too, even without a marker.
+  await writeFile(join(root, 'docs/specs/examples-specs.md'), '- **ＡＵＴＨ-００２**: Unmarked.\n- **Notes**: Not reported.\n');
+  assert.deepEqual((await lidListing(cli, mcp)).json.skipped.map(({ id }) => id), ['ＡＵＴＨ-００２']);
+});
+
 test('the lid source never follows a symlink and takes no store', async t => {
   const { base, root, cli, mcp, checkBoth } = await fixture(t, 'lid');
   const outside = join(base, 'outside');

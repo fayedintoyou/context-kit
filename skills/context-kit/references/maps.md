@@ -48,9 +48,10 @@ line. Each entry has `kind`
 `entry`, `title` (the nearest `##` heading, then the ID), `text`, `file`,
 `fingerprint` and `marker`: `implemented`, `gap`, `deferred` or `none`. The
 marker isn't part of the text, so marking an entry implemented keeps its
-fingerprint. Fenced code blocks, at any indentation, and other lines are ignored. A
+fingerprint. Code blocks, fenced or indented, in lists and block quotes too, are found
+as CommonMark reads them and never hold entries; other lines are ignored. A
 list item that looks like an entry but has no valid ID or marker (`[X]`,
-`**auth-001**`) is not listed but reported in `skipped` with its `file`, `line`,
+`**auth-001**`, `**ＡＵＴＨ-００１**`) is not listed but reported in `skipped` with its `file`, `line`,
 `id` and `reason`. An ID defined twice fails
 with `INVALID_SOURCE` naming both places (`file:line`). Files are read as text,
 never executed, and never through a symlink: a symlinked file or directory is
