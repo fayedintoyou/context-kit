@@ -408,10 +408,46 @@ test('a newer same-named check run that cannot be joined to a workflow run refus
   const result = await land(routes({ runs: [checkRun(101, 'test', 900), checkRun(140, 'test', 999, 'failure')] }), LAND);
   refused(result, 'EVIDENCE_INCOMPLETE');
   assert.match(result.error.message, /can't be traced/);
-  // An unjoined check run alone never passes an Actions entry.
-  refused(await land(routes({ runs: [checkRun(140, 'test', 999)] }), LAND), 'CHECKS_MISSING');
   // An older unjoined one doesn't matter.
   landed(await land(routes({ runs: [checkRun(90, 'test', 999, 'failure'), checkRun(101, 'test', 900)] }), LAND));
+});
+
+// spec: pull-request-landing / A workflow run indexed late
+test('--wait polls until GitHub lists the workflow run behind a finished check, then lands', async t => {
+  const { land } = await machine(t);
+  const runs = `GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`;
+  const workflows = `GET ${R}/actions/runs?head_sha=${A}&per_page=100`;
+  const lagging = routes();
+  // As on #55 and #56: the check run is done, but the head_sha listing hasn't caught up.
+  lagging[runs] = [lagging[runs][0], lagging[runs][0], lagging[runs][0]];
+  lagging[workflows] = [workflowPages([]), lagging[workflows][0], lagging[workflows][0]];
+  const result = await land(lagging, [...LAND, '--wait', '--timeout', '0.02']);
+  const json = landed(result);
+  assert.deepEqual(json.checks.map(check => [check.state, check.id]), [['passed', 101]]);
+  assert.equal(result.keys.filter(key => key === workflows).length, 3, 'read, polled once, then refreshed');
+});
+
+// spec: pull-request-landing / An untraced check without waiting
+test('a check run no workflow run claims yet refuses CHECKS_UNTRACEABLE, never passing', async t => {
+  const { land } = await machine(t);
+  const untraced = routes({ workflows: [] });
+  let result = await land(untraced, LAND);
+  refused(result, 'CHECKS_UNTRACEABLE');
+  assert.match(result.error.message, /hasn't indexed the workflow run.*--wait: test \(github-actions/);
+  assert.deepEqual(result.error.details.checks.map(check => [check.state, check.untraced]), [['untraced', [101]]]);
+  // The same job traced to its push run while its pull_request run isn't listed yet.
+  const halfIndexed = routes({ runs: [checkRun(101, 'test', 902), checkRun(102, 'test', 903)], workflows: [workflowRun(52, 902, '.github/workflows/checks.yml', 'push')] });
+  refused(await land(halfIndexed, LAND), 'CHECKS_UNTRACEABLE');
+  // With --wait it never passes untraced: it times out with the same code.
+  const never = routes({ workflows: [] });
+  never[`GET ${R}/commits/${A}/check-runs?filter=all&per_page=100`] = [checkPages([checkRun(101, 'test', 999)]), checkPages([checkRun(101, 'test', 999)])];
+  result = await land(never, [...LAND, '--wait', '--timeout', '0.02']);
+  refused(result, 'CHECKS_UNTRACEABLE');
+  assert.match(result.error.message, /timed out waiting/);
+  // A check with no run at all is still missing, and --wait doesn't wait for it.
+  result = await land(routes({ runs: [checkRun(120, 'lint', 900)] }), [...LAND, '--wait', '--timeout', '0.02']);
+  refused(result, 'CHECKS_MISSING');
+  assert.equal(result.keys.filter(key => key.includes('check-runs')).length, 1, 'refused on the first read');
 });
 
 // spec: pull-request-landing / A re-run supersedes a failure
