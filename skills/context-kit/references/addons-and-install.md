@@ -61,7 +61,11 @@ npm run agents -- uninstall [--agent claude,codex]
 - `install` is a sync: rerun it after changing addons or upgrading the core.
 - It never overwrites or removes a skill it did not create or that you edited;
   `--force` overrides. A copy is built beside its destination and swapped in by
-  rename, so a failure leaves the previous copy in place.
+  rename, so a failure leaves the previous copy in place; leftovers older than an
+  hour from an interrupted install are swept on the next one. A skill, hook or
+  settings file that can't be written is reported `failed` with a code
+  (`NOT_WRITABLE`, `WRITE_FAILED`, `NOT_READABLE`, `READ_FAILED`) rather than
+  stopping the install, and what was already done stays recorded.
 - `--link` symlinks skills so edits apply immediately (not possible in the shared
   location when a skill needs adapted frontmatter).
 - Project scope keeps Claude Code's server private to the project; Codex needs

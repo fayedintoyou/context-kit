@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, chmod, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, rename, rm, realpath, symlink } from 'node:fs/promises';
+import { access, chmod, lstat, mkdtemp, mkdir, writeFile, readFile, readdir, rename, rm, realpath, symlink, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -516,7 +516,10 @@ test('uninstalling one harness keeps the shared copies another still uses', asyn
 
 // Records as a core from before the shared location wrote them: Codex skills under
 // <codexHome>/skills, each naming one agent and no location.
+// The old core kept Codex's five keys, the standard set less `compatibility`. No bundled skill
+// declares `compatibility`, so its copies were byte-identical to today's shared ones.
 async function legacyCodexInstall({ env, workspace, agents }, codexHome) {
+  for (const name of BUNDLED) assert.doesNotMatch(await readFile(join(kit, 'skills', name, 'SKILL.md'), 'utf8'), /^compatibility:/m, name);
   assert.equal((await agents('install', '--agent', 'codex')).code, 0);
   const legacy = join(codexHome, 'skills');
   await mkdir(codexHome, { recursive: true });
@@ -651,4 +654,44 @@ test('legacy Codex copies are moved from the recorded directory, not today\'s $C
   assert.deepEqual(await readdir(join(env.HOME, '.codex/skills')), ['reflect']);
   assert.equal(await readFile(join(env.HOME, '.codex/skills/reflect/SKILL.md'), 'utf8'), 'mine');
   assert.deepEqual((await readdir(join(env.HOME, '.agents/skills'))).sort(), BUNDLED);
+});
+
+// spec: agent-installation / Upgrade an existing Codex install
+test('a hook that cannot be written still leaves the move recorded, so the next install is clean', async t => {
+  if (process.getuid?.() === 0) return t.skip('permissions do not bind root');
+  const machine = await fixture(t);
+  const { base, env, workspace, agents } = machine;
+  const legacy = await legacyCodexInstall(machine, join(base, 'codex'));
+  await promisify(execFile)('git', ['init', '-q'], { cwd: workspace });
+  const hooks = join(workspace, '.git/hooks');
+  await mkdir(hooks, { recursive: true });
+  await chmod(hooks, 0o555);
+  const upgraded = await agents('install', '--agent', 'codex');
+  await chmod(hooks, 0o755);
+  assert.equal(upgraded.code, 0, JSON.stringify(upgraded.error));
+  assert.deepEqual(upgraded.json.results.filter(item => item.kind === 'hook').map(item => [item.name, item.action, item.code]),
+    [['post-merge', 'failed', 'NOT_WRITABLE'], ['post-rewrite', 'failed', 'NOT_WRITABLE']]);
+  assert.deepEqual(await readdir(legacy), []);
+  const shared = join(env.HOME, '.agents/skills');
+  assert.deepEqual((await records(workspace)).map(item => item.path).sort(), BUNDLED.map(name => join(shared, name)));
+  const again = await agents('install', '--agent', 'codex');
+  assert.ok(again.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'unchanged'), JSON.stringify(again.json.results));
+  assert.deepEqual(again.json.results.filter(item => item.kind === 'hook').map(item => item.action), ['installed', 'installed']);
+  const removed = await agents('uninstall');
+  assert.ok(removed.json.results.filter(item => item.kind === 'skill').every(item => item.action === 'removed'));
+  assert.deepEqual(await readdir(shared), []);
+});
+
+test('install sweeps copies an interrupted install left behind, but not recent ones', async t => {
+  const { env, agents } = await fixture(t);
+  const shared = join(env.HOME, '.agents/skills');
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  const stale = join(shared, '.context-kit-reflect-123-1700000000000-old');
+  const recent = join(shared, '.context-kit-reflect-456-1700000000001');
+  for (const path of [stale, recent]) { await mkdir(path); await writeFile(join(path, 'SKILL.md'), 'left over'); }
+  const hourAgo = new Date(Date.now() - 2 * 3600000);
+  await utimes(stale, hourAgo, hourAgo);
+  assert.equal((await agents('install', '--agent', 'codex')).code, 0);
+  assert.equal(await exists(stale), false);
+  assert.ok(await exists(recent));
 });
