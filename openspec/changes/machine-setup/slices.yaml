@@ -22,6 +22,7 @@ slices:
     title: Gemini CLI, Copilot CLI and Cursor, with discovery checks
     implements:
       - agent-installation / Supported harnesses
+      - agent-installation / Missing agents
       - agent-installation / Copies a harness may see twice
       - agent-installation / Harness discovery checks
       - agent-installation / Gemini CLI registration
