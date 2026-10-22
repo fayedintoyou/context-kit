@@ -25,6 +25,10 @@ CLI: `context-kit [--root <dir>] <command>`; inside a workspace, `npm run hub --
 | `repos scan <directory>` | | Records matching checkouts down to `--depth` levels (default 1, at most 6; CLI only) |
 | `repos setup` | | Sets up a new machine: scans (`--scan`, `--depth`), clones only what `--clone` names or a prompt approves (`--ask`), refreshes the skill (CLI only) |
 | `repos sync` | | Rebuilds the `my-repos` skill from Repository concepts (CLI only) |
+| `mounts` | `list_mounts` | Mounted hubs from other repositories: pin, status and trust counts (see `mounts`) |
+| `mounts add <name> <source>` | | Pins and fetches a hub from another repository (`--ref`, `--path`; CLI only) |
+| `mounts fetch [<name>]` | | Fetches mounts at their pinned commits (CLI only) |
+| `mounts remove <name>` | | Removes a mount and its fetched content (CLI only) |
 | `skills` | `list_skills` | Declared skills |
 | `read-skill <hub> <reference>` | `read_skill` | A skill or its files (`--file`) |
 | `specs stores` | `list_spec_stores` | Readable shared stores (specs addon) |
