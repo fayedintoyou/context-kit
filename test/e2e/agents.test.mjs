@@ -18,6 +18,8 @@ const fake = (base, agent) => `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(join(base, 'calls.jsonl'))}, JSON.stringify({ agent: ${JSON.stringify(agent)}, cwd: process.cwd(), args }) + '\\n');
+// The git variables it was started with, apart from the calls.
+fs.appendFileSync(${JSON.stringify(join(base, 'agent-git-env.jsonl'))}, JSON.stringify(Object.keys(process.env).filter(key => key.startsWith('GIT_'))) + '\\n');
 const file = ${JSON.stringify(join(base, `${agent}-servers.json`))};
 const servers = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
 const rest = args.slice(1).filter((arg, i, all) => arg !== '-s' && all[i - 1] !== '-s');
@@ -402,6 +404,39 @@ test('a pull that brings a new repository rebuilds the installed my-repos skill'
   const status = await agents('status');
   assert.ok(status.json.items.every(item => item.state === 'installed'), JSON.stringify(status.json.items));
   assert.deepEqual(status.json.items.filter(item => item.kind === 'hook').map(item => item.name), ['post-merge', 'post-rewrite']);
+});
+
+// spec: agent-installation / A pull rebuilds the skill
+test('agents install with another repository\'s GIT_DIR inherited writes the sync hooks only into the workspace checkout', async t => {
+  const { base, workspace, run } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const { git, other } = await gitWorkspace(base, workspace);
+  // Repository A, whose hook or shell exported its location.
+  const a = join(base, 'a');
+  await mkdir(a);
+  await git(a, 'init', '-q', '-b', 'main');
+  for (const extra of [{ GIT_DIR: join(a, '.git') }, { GIT_DIR: join(a, '.git'), GIT_WORK_TREE: a, GIT_INDEX_FILE: join(a, '.git/index'), GIT_CONFIG_PARAMETERS: `'core.hooksPath'='${join(a, 'hooks')}'` }]) {
+    const installed = await run(['--root', workspace, 'agents', 'install'], extra);
+    assert.equal(installed.code, 0, JSON.stringify(installed.error));
+    const hooks = installed.json.results.filter(item => item.kind === 'hook');
+    assert.deepEqual(hooks.map(item => [item.name, item.path]), [['post-merge', join(workspace, '.git/hooks/post-merge')], ['post-rewrite', join(workspace, '.git/hooks/post-rewrite')]]);
+    for (const name of ['post-merge', 'post-rewrite']) {
+      assert.equal(await exists(join(a, '.git/hooks', name)), false, name);
+      assert.equal(await exists(join(a, 'hooks', name)), false, name);
+    }
+  }
+  // The agent CLIs it ran got the scrubbed environment too.
+  const seen = (await readFile(join(base, 'agent-git-env.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.ok(seen.length > 0);
+  assert.deepEqual([...new Set(seen.flat())], []);
+  assert.match(await readFile(join(workspace, '.git/hooks/post-merge'), 'utf8'), /repos sync/);
+  // The hooks it wrote are the workspace's: a pull there rebuilds the skill.
+  await repository(other, 'garden', { title: 'the garden', resource: 'https://github.com/me/garden' });
+  await git(other, 'add', '-A');
+  await git(other, 'commit', '-qm', 'garden');
+  await git(other, 'push', '-q');
+  await git(workspace, 'pull', '-q', '--no-rebase');
+  assert.match(await readFile(join(skillsOf(base, 'claude'), 'my-repos/SKILL.md'), 'utf8'), /the garden/);
 });
 
 // spec: agent-installation / Existing hooks are kept

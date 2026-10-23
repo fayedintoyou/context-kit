@@ -822,6 +822,25 @@ test('reconcile and packets read party links at the party base and at an in-prog
     [{ key: 'locations / Use Radius', file: 'checks/odd\nname.ts', line: 1 }, { key: 'locations / Use Radius', file: 'checks/radius.spec.ts', line: 3 }]);
 });
 
+// spec: change-progress / Party tests are found
+test('party links are read the same whatever pathspec or trace variables the kit inherits', async t => {
+  const { cli, env, checkouts: { game } } = await storeFixture(t);
+  // game links a scenario; site links none, so its grep finds no match.
+  await commitTo(game, 'storage', { 'checks/radius.spec.ts': "// spec: shared:locations / Use Radius\nit('radius', () => {});\n" });
+  await game.git('push', '-q', 'origin', 'main');
+  const expected = await reconcile(cli);
+  assert.deepEqual(expected.untested.links.map(link => link.key), ['locations / Use Radius']);
+  assert.ok(expected.untested.reads.every(read => read.status === 'collected'), JSON.stringify(expected.untested.reads));
+  // GIT_LITERAL_PATHSPECS=1 would make the whole-tree pathspec a literal path matching nothing;
+  // trace output on stderr would make a grep with no match look like a failure.
+  for (const extra of [{ GIT_LITERAL_PATHSPECS: '1' }, { GIT_GLOB_PATHSPECS: '1' }, { GIT_NOGLOB_PATHSPECS: '1' }, { GIT_ICASE_PATHSPECS: '1' },
+    { GIT_TRACE: '1' }, { GIT_TRACE_PACKET: '1', GIT_TRACE_SETUP: '1', GIT_TRACE_PERFORMANCE: '1' }, { GIT_TRACE2: '1', GIT_TRACE2_PERF: '1', GIT_TRACE2_EVENT: '1' }]) {
+    Object.assign(env, extra);
+    try { assert.deepEqual(await reconcile(cli), expected, JSON.stringify(extra)); }
+    finally { for (const name of Object.keys(extra)) delete env[name]; }
+  }
+});
+
 // spec: change-progress / Pull request with no local commit
 test('a slice in progress only through a pull request has its links not collected, and reconcile still reads the party base', async t => {
   const pr = { number: 12, state: 'OPEN', headRefName: 'embed-api', baseRefName: 'main', body: 'OpenSpec-Change: shared:embed\nOpenSpec-Slice: api\n', url: 'https://example.test/pr/12' };

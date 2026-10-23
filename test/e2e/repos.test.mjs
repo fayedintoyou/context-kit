@@ -1392,3 +1392,22 @@ test('repos which and repos sync from a linked workspace\'s post-merge hook, whe
   assert.equal(direct.repository?.id, 'personal/main/room');
   assert.equal(direct.checkout, top);
 });
+
+// spec: repository-registry / Clone and record
+test('repos clone keeps the user\'s git config file (insteadOf, credential helpers) and ignores an inherited GIT_DIR and injected config', async t => {
+  const f = await fixture(t);
+  await f.register('personal', 'garden', { title: 'garden', resource: 'https://github.com/me/garden' });
+  const bare = (await f.upstream('garden')).slice('file://'.length);
+  // The user's own global config, as GIT_CONFIG_GLOBAL names it: rewrites the upstream to the local bare copy.
+  const config = join(f.base, 'user.gitconfig');
+  await writeFile(config, `[url "file://${bare}"]\n\tinsteadOf = https://github.com/me/garden\n[protocol "file"]\n\tallow = always\n`);
+  const other = await f.checkout(join(f.base, 'other'), { origin: 'https://github.com/someone/else' });
+  const env = { ...f.env, GIT_CONFIG_GLOBAL: config, GIT_DIR: join(other, '.git'), GIT_WORK_TREE: other,
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'url.file:///nowhere.insteadOf', GIT_CONFIG_VALUE_0: 'https://github.com/me/garden' };
+  const destination = join(f.base, 'code/garden');
+  const cloned = JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', f.workspace, 'repos', 'clone', 'garden', destination], { env })).stdout);
+  assert.equal(cloned.repository.status, 'located');
+  assert.equal(await readFile(join(destination, 'README.md'), 'utf8'), 'garden\n');
+  // The other checkout is untouched: no clone into it and no new remote.
+  assert.equal((await exec('git', ['-C', other, 'remote'], { env: f.env })).stdout.trim(), 'origin');
+});

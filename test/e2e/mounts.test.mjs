@@ -429,6 +429,11 @@ test('fetch failures never carry git output, even when insteadOf adds a token', 
   const fetched = await run(['--root', workspace, 'mounts', 'fetch'], env);
   assert.equal(fetched.json.mounts[0].error.code, 'FETCH_FAILED');
   assert.doesNotMatch(fetched.output, /s3cret/);
+  // Only GIT_CONFIG_COUNT/KEY/VALUE is the user's: what a parent `git -c` passes on is not applied.
+  seen.length = 0;
+  const inherited = await run(['--root', workspace, 'mounts', 'fetch'], { GIT_CONFIG_PARAMETERS: `'url.${origin}/inherited/.insteadof'='${origin}/declared/'` });
+  assert.equal(inherited.json.mounts[0].error.code, 'FETCH_FAILED');
+  assert.ok(seen.length > 0 && seen.every(url => url.startsWith('/declared/')), JSON.stringify(seen));
 });
 
 // spec: hub-federation / Fresh machine fetches its mounts
