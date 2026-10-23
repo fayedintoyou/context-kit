@@ -1,18 +1,24 @@
 # Behavior maps (maps addon)
 
 A behavior map draws what a person experiences as a journey: the states they see
-and the moves between them, each state citing the specs behind it. They resemble
+and the moves between them, each state citing the specs behind it. A map over a
+hub draws a team's or a persona's working states and decisions, each citing the
+hub concepts behind it. They resemble
 statecharts, but a map is a picture with citations, not a model to run. A model
 or a person drafts a map (the `behavior-map` skill says how); Context Kit checks
 and renders it deterministically, and never runs tests, checkers or models.
 
-Maps are read from the selected root (`--root <repository>`, as for `specs`).
+Maps are read from the selected root (`--root <repository>`, as for `specs`): its
+`maps/` and the workspace's own hubs (`hubs/` and `examples/`). Mounted hubs are
+not read: their maps aren't listed, `maps check`, `render` or `pin` of
+`<mount>:/<id>` fails with `UNKNOWN_MAP`, and `--source hub --hub <mount>` with
+`UNKNOWN_HUB`.
 
 | Task | CLI | MCP tool |
 |---|---|---|
-| What a map can cite | `maps behaviors --source openspec/lid [--store <id>]` | `list_behaviors` |
-| The repository's maps | `maps list` | `list_maps` |
-| Check one map, or all, with each node's statuses | `maps check [<map>] [--strict]` | `check_map` |
+| What a map can cite | `maps behaviors --source openspec/lid/hub [--store <id>] [--hub <id>] [--inbox] [--at <time>]` | `list_behaviors` |
+| The repository's and its hubs' maps | `maps list` | `list_maps` |
+| Check one map, or all, with each node's statuses | `maps check [<map>] [--strict] [--at <time>]` | `check_map` |
 | Draw a map | `maps render <map> [--format mermaid/json]` | `render_map` |
 | Write the diagram into the map file | `maps render <map> --write` | CLI only (`write_map_diagram`) |
 | Pin each citation's fingerprint | `maps pin <map>` | CLI only (`pin_map`) |
@@ -60,7 +66,29 @@ listed in `skipped` with its reason: `symlink`, `too large` (over 128 KiB) or
 `not UTF-8`. `--store` applies only to `openspec`
 (`INVALID_INPUT`).
 
+`--source hub --hub <hub-id>` reads one of the workspace's own hubs (otherwise
+`UNKNOWN_HUB`). Each concept, in path order, is a behavior `<hub-id>:/<concept-id>`
+(as `read` takes it) of `kind` `concept`, with `title`, `text` (the whole file,
+frontmatter included, which the `fingerprint` covers), `file`, `okf` (the trust
+summary: `type`, `status`, `trust`, `stale`, ...) and `freshness` (`action`
+`read`, `verify` or `refresh`, with its `reason` and `due`). `BehaviorMap`
+concepts are never listed: maps aren't behaviors. Inbox notes are listed only
+with `--inbox` (MCP `inbox: true`), marked `inbox: true`, and a map can't cite
+them. `--hub` and `--inbox` apply only to `hub` (`INVALID_INPUT`), and `hub`
+needs `--hub`.
+
 Any other source name fails with `INVALID_INPUT` naming the supported sources.
+
+## Evaluation instant
+
+Freshness depends on the clock, so `maps behaviors` and `maps check` take
+`--at <time>` (MCP `at`): an ISO 8601 timestamp with an explicit offset, such as
+`2026-03-01T09:00:00Z` or `2026-03-01T10:00:00+01:00`. Without one they use the
+current time. A time without an offset (`2026-03-01T09:00:00`, `2026-03-01`)
+fails with `INVALID_INPUT`, since it would mean different instants on different
+machines. Results that depend on it report the instant used, in UTC, as `at`: a
+`hub` listing, and the check report of each map over a hub. Rendering never
+depends on the clock and takes no `--at`.
 
 ## Map files
 
@@ -101,12 +129,14 @@ pins:
 ```
 ````
 
-- `source`: `{ kind: openspec }`, optionally with `store: <id>`, or
-  `{ kind: lid }`.
+- `source`: `{ kind: openspec }`, optionally with `store: <id>`, `{ kind: lid }`,
+  or `{ kind: hub, hub: <hub-id> }`.
 - `scope`: the behaviors the map should cover. For `openspec`, capabilities or
   `<capability> / <requirement>`; for `lid`, IDs or ID prefixes of whole segments
-  (`AUTH` or `AUTH-UI` covers `AUTH-UI-001`; `AUTH-U` covers nothing).
-- `cites`: for `lid`, entry IDs such as `AUTH-UI-001`.
+  (`AUTH` or `AUTH-UI` covers `AUTH-UI-001`; `AUTH-U` covers nothing); for `hub`,
+  directories of the hub (their concepts at any depth), or `""` for the whole hub.
+- `cites`: for `lid`, entry IDs such as `AUTH-UI-001`; for `hub`, concepts as
+  `<hub-id>:/<concept-id>`.
 - `nodes`: `id` (kebab-case), `label`, `kind` (`start`, `state`, `choice`, `end`;
   `state` when omitted), `cites`, a list of behavior IDs, and an optional
   declared `status` (see Status).
@@ -114,6 +144,15 @@ pins:
 - `vocabulary`: product words the label lint should accept as written.
 - `pins`: each citation's fingerprint when the map was last reviewed, written by
   `maps pin`; don't edit it by hand.
+
+A hub's maps are its concepts with `type: BehaviorMap` (not in `inbox/`), in the
+workspace's own hubs, named `<hub-id>:/<concept-id>` (such as
+`brightdesk/support:/maps/working-states`). `maps list` gives the repository's
+maps, then the hubs' maps; each is checked, rendered, written and pinned like a
+repository map, by that name. A hub map usually draws a team's or a persona's
+working states over its own hub (`source: { kind: hub, hub: <hub-id> }`), and
+since maps are never behaviors, a map scoped to the whole hub never lists itself
+or another map as `uncovered`, and citing one is `unknown_citation`.
 
 Every key is checked; an unknown one is an error. In YAML flow style (`{ ... }`),
 quote a label that contains a comma or starts with `@`, and an evidence item
@@ -179,10 +218,11 @@ reconciled. Results of test runs are not read.
 
 ## Check report
 
-`maps check` returns `{ root, valid, maps: [{ map, valid, errors, warnings, statuses }] }`,
+`maps check` returns `{ root, valid, maps: [{ map, valid, errors, warnings, statuses, at? }] }`,
 each error or warning `{ code, element, message }`, where the element is a node ID, a
 transition as `from -> to`, `scope`, `diagram` or a behavior ID. `statuses` maps
-each node ID to `{ declared?, derived }` (see Status).
+each node ID to `{ declared?, derived }` (see Status). `at` is the evaluation
+instant, given for a map over a hub.
 
 | Code | Kind | Means |
 |---|---|---|
@@ -198,6 +238,7 @@ each node ID to `{ declared?, derived }` (see Status).
 | `unpinned` | warning | An element cites a behavior the map has no pin for (one warning per citing element) |
 | `stale` | warning | An element cites a behavior whose fingerprint differs from its pin: its text changed since the map was pinned (one warning per citing element) |
 | `diagram_outdated` | warning | The generated diagram differs from a fresh rendering |
+| `context_stale` | warning | For a map over a hub: an element cites a concept that, at the evaluation instant, is due for a check (`verify`), out of date (`refresh`) or `deprecated`, with the reason (one warning per citing element). It never changes rendering |
 
 The CLI exits 1 when any map has an error, and with `--strict` also on any
 warning; the report is the same either way. MCP returns the report. A map whose
@@ -235,7 +276,8 @@ and `transitions` in file order with their kinds and labels, and each element's
 `stale` or `unpinned`, as the check reports it. Each node has its `status`
 (`{ declared?, derived }`, as the check reports it), and `fixes` lists the fix
 edges as `{ from, to }`. The same map, specs and test links give byte-identical
-output; nothing depends on the clock. Since derived statuses follow the test
+output; nothing depends on the clock, so a map over a hub renders the same before
+and after a cited concept goes out of date, and no output carries `context_stale`. Since derived statuses follow the test
 links, linking a test to a cited scenario can make a written diagram
 `diagram_outdated`.
 
