@@ -142,16 +142,19 @@ A declared `status` says what the map's author can show:
 
 - `evidence` lists at least one item: a repository path (relative to the root,
   without `.` or `..` segments; it must exist, and is looked up without
-  following symlinks, so it can't name anything outside the repository), a pull
+  following symlinks, so it can't name anything outside the repository; a
+  directory on its path replaced while it is checked is an error too), a pull
   request as `#<n>`, or an `https://` link. Anything else is `evidence_missing`.
 - `fixed_by` names the node that shows the fix, which must declare `fixed`
   (otherwise `fix_target`). The diagram draws a dashed "with the fix" edge
   between them, and the fix counts as reached through it.
 - `finder` is drawn in the key, so it is linted like a label (up to 40 characters).
 
-The derived status comes from the repository's test links, as `npm test` reads
-them (a `// spec: <capability> / <scenario>` comment directly above `test(` in
-`test/**/*.test.mjs`, or a `- spec:` line in `test/manual-checks.md`):
+The derived status comes from the repository's test links that `npm test`'s
+spec-links check accepts: a `// spec: <capability> / <scenario>` comment directly
+above `test(` in `test/e2e/**/*.test.mjs`, or in `test/unit/` with a `// because:`
+line, or a `- spec:` line in `test/manual-checks.md`. A link it rejects (not above
+a test, in another directory, or a unit test without its reason) counts for nothing:
 
 | Derived | When |
 |---|---|
@@ -161,7 +164,9 @@ them (a `// spec: <capability> / <scenario>` comment directly above `test(` in
 
 Each status is `{ state, origin, reason, evidence }`, with `origin` `declared` or
 `derived`. Declared evidence items are `{ kind: path|pull_request|link, value }`;
-derived ones are the linked tests, `{ kind: test, value: <file>:<line>, scenario }`.
+derived ones are the links, `{ kind: test, value: <file>:<line>, scenario }`, or
+`kind: manual_check` for a manual check, which counts as linked coverage as it does
+for `npm test`.
 A declared status also carries `found_by`, `finder`, `fixed_by` and `note` when
 given. A declared `works` beside a derived `untested` is shown as both, not
 reconciled. Results of test runs are not read.

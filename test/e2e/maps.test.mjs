@@ -599,6 +599,27 @@ test('derived status is tested or untested from linked tests, beside any declare
 });
 
 // spec: behavior-maps / Tested and untested states
+test('only links the test policy accepts make a state tested, and a manual check is evidence of its own kind', async t => {
+  const { root, mapFile, checkBoth } = await fixture(t);
+  await writeFile(mapFile, testedMap);
+  const derived = async id => report(await checkBoth('alerts')).statuses[id].derived;
+  const write = async (file, text) => { await mkdir(join(root, file, '..'), { recursive: true }); await writeFile(join(root, file), text); };
+  const link = scenario => `${'//'} spec: ${scenario}`;
+  // A test outside test/e2e and test/unit, and a unit test that doesn't say why, are not accepted links.
+  await write('test/integration/badge.test.mjs', `import test from 'node:test';\n${link('alerts / Badge counts mentions')}\ntest('x', () => {});\n`);
+  await write('test/unit/badge.test.mjs', `import test from 'node:test';\n${link('alerts / Badge counts mentions')}\ntest('x', () => {});\n`);
+  assert.equal((await derived('counted')).state, 'untested');
+  // A unit test with its reason is.
+  await write('test/unit/badge.test.mjs', `import test from 'node:test';\n${link('alerts / Badge counts mentions')}\n${'//'} because: the race needs a fake clock.\ntest('x', () => {});\n`);
+  assert.deepEqual(await derived('counted'), { state: 'tested', origin: 'derived', reason: 'every cited scenario has a linked test (1)',
+    evidence: [{ kind: 'test', value: 'test/unit/badge.test.mjs:2', scenario: 'alerts / Badge counts mentions' }] });
+  // A manual check counts, as it does for npm test, and says it is one.
+  await write('test/manual-checks.md', '# Manual checks\n\n- spec: alerts / Badge clears when read — Open a room with a badge and see it go.\n');
+  assert.deepEqual(await derived('cleared'), { state: 'tested', origin: 'derived', reason: 'every cited scenario has a linked test (1)',
+    evidence: [{ kind: 'manual_check', value: 'test/manual-checks.md:3', scenario: 'alerts / Badge clears when read' }] });
+});
+
+// spec: behavior-maps / Tested and untested states
 test('a declared fix stays declared beside a linked test that fails, which is never run', async t => {
   const { root, checkBoth, cli } = await fixture(t, 'pigeon-status');
   const ran = join(root, 'ran.txt');
