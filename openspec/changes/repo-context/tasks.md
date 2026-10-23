@@ -32,12 +32,12 @@
 
 ## 5. MCP availability (slice `mcp-check`)
 
-- [ ] 5.1 Add `--check-mcp` (MCP `checkMcp`, off by default) to `repos open` and `repos pack`, probing `claude mcp get` and `codex mcp get` with a timeout and never calling `mcp add` or `mcp remove`, with availability only in annotations; verify with `test/e2e/repo-context.test.mjs` linked to `Declared versus registered` and `No check by default`, using the logging fake agent CLIs from `test/e2e/agents.test.mjs`
-- [ ] 5.2 Document `--check-mcp`, and that Context Kit never installs declared servers, in the help references, and verify the help completeness test passes
+- [x] 5.1 Add `--check-mcp` (MCP `checkMcp`, off by default) to `repos open` and `repos pack`, probing `claude mcp get` and `codex mcp get` with a timeout and never calling `mcp add` or `mcp remove`, with availability only in annotations; verify with `test/e2e/repo-context.test.mjs` linked to `Declared versus registered` and `No check by default`, using the logging fake agent CLIs from `test/e2e/agents.test.mjs`
+- [x] 5.2 Document `--check-mcp`, and that Context Kit never installs declared servers, in the help references, and verify the help completeness test passes
 
 ## 6. Integration
 
-- [ ] 6.1 Run `npm test`, `node bin/hub.mjs validate`, `openspec validate repo-context --strict` and `specs archive --rehearse`, and check that every `repository-context` scenario is linked
+- [x] 6.1 Run `npm test`, `node bin/hub.mjs validate`, `openspec validate repo-context --strict` and `specs archive --rehearse`, and check that every `repository-context` scenario is linked
 
 ## Workflow follow-up
 

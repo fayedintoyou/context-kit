@@ -1458,3 +1458,110 @@ test('validate_hubs over HTTP reads no checkout: no git runs and the checkout wa
   assert.equal(local.json.warnings.length, 1);
   assert.ok(await readFile(marker).then(() => true, () => false));
 });
+
+// ---- MCP availability ---------------------------------------------------------------------------
+
+// A logging fake agent CLI, as in agents.test.mjs: every call (arguments, working directory and
+// the GIT_* variables it was given) goes to calls.jsonl; `mcp get <name>` exits 0 for a registered
+// name and 1 otherwise, after printing a secret to both streams. A name in `hang` sleeps and one
+// in `crash` kills itself.
+async function fakeAgents(base, agent, { registered = [], hang = [], crash = [] } = {}) {
+  const bin = join(base, 'agent-bin');
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, agent), `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(join(base, 'calls.jsonl'))}, JSON.stringify({ agent: ${JSON.stringify(agent)}, cwd: process.cwd(), args, git: Object.keys(process.env).filter(key => key.startsWith('GIT_')) }) + '\\n');
+const name = args[2];
+console.log('url https://mcp.example.com/?token=SECRET-TOKEN'); console.error('Authorization: Bearer SECRET-TOKEN');
+if (${JSON.stringify(hang)}.includes(name)) setTimeout(() => {}, 60000);
+else if (${JSON.stringify(crash)}.includes(name)) process.kill(process.pid, 'SIGKILL');
+else process.exit(args[0] === 'mcp' && args[1] === 'get' && ${JSON.stringify(registered)}.includes(name) ? 0 : 1);
+`);
+  await chmod(join(bin, agent), 0o755);
+  // Only the fake agents, git and the system tools: no real claude or codex.
+  for (const directory of ['/usr/bin', '/bin']) for (const cli of ['claude', 'codex']) assert.ok(!(await readdir(directory)).includes(cli), `${directory}/${cli}`);
+  const calls = async () => (await readFile(join(base, 'calls.jsonl'), 'utf8').catch(() => '')).split('\n').filter(Boolean).map(line => JSON.parse(line));
+  return { PATH: `${bin}:/usr/bin:/bin`, calls };
+}
+const TRACKER_CONTEXT = { mcp: ['orchard-tracker', 'docs-search'], packs: { release: { description: 'Cut a release.', files: ['CHANGELOG.md'], mcp: ['orchard-tracker', 'docs-search'] } } };
+
+// spec: repository-context / Declared versus registered
+test('with --check-mcp open and pack report each declared server per agent from its own mcp get, never adding or removing one', async t => {
+  const { base, cli, register, checkout, locate, stdio } = await fixture(t);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'], context: TRACKER_CONTEXT });
+  const path = await checkout(join(base, 'code/orchard'), ORCHARD, { 'AGENTS.md': '# Orchard\n', 'CHANGELOG.md': 'c\n' });
+  await locate('orchard', path);
+  const { PATH, calls } = await fakeAgents(base, 'claude', { registered: ['orchard-tracker'] });
+  const extra = { PATH, GIT_DIR: join(base, 'elsewhere') };
+  const expected = [
+    { agent: 'claude', label: 'Claude Code', servers: [{ name: 'docs-search', status: 'missing' }, { name: 'orchard-tracker', status: 'available' }] },
+    { agent: 'codex', label: 'Codex', servers: [{ name: 'docs-search', status: 'unknown', code: 'MCP_CLI_MISSING' }, { name: 'orchard-tracker', status: 'unknown', code: 'MCP_CLI_MISSING' }] }];
+
+  const opened = await cli(['repos', 'open', 'orchard', '--check-mcp'], { extra });
+  assert.equal(opened.code, 0, JSON.stringify(opened.error));
+  assert.deepEqual(opened.json.pointers.mcp, ['orchard-tracker', 'docs-search']);
+  assert.deepEqual(opened.json.mcpAvailability, expected);
+  assert.ok(compact(opened.json) <= 8192);
+
+  const plain = await cli(['repos', 'pack', 'orchard', 'release'], { extra: { PATH } });
+  const packed = await cli(['repos', 'pack', 'orchard', 'release', '--check-mcp'], { extra });
+  assert.equal(packed.code, 0, JSON.stringify(packed.error));
+  assert.deepEqual(packed.json.annotations.mcpAvailability, expected);
+  // Availability is an annotation: the payload and its hash don't change.
+  assert.deepEqual([packed.json.payload, packed.json.hash], [plain.json.payload, plain.json.hash]);
+  assert.ok(!('mcpAvailability' in packed.json.payload));
+
+  const client = await stdio(extra);
+  assert.deepEqual((await tool(client, { repository: 'orchard', checkMcp: true })).json.mcpAvailability, expected);
+  assert.deepEqual((await call(client, 'context_pack', { repository: 'orchard', pack: 'release', checkMcp: true })).json.annotations.mcpAvailability, expected);
+
+  const made = await calls();
+  assert.equal(made.length, 8);
+  for (const made_ of made) {
+    assert.deepEqual([made_.agent, made_.args.slice(0, 2), made_.cwd, made_.git], ['claude', ['mcp', 'get'], path, []]);
+    assert.ok(!made_.args.includes('add') && !made_.args.includes('remove'));
+  }
+  // The CLI's output is never repeated.
+  for (const result of [opened, packed]) assert.ok(!JSON.stringify(result).includes('SECRET'));
+});
+
+// spec: repository-context / Declared versus registered
+test('a probe that outlives its timeout or is killed is unknown with a fixed code, and without a checkout nothing is probed', async t => {
+  const { base, cli, register, checkout, locate } = await fixture(t);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'], context: { mcp: ['slow', 'crashes', 'here'] } });
+  await register('pear', { title: 'pear', resource: 'https://github.com/example/pear', context: { mcp: ['here'] } });
+  const path = await checkout(join(base, 'code/orchard'), ORCHARD, { 'AGENTS.md': '# Orchard\n' });
+  await locate('orchard', path);
+  const { PATH, calls } = await fakeAgents(base, 'claude', { registered: ['here'], hang: ['slow'], crash: ['crashes'] });
+  const started = Date.now();
+  const opened = await cli(['repos', 'open', 'orchard', '--check-mcp'], { extra: { PATH, CONTEXT_KIT_MCP_PROBE_MS: '500' } });
+  assert.equal(opened.code, 0, JSON.stringify(opened.error));
+  assert.ok(Date.now() - started < 20000);
+  assert.deepEqual(opened.json.mcpAvailability[0].servers, [
+    { name: 'crashes', status: 'unknown', code: 'MCP_CLI_KILLED' }, { name: 'here', status: 'available' }, { name: 'slow', status: 'unknown', code: 'MCP_CLI_TIMEOUT' }]);
+  const before = (await calls()).length;
+  const missing = await cli(['repos', 'open', 'pear', '--check-mcp'], { extra: { PATH } });
+  assert.equal(missing.json.status, 'missing');
+  assert.deepEqual(missing.json.mcpAvailability.map(entry => entry.servers), [[{ name: 'here', status: 'unknown', code: 'CHECKOUT_MISSING' }], [{ name: 'here', status: 'unknown', code: 'CHECKOUT_MISSING' }]]);
+  assert.equal((await calls()).length, before);
+});
+
+// spec: repository-context / No check by default
+test('without --check-mcp open and pack report the declared MCP names only and run no agent CLI', async t => {
+  const { base, cli, register, checkout, locate, stdio } = await fixture(t);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'], context: TRACKER_CONTEXT });
+  const path = await checkout(join(base, 'code/orchard'), ORCHARD, { 'AGENTS.md': '# Orchard\n', 'CHANGELOG.md': 'c\n' });
+  await locate('orchard', path);
+  const { PATH, calls } = await fakeAgents(base, 'claude', { registered: ['orchard-tracker'] });
+  await fakeAgents(base, 'codex', { registered: ['orchard-tracker'] });
+  const opened = await cli(['repos', 'open', 'orchard'], { extra: { PATH } });
+  assert.deepEqual(opened.json.pointers.mcp, ['orchard-tracker', 'docs-search']);
+  const packed = await cli(['repos', 'pack', 'orchard', 'release'], { extra: { PATH } });
+  assert.deepEqual(packed.json.payload.mcp, ['orchard-tracker', 'docs-search']);
+  const client = await stdio({ PATH });
+  const overMcp = [(await tool(client, { repository: 'orchard' })).json, (await call(client, 'context_pack', { repository: 'orchard', pack: 'release' })).json];
+  for (const result of [opened.json, packed.json, ...overMcp]) assert.ok(!JSON.stringify(result).includes('mcpAvailability'));
+  assert.deepEqual(await calls(), []);
+  assert.equal((await cli(['repos', '--check-mcp'], { extra: { PATH } })).error.code, 'INVALID_INPUT');
+});

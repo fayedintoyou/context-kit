@@ -73,8 +73,8 @@ untracked `.state/checkouts.json`:
   registered repository's checkout: that one is recorded, not entered.
 - `repos setup` sets up a new machine, below.
 - `repos which [<path>]` says which repository a path belongs to, below.
-- `repos open <repo> [<subpath>] [--role <role>]` opens a repository to start work on it, below.
-- `repos pack <repo> <pack> [--role <role>] [--budget <bytes>] [--seed]` builds a context pack, below.
+- `repos open <repo> [<subpath>] [--role <role>] [--check-mcp]` opens a repository to start work on it, below.
+- `repos pack <repo> <pack> [--role <role>] [--budget <bytes>] [--seed] [--check-mcp]` builds a context pack, below.
 
 Recording and cloning are CLI-only; agents run them when you ask.
 
@@ -179,7 +179,7 @@ pointers marked `missing`. `repos`, `list_repos` and the routing skill work for
 every repository whatever its `context`; `validate` fails on all of it, unknown
 references included.
 
-Over MCP it is `open_repo` (`repository`, optional `path` and `role`), offered only over stdio
+Over MCP it is `open_repo` (`repository`, optional `path`, `role` and `checkMcp`), offered only over stdio
 (see `remote`), with the same result. It is the operation the routing skill and
 the global rule name for resolving a repository.
 
@@ -262,7 +262,7 @@ but a letter written with a separate combining mark (such as `q̃`) is two. A ro
 ### Context packs
 
 `repos pack <repo> <pack>` (MCP `context_pack`: `repository`, `pack`, optional
-`role`, `budget`, `seed`) expands a declared pack, or `default`, against this
+`role`, `budget`, `seed`, `checkMcp`) expands a declared pack, or `default`, against this
 machine's recorded checkout. It is read-only, local-only like `open_repo`, and never
 returns file contents. The result is `{ root, payload, hash, annotations }`:
 
@@ -278,7 +278,8 @@ returns file contents. The result is `{ root, payload, hash, annotations }`:
   any machine, at any path, at any time. Files are in code-point order.
 - `annotations`, beside it and not hashed: the checkout `path`, `budget`
   (`requested`, `effective`), concept pointers with titles, trust and `freshness`,
-  skill pointers as `repos open` gives them, and `warnings`. A concept going stale
+  skill pointers as `repos open` gives them, `warnings` and, with `--check-mcp`,
+  `mcpAvailability` (below). A concept going stale
   changes its annotation, never the hash.
 
 A declared pack selects index paths matching any of its `files` globs and none of
@@ -324,6 +325,37 @@ A repository with no recorded checkout here, or a stale one, fails with
 the message and `details.next`; a pack name the repository doesn't declare fails
 with `UNKNOWN_PACK`, naming `default` and its packs (`details.packs`). Neither
 records or clones anything.
+
+### MCP availability
+
+A repository's `context` declares MCP servers by name only. `repos open` and
+`repos pack` report those names as declared (`pointers.mcp`, `payload.mcp`) and,
+by default, run nothing else. With `--check-mcp` (MCP `checkMcp: true`) they also
+ask each agent whether it has each name registered, through the agent's own CLI:
+`claude mcp get <name>` for Claude Code and `codex mcp get <name>` for Codex, run
+from the recorded checkout (so project and local registrations count), with the
+scrubbed git environment, no input and a 10-second timeout per call
+(`CONTEXT_KIT_MCP_PROBE_MS` overrides it), at most four at a time per agent.
+
+The result is `mcpAvailability` (in `repos open`'s result, and in a pack's
+`annotations`, so the hash never changes): one entry per agent, `claude` then
+`codex`, each with its `label` and `servers`, the shown names in code-point order
+with `status` `available` (exit status 0), `missing` (any other exit status) or
+`unknown` with a fixed `code`:
+
+- `MCP_CLI_MISSING`: the agent's CLI is not on the `PATH`.
+- `MCP_CLI_TIMEOUT`: it did not finish in time (its process group is killed).
+- `MCP_CLI_KILLED`: it was ended by a signal.
+- `MCP_CLI_NOT_RUNNABLE`: it could not be started.
+- `MCP_NAME_NOT_PROBED`: the name starts with `-`, which the CLI would read as an option.
+- `CHECKOUT_MISSING`: `repos open` found no checkout here, so nothing was asked.
+
+Only names and statuses are reported. The CLIs' output is discarded unread, since
+it can carry URLs, tokens, headers or environment values. In `repos open` the
+statuses cover exactly the names the result shows, within its 8 KiB. Context Kit
+never registers, installs, configures or removes a declared server (it never runs
+`mcp add` or `mcp remove` for one); register it yourself through the agent. Gemini
+CLI, Copilot CLI and Cursor are not asked.
 
 ### A new machine
 
