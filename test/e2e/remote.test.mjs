@@ -493,12 +493,17 @@ test('an authorized HTTP client reads a mounted hub exactly as a stdio client do
 // A workspace with every kind of local path a result can carry, all under the fixture's
 // temporary directory: located repositories, a mounted hub from a file: source, a capture, the
 // workspace's own OpenSpec specs and a sliced change, a map, and a hub declaring a shared store
-// whose party checkout is recorded and which the workspace repository also references.
-// Git and gh are isolated: PATH holds only git, so nothing reaches a network.
+// which the workspace repository also references. The store's parties are recorded: site is
+// fetched, game's checkout lost its remote and kiosk's was never fetched, so their remedies quote
+// checkouts. Agents are installed for Codex in the temporary HOME, and the installed my-repos was
+// then replaced, so a skill refresh reports a reason naming its directory. Git and gh are
+// isolated: PATH holds only git and a stand-in codex, so nothing reaches a network.
 async function pathsWorkspace({ base, workspace, env }) {
   const bin = join(base, 'bin');
   await mkdir(bin);
   await symlink((await exec('sh', ['-c', 'command -v git'])).stdout.trim(), join(bin, 'git'));
+  // A stand-in Codex CLI that accepts MCP registrations.
+  await writeFile(join(bin, 'codex'), `#!${process.execPath}\nprocess.exit(process.argv[2] === 'mcp' && process.argv[3] === 'get' ? 1 : 0);\n`, { mode: 0o755 });
   Object.assign(env, { PATH: bin, HOME: join(base, 'home'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' });
   await mkdir(env.HOME);
@@ -526,14 +531,16 @@ async function pathsWorkspace({ base, workspace, env }) {
   // A team hub declaring store shared, planned in its party site, whose checkout is recorded.
   await put(workspace, 'hubs/team/README.md', '---\ntype: Guide\n---\n\nTeam\n');
   await put(workspace, 'hubs/team/hub.json', JSON.stringify({ version: 1, id: 'team/shared', description: 'Team', documents: ['README.md'], skills: [], links: [], specStores: ['shared'] }));
-  await put(workspace, 'hubs/team/site.md', '---\ntype: Repository\ntitle: site\nresource: https://github.com/example/site\n---\n\n# site\n');
+  for (const party of ['site', 'game', 'kiosk']) await put(workspace, `hubs/team/${party}.md`, `---\ntype: Repository\ntitle: ${party}\nresource: https://github.com/example/${party}\n---\n\n# ${party}\n`);
   const store = join(base, 'store');
   await put(store, 'openspec/config.yaml', 'schema: spec-driven\n');
   await cp(join(pigeon, 'openspec/specs'), join(store, 'openspec/specs'), { recursive: true });
-  await put(store, 'openspec/parties.yaml', 'parties:\n  site: https://github.com/example/site\n');
+  await put(store, 'openspec/parties.yaml', 'parties:\n  site: https://github.com/example/site\n  game: https://github.com/example/game\n  kiosk: https://github.com/example/kiosk\n');
   await put(store, 'openspec/changes/embed/proposal.md', '# Why\n\nEmbed.\n');
   await put(store, 'openspec/changes/embed/specs/alerts/spec.md', requirement('Embed', 'The site SHALL embed alerts.'));
-  await put(store, 'openspec/changes/embed/slices.yaml', 'slices:\n  - id: host\n    repo: site\n    implements: [alerts / Embed]\n');
+  await put(store, 'openspec/changes/embed/slices.yaml', 'slices:\n  - id: host\n    repo: site\n    implements: [alerts / Embed]\n' +
+    '  - id: guest\n    repo: game\n    implements: [alerts / Embed]\n  - id: screen\n    repo: kiosk\n    implements: [alerts / Embed]\n');
+  await put(store, 'openspec/changes/embed/tasks.md', '- [x] 1.1 Embed\n');
   await commitAll(store);
   await exec(process.execPath, [join(kit, 'node_modules/@fission-ai/openspec/bin/openspec.js'), 'store', 'register', store, '--id', 'shared', '--yes', '--json'], { env });
   const site = join(base, 'code/site');
@@ -544,6 +551,15 @@ async function pathsWorkspace({ base, workspace, env }) {
   await git(site, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
   await git(site, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
   await hub('repos', 'locate', 'site', site);
+  // game: recorded, then its remote for the upstream removed; kiosk: a remote never fetched.
+  for (const party of ['game', 'kiosk']) {
+    const checkout = join(base, `code/${party}`);
+    await mkdir(checkout, { recursive: true });
+    await git(checkout, 'init', '-q', '-b', 'main');
+    await git(checkout, 'remote', 'add', 'origin', `https://github.com/example/${party}`);
+    await hub('repos', 'locate', party, checkout);
+  }
+  await git(join(base, 'code/game'), 'remote', 'remove', 'origin');
   // A hub mounted from a local git repository.
   const mounted = join(base, 'mounted');
   await put(mounted, 'hub.json', JSON.stringify({ version: 1, id: 'other/hub', description: 'Other', documents: ['README.md'], skills: [], links: [] }));
@@ -555,6 +571,11 @@ async function pathsWorkspace({ base, workspace, env }) {
     const child = execFile(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, 'capture', 'personal/main', 'A note', '--by', 'human:test'], { env }, error => error ? failed(error) : done());
     child.stdin.end('Captured before the sweep.\n');
   });
+  // Agents installed for Codex, then the installed my-repos replaced by a copy of the user's.
+  await hub('agents', 'install', '--agent', 'codex');
+  const installed = join(env.HOME, '.agents/skills/my-repos');
+  await rm(installed, { recursive: true, force: true });
+  await put(installed, 'SKILL.md', '---\nname: my-repos\ndescription: Mine.\n---\n\nMine.\n');
   await commitAll(workspace);
   return { room: await realpath(room) };
 }
@@ -595,6 +616,10 @@ test('over HTTP list_repos names the serving machine and gives servingMachinePat
   assert.ok(result.repositories.every(item => !('path' in item) && 'servingMachinePath' in item));
   // --machine-name needs --http and a usable name.
   await assert.rejects(context.serve(['--machine-name', '']), /machine-name/);
+  // Nor one with control, format (bidi override, zero-width) or separator characters.
+  for (const name of ['stu\u0085dio', 'stu\u202edio', 'stu\u200bdio', 'stu\u2028dio', 'stu\u2029dio', 'stu\u0007dio', 'x'.repeat(101)]) {
+    await assert.rejects(context.serve(['--machine-name', name]), /machine-name must be/, JSON.stringify(name));
+  }
 });
 
 // spec: remote-access / Remote client sees no unlabelled paths
@@ -636,4 +661,16 @@ test('every tool listed over HTTP, called with valid arguments, returns no fixtu
   }
   assert.deepEqual(leaks, []);
   assert.ok(labeledResults > listed.length / 2, `${labeledResults} labeled results`);
+  // The degraded parties' remedies and the replaced skill's reason name placeholders instead.
+  const status = (await http.callTool({ name: 'change_status', arguments: { change: 'embed', store: 'shared' } })).structuredContent;
+  const remedies = Object.fromEntries(status.slices.map(slice => [slice.id, slice.remedies]));
+  assert.deepEqual(remedies.guest, ['git -C <servingMachineCheckout> remote add <remote> https://github.com/example/game', 'git -C <servingMachineCheckout> fetch <remote>']);
+  assert.deepEqual(remedies.screen, ['git -C <servingMachineCheckout> fetch origin']);
+  const archivable = (await http.callTool({ name: 'archivable_changes', arguments: { store: 'shared' } })).structuredContent;
+  assert.match(JSON.stringify(archivable), /git -C <servingMachineCheckout> fetch origin/);
+  const added = (await http.callTool({ name: 'add_repo', arguments: { id: 'personal/main', upstream: 'https://github.com/me/orchard' } })).structuredContent;
+  const replaced = added.skills.find(item => item.name === 'my-repos');
+  assert.equal(replaced.code, 'SKILL_REPLACED', JSON.stringify(added.skills));
+  assert.equal(replaced.servingMachinePath, join(context.env.HOME, '.agents/skills/my-repos'));
+  assert.match(replaced.reason, /^<servingMachinePath> was replaced since install/);
 });
