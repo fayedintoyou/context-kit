@@ -36,11 +36,11 @@ The `lid` source SHALL list each entry of `docs/intent/**/*-specs.md` and `docs/
 - **THEN** the request fails with `INVALID_SOURCE` naming `AUTH-UI-001` and both files
 
 ### Requirement: Hub behaviors
-The `hub` source SHALL list the concepts of a hub in the workspace's own hub directories as `<hub-id>:/<concept-id>`, with title, OKF trust summary and freshness action, and inbox notes only when requested. `BehaviorMap` concepts SHALL NOT be listed. Its fingerprint SHALL cover the concept file's full content.
+The `hub` source SHALL list the concepts of a hub in the workspace's own hub directories as `<hub-id>:/<concept-id>`, with title, description, OKF trust summary, freshness action and fingerprint, and inbox notes only when requested. Full concept text SHALL be listed only when requested. `BehaviorMap` concepts SHALL NOT be listed. The fingerprint SHALL cover the concept file's full content.
 
 #### Scenario: List hub behaviors
 - **WHEN** a hub has a human-reviewed concept, a stale concept, a `BehaviorMap` concept and an inbox note
-- **THEN** `maps behaviors --source hub --hub <id>` lists the two concepts with their trust and freshness action, never the map, and the note only with `--inbox`
+- **THEN** `maps behaviors --source hub --hub <id>` lists the two concepts with their trust and freshness action but not their text, never the map, the note only with `--inbox`, and each concept's text only with `--full`
 
 ### Requirement: Evaluation instant
 Every result that depends on freshness or staleness SHALL be evaluated at one instant: the `--at` (MCP `at`) ISO 8601 timestamp with an explicit offset, or the current time when omitted. The result SHALL report the instant used. A timestamp without an offset SHALL fail with `INVALID_INPUT`.

@@ -37,8 +37,8 @@ with `init --addons maps,...` or in `context-kit.json`. The `maps` help topic
    item with its text and status marker (`[x]` implemented, `[ ]` a gap, `[D]`
    deferred, or none). A map over them cites entry IDs and scopes ID prefixes.
    `--source hub --hub <id>` lists a workspace hub's concepts as
-   `<hub-id>:/<concept-id>`, each with its trust and its freshness at `--at <time>`
-   (or now).
+   `<hub-id>:/<concept-id>`, each summarized with its description, trust and
+   freshness at `--at <time>` (or now); `--full` adds each concept's text.
 2. **Draft** `maps/<name>.md`: an OKF concept with `type: BehaviorMap` and one
    fenced `yaml map` block naming its source, its scope (capabilities or
    requirements; ID prefixes for `lid`), its nodes (`start`, `state`, `choice`, `end`) and transitions,

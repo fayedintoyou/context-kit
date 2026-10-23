@@ -45,8 +45,10 @@ evidence, so it doesn't belong in a label either. A duplicate ID fails with
 `INVALID_SOURCE`: tell the user, since LID IDs must be unique.
 
 For a hub, run `maps behaviors --source hub --hub <hub-id>` instead: the hub's
-concepts as `<hub-id>:/<concept-id>`, each with its trust and its freshness
-action. Maps are never listed (a map never cites a map), and inbox notes only with
+concepts as `<hub-id>:/<concept-id>`, each summarized by its title, description,
+trust and freshness action. Read the concepts a state may rest on with `read`
+(MCP `read_concept`), or add `--full` for every concept's text when the hub is
+small. Maps are never listed (a map never cites a map), and inbox notes only with
 `--inbox`; they are unreviewed, so don't cite them.
 
 ## 3. Write it in the person's words

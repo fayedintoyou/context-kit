@@ -1260,9 +1260,15 @@ test('hub behaviors are the hub\'s concepts with trust and freshness, never its 
     [ref('policies/escalation'), 'concept', 'Escalation', 'hubs/support/policies/escalation.md', 'unverified', 'refresh'],
     [ref('policies/service-hours'), 'concept', 'Service hours', 'hubs/support/policies/service-hours.md', 'unverified', 'read'],
     [ref('policies/triage'), 'concept', 'Triage policy', 'hubs/support/policies/triage.md', 'human-reviewed', 'read']]);
-  // The fingerprint covers the whole concept file, frontmatter included.
-  const escalation = listed.json.behaviors[1];
+  // A listing is summaries: a description, no text; --full adds each concept's whole file.
+  assert.deepEqual(listed.json.behaviors.map(behavior => [behavior.description, 'text' in behavior]).slice(1, 3), [
+    ['When and how a request goes to engineering.', false], ['When the team answers, and what a working day is.', false]]);
+  const full = await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--full', '--at', at);
+  assert.deepEqual(await mcp('list_behaviors', { source: 'hub', hub: SUPPORT, full: true, at }), full.json);
+  const escalation = full.json.behaviors[1];
   assert.equal(escalation.text, await readFile(join(hub, 'policies/escalation.md'), 'utf8'));
+  assert.deepEqual(full.json.behaviors.map(({ text, ...summary }) => summary), listed.json.behaviors);
+  // The fingerprint covers the whole concept file, frontmatter included: an edit to it changes it.
   assert.match(escalation.fingerprint, /^[0-9a-f]{12}$/);
   assert.ok(!JSON.stringify(listed.json).includes('working-states') && !JSON.stringify(listed.json).includes('Refunds'));
   assert.deepEqual(await mcp('list_behaviors', { source: 'hub', hub: SUPPORT, at }), listed.json);
@@ -1279,6 +1285,18 @@ test('hub behaviors are the hub\'s concepts with trust and freshness, never its 
   assert.equal((await cli('maps', 'behaviors', '--source', 'openspec', '--hub', SUPPORT)).error.code, 'INVALID_INPUT');
   assert.equal((await mcp('list_behaviors', { source: 'lid', inbox: true })).error.code, 'INVALID_INPUT');
   assert.equal((await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--store', 'shared')).error.code, 'INVALID_INPUT');
+  assert.equal((await cli('maps', 'behaviors', '--source', 'openspec', '--full')).error.code, 'INVALID_INPUT');
+  assert.equal((await cli('maps', 'list', '--full')).error.code, 'INVALID_INPUT');
+
+  await annotate('policies/escalation', 'owner: Rui');
+  const edited = await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--at', at);
+  assert.notEqual(edited.json.behaviors[1].fingerprint, escalation.fingerprint);
+  assert.equal(edited.json.behaviors[2].fingerprint, listed.json.behaviors[2].fingerprint);
+  // A concept without a description is described by its first line of prose.
+  await writeFile(join(hub, 'policies/rota.md'), '---\ntype: Policy\ntitle: Rota\n---\n\n# Rota\n\nTwo people are on shift at all times.\n');
+  const rota = (await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--at', at)).json.behaviors.find(behavior => behavior.title === 'Rota');
+  assert.equal(rota.description, 'Two people are on shift at all times.');
+  await rm(join(hub, 'policies/rota.md'));
 });
 
 // spec: behavior-sources / Reproducible freshness
@@ -1298,12 +1316,18 @@ test('freshness is evaluated at the instant given, which the result reports', as
   assert.equal(before.fingerprint, after.fingerprint);
   // An offset other than Z is the same instant, reported in UTC.
   assert.equal((await escalation('2026-03-11T01:30:00+01:30'))[0], '2026-03-11T00:00:00Z');
+  // Leap days are real dates in leap years.
+  assert.equal((await escalation('2028-02-29T12:00:00Z'))[0], '2028-02-29T12:00:00Z');
   // Without an offset the instant would depend on the machine, so it is refused.
-  for (const at of ['2026-03-11T00:00:00', '2026-03-11', 'tomorrow']) {
+  // Nor is an impossible date or time, which would otherwise roll over into another instant.
+  for (const at of ['2026-03-11T00:00:00', '2026-03-11', 'tomorrow', '2026-02-30T00:00:00Z', '2026-02-29T00:00:00Z', '1900-02-29T00:00:00Z',
+    '2026-13-01T00:00:00Z', '2026-00-10T00:00:00Z', '2026-03-11T24:00:00Z', '2026-03-11T10:60:00Z', '2026-03-11T10:00:60Z', '2026-03-11T10:00:00+24:00']) {
     const refused = await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--at', at);
     assert.equal(refused.error.code, 'INVALID_INPUT', at);
     assert.deepEqual((await mcp('list_behaviors', { source: 'hub', hub: SUPPORT, at })).error, refused.error);
-    assert.equal((await cli('maps', 'check', '--at', at)).error.code, 'INVALID_INPUT');
+    const check = await cli('maps', 'check', '--at', at);
+    assert.equal(check.error.code, 'INVALID_INPUT', at);
+    assert.deepEqual((await mcp('check_map', { at })).error, check.error);
   }
 });
 

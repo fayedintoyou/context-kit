@@ -16,7 +16,7 @@ not read: their maps aren't listed, `maps check`, `render` or `pin` of
 
 | Task | CLI | MCP tool |
 |---|---|---|
-| What a map can cite | `maps behaviors --source openspec/lid/hub [--store <id>] [--hub <id>] [--inbox] [--at <time>]` | `list_behaviors` |
+| What a map can cite | `maps behaviors --source openspec/lid/hub [--store <id>] [--hub <id>] [--inbox] [--full] [--at <time>]` | `list_behaviors` |
 | The repository's and its hubs' maps | `maps list` | `list_maps` |
 | Check one map, or all, with each node's statuses | `maps check [<map>] [--strict] [--at <time>]` | `check_map` |
 | Draw a map | `maps render <map> [--format mermaid/json]` | `render_map` |
@@ -68,13 +68,16 @@ listed in `skipped` with its reason: `symlink`, `too large` (over 128 KiB) or
 
 `--source hub --hub <hub-id>` reads one of the workspace's own hubs (otherwise
 `UNKNOWN_HUB`). Each concept, in path order, is a behavior `<hub-id>:/<concept-id>`
-(as `read` takes it) of `kind` `concept`, with `title`, `text` (the whole file,
-frontmatter included, which the `fingerprint` covers), `file`, `okf` (the trust
-summary: `type`, `status`, `trust`, `stale`, ...) and `freshness` (`action`
-`read`, `verify` or `refresh`, with its `reason` and `due`). `BehaviorMap`
+(as `read` takes it) of `kind` `concept`, summarized: `title`, `description` (the
+concept's, or its first line of prose), `file`, `fingerprint` (of the whole file,
+frontmatter included), `okf` (the trust summary: `type`, `status`, `trust`,
+`stale`, ...) and `freshness` (`action` `read`, `verify` or `refresh`, with its
+`reason` and `due`). The text is left out, so a big hub stays a small result:
+`read <hub-id>:/<concept-id>` (MCP `read_concept`) reads one concept, and `--full`
+(MCP `full: true`) adds every concept's `text`. `BehaviorMap`
 concepts are never listed: maps aren't behaviors. Inbox notes are listed only
 with `--inbox` (MCP `inbox: true`), marked `inbox: true`, and a map can't cite
-them. `--hub` and `--inbox` apply only to `hub` (`INVALID_INPUT`), and `hub`
+them. `--hub`, `--inbox` and `--full` apply only to `hub` (`INVALID_INPUT`), and `hub`
 needs `--hub`.
 
 Any other source name fails with `INVALID_INPUT` naming the supported sources.
@@ -86,7 +89,9 @@ Freshness depends on the clock, so `maps behaviors` and `maps check` take
 `2026-03-01T09:00:00Z` or `2026-03-01T10:00:00+01:00`. Without one they use the
 current time. A time without an offset (`2026-03-01T09:00:00`, `2026-03-01`)
 fails with `INVALID_INPUT`, since it would mean different instants on different
-machines. Results that depend on it report the instant used, in UTC, as `at`: a
+machines, and so does an impossible date or time (`2026-02-30`, a February 29
+outside a leap year, hour 24, minute or second 60, an offset of 24 hours or more)
+rather than rolling over into another instant. Results that depend on it report the instant used, in UTC, as `at`: a
 `hub` listing, and the check report of each map over a hub. Rendering never
 depends on the clock and takes no `--at`.
 
