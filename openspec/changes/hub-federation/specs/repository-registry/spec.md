@@ -25,7 +25,7 @@ When a mount's concept shares an upstream with another concept, they SHALL be on
 - **THEN** `repos` lists one repository under the workspace hub's id with `alternateIds` naming `shared:/repos/orders`, the locate records the checkout for it, and `validate` passes without a collision warning
 
 ### Requirement: Names across mounts
-When different upstreams claim one title or alias and a mount is among the claimants, a workspace hub's claim SHALL win, and a name claimed only by several mounts SHALL belong to none, so their repositories need their ids. Each such collision SHALL be a `validate` warning naming the claimants. Claims among workspace hubs alone SHALL fail `validate` as before.
+When different repositories claim one name (id, title, alias, upstream name or keyword) and a mount is among them, an id SHALL stay its repository's, else a workspace hub's claim SHALL win, and a title, alias or upstream name claimed only by several mounts SHALL belong to none, so their repositories need their ids. Each such collision SHALL be a `validate` warning naming the claimants. Claims among workspace hubs alone SHALL fail `validate` as before.
 
 #### Scenario: Workspace keeps its alias
 - **WHEN** a workspace hub and a mount each register a different repository with alias `site`, and a caller runs `repos locate site <checkout of the workspace's one>` and `validate`

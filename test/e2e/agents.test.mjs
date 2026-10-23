@@ -63,7 +63,8 @@ const anHourLater = { CONTEXT_KIT_KEEP_PREVIOUS_MS: '0' };
 // and the chosen agent CLIs (fake by default).
 async function fixture(t, { agents = ['claude', 'codex'], addons } = {}) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'context-kit-agents-')));
-  t.after(() => rm(base, { recursive: true, force: true }));
+  // Fetched mounts are read-only on disk.
+  t.after(async () => { await exec('chmod', ['-R', 'u+w', base]).catch(() => {}); await rm(base, { recursive: true, force: true }); });
   const bin = join(base, 'bin');
   await mkdir(bin);
   await symlink(process.execPath, join(bin, 'node'));
@@ -2340,4 +2341,95 @@ test('repos sync sweeps previous versions of config files by the same rules as i
   assert.equal(leftover.action, 'displaced');
   assert.equal(await readFile(leftover.path, 'utf8'), '{"mcpServers":{},"late":"write"}');
   assert.deepEqual(await previous(directory), []);
+});
+
+// ---- Repositories from mounted hubs (hub-federation) ----------------------------------------
+
+const committer = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+// A git repository holding a hub, to mount over file://; add(file, fields) commits a Repository concept.
+async function hubSource(base, name) {
+  const path = join(base, 'hub-sources', name);
+  await mkdir(path, { recursive: true });
+  const git = (...args) => exec('git', args, { cwd: path, env: { ...process.env, ...committer } });
+  await git('init', '-q', '-b', 'main');
+  const write = async files => {
+    for (const [file, content] of Object.entries(files)) { await mkdir(dirname(join(path, file)), { recursive: true }); await writeFile(join(path, file), content); }
+    await git('add', '-A');
+    await git('commit', '-q', '-m', 'change');
+  };
+  await write({ 'hub.json': JSON.stringify({ version: 1, id: `team/${name}`, description: `${name} hub.`, documents: ['README.md'], skills: [], links: [] }),
+    'README.md': `---\ntype: Guide\ntitle: ${name}\n---\n\n# ${name}\n` });
+  const add = (file, fields) => write({ [file]: `---\ntype: Repository\n${Object.entries(fields).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n')}\n---\n\n# ${fields.title}\n` });
+  return { url: `file://${path}`, add };
+}
+// The skill body's text after its frontmatter.
+const bodyOf = text => text.slice(text.indexOf('\n---\n') + 5);
+
+// spec: repository-registry / Upgrade brings a new repository
+test('mounts upgrade refreshes the installed my-repos with the new repository and its exact commands', async t => {
+  const { base, env, workspace, run, agents } = await fixture(t);
+  const source = await hubSource(base, 'shared');
+  await source.add('repos/orders.md', { title: 'orders', resource: 'https://github.com/example/orders' });
+  assert.equal((await run(['--root', workspace, 'mounts', 'add', 'shared', source.url])).code, 0);
+  assert.equal((await agents('install', '--agent', 'claude')).code, 0);
+  const installed = join(base, 'claude/skills/my-repos/SKILL.md');
+  assert.match(await readFile(installed, 'utf8'), /shared:\/repos\/orders/);
+  await source.add('repos/billing.md', { title: 'billing', resource: 'https://github.com/example/billing' });
+  const upgraded = await run(['--root', workspace, 'mounts', 'upgrade', 'shared']);
+  assert.equal(upgraded.code, 0, JSON.stringify(upgraded.error));
+  assert.deepEqual(upgraded.json.skills.filter(item => item.name === 'my-repos').map(item => [item.agent, item.action]), [['claude', 'updated']]);
+  const body = bodyOf(await readFile(installed, 'utf8'));
+  const launcher = join(env.HOME, '.local/bin/context-kit');
+  assert.ok(body.includes(`- \`billing\`: clone it with \`${launcher} repos clone shared:/repos/billing\`, or if the user has it elsewhere, record that with \`${launcher} repos locate shared:/repos/billing <path>\`.`), body);
+});
+
+// spec: repository-registry / Only unfetched mounts
+test('a workspace whose only repositories are in an unfetched mount still gets a my-repos that says how to fetch it', async t => {
+  const { base, env, workspace, run } = await fixture(t);
+  const source = await hubSource(base, 'shared');
+  await source.add('repos/orders.md', { title: 'orders', resource: 'https://github.com/example/orders' });
+  assert.equal((await run(['--root', workspace, 'mounts', 'add', 'shared', source.url])).code, 0);
+  // Another machine: the pin came with the workspace, its content did not.
+  await exec('chmod', ['-R', 'u+w', join(workspace, '.state/mounts')]);
+  await rm(join(workspace, '.state/mounts'), { recursive: true, force: true });
+  const elsewhere = join(base, 'elsewhere');
+  await mkdir(elsewhere);
+  await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, 'agents', 'install', '--agent', 'claude,codex'], { cwd: elsewhere, env });
+  const launcher = join(env.HOME, '.local/bin/context-kit');
+  for (const agent of ['claude', 'codex']) {
+    const text = await readFile(join(skillsOf(base, agent), 'my-repos/SKILL.md'), 'utf8');
+    const front = parseYaml(text.match(/^---\n([\s\S]*?)\n---\n/)[1]);
+    assert.deepEqual(Object.keys(front), ['name', 'description'], agent);
+    assert.match(front.description, /mounted hubs shared are not available on this machine yet/);
+    const body = bodyOf(text);
+    assert.ok(body.includes(`- \`shared\` (unfetched): \`${launcher} mounts fetch shared\``), body);
+    assert.doesNotMatch(body, /\bcd\s|npm run/);
+  }
+  assert.deepEqual(await readdir(elsewhere), []);
+});
+
+// spec: repository-registry / Recovery from an unrelated directory
+test('the recovery commands run as written from an unrelated directory fetch the mount and list its repositories', async t => {
+  const { base, env, workspace, run } = await fixture(t);
+  const source = await hubSource(base, 'shared');
+  await source.add('repos/orders.md', { title: 'orders', resource: 'https://github.com/example/orders' });
+  assert.equal((await run(['--root', workspace, 'mounts', 'add', 'shared', source.url])).code, 0);
+  await exec('chmod', ['-R', 'u+w', join(workspace, '.state/mounts')]);
+  await rm(join(workspace, '.state/mounts'), { recursive: true, force: true });
+  assert.equal((await run(['--root', workspace, 'agents', 'install', '--agent', 'claude'])).code, 0);
+  const installed = join(base, 'claude/skills/my-repos/SKILL.md');
+  const body = bodyOf(await readFile(installed, 'utf8'));
+  const fetch = body.match(/^- `shared` \(unfetched\): `([^`]+)`$/m)[1];
+  const sync = body.match(/`([^`]+ repos sync)`/)[1];
+  const elsewhere = join(base, 'elsewhere');
+  await mkdir(elsewhere);
+  const shell = { HOME: env.HOME, PATH: '/usr/bin:/bin' };
+  const fetched = JSON.parse((await exec('/bin/sh', ['-c', fetch], { cwd: elsewhere, env: shell })).stdout);
+  assert.deepEqual(fetched.mounts.map(mount => [mount.name, mount.status, mount.outcome]), [['shared', 'fetched', 'fetched']]);
+  await exec('/bin/sh', ['-c', sync], { cwd: elsewhere, env: shell });
+  assert.deepEqual(await readdir(elsewhere), []);
+  const text = await readFile(installed, 'utf8');
+  const front = parseYaml(text.match(/^---\n([\s\S]*?)\n---\n/)[1]);
+  assert.deepEqual(front.metadata, { 'shared:/repos/orders': 'https://github.com/example/orders (missing on this machine); mount: shared' });
+  assert.doesNotMatch(text, /mounts fetch shared/);
 });

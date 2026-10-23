@@ -9,10 +9,11 @@ Each step is its own OpenSpec change with linked end-to-end tests.
 2. **Freshness policy** (done): per-hub, per-type maximum ages so each read says
    `read`, `verify` or `refresh`, and why, from OKF `stale_after`, `generated`
    and `verified`.
-3. **Federation**: a workspace mounts other personal or team bundles, read-only,
-   with namespaced concept IDs (`team-data:/tables/orders`) and per-bundle
-   provenance and trust. Links that leave a hub (`outside`) become resolvable when
-   a mount names their target.
+3. **Federation** (done): a workspace mounts other personal or team bundles,
+   read-only and pinned, with namespaced concept IDs (`team-data:/tables/orders`)
+   and per-bundle provenance and trust. Links that leave a hub (`outside`) become
+   resolvable when a mount names their target, and mounted Repository concepts
+   reach `repos` and `my-repos` with each machine's own checkouts.
 4. **Wiki upkeep**: agents promote inbox notes into concepts, regenerate
    `index.md`, append `log.md`, and lint for broken links, orphans and stale or
    unverified concepts.
