@@ -6,7 +6,7 @@ Keep hub knowledge in the Open Knowledge Format so it is portable to other tools
 ## Requirements
 
 ### Requirement: Hubs are OKF bundles
-Hub validation SHALL fail unless the hub directory, excluding dot-directories, is a conformant OKF v0.2 bundle: every Markdown file other than `index.md` and `log.md` is a regular file with YAML mapping frontmatter and a non-empty string `type`; an `index.md` carries no frontmatter except `okf_version`, and only at the hub root; and every `##` heading in a `log.md` is a `YYYY-MM-DD` date. Index and log bodies are otherwise unconstrained.
+Hub validation SHALL fail unless each workspace hub's directory, excluding dot-directories, is a conformant OKF v0.2 bundle: every Markdown file other than `index.md` and `log.md` is a regular file with YAML mapping frontmatter and a non-empty string `type`; an `index.md` carries no frontmatter except `okf_version`, and only at the hub root; and every `##` heading in a `log.md` is a `YYYY-MM-DD` date. Index and log bodies are otherwise unconstrained.
 
 #### Scenario: Concept without a type
 - **WHEN** a hub contains a Markdown concept whose frontmatter is missing or has no `type`
@@ -47,3 +47,10 @@ Initializing a workspace SHALL produce a conformant OKF bundle whose hub-root `i
 #### Scenario: Conformant starter
 - **WHEN** a caller initializes a workspace
 - **THEN** its starter hub validates as an OKF bundle and its index declares the OKF version
+
+### Requirement: Mounted bundles are checked leniently
+Validation SHALL check a fetched mount with the lenient read rules: its nonconformant files SHALL be `validate` warnings naming the mount and file, never failures, since the workspace cannot fix them.
+
+#### Scenario: Nonconformant mount
+- **WHEN** a fetched mount has a non-curated Markdown file without frontmatter and a `log.md` with a non-date heading, and the workspace's own hubs are conformant
+- **THEN** `validate` passes with warnings naming `shared` and each file
