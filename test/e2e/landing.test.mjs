@@ -585,6 +585,14 @@ test('exempt and excluded globs match file names holding a newline', async t => 
   assert.deepEqual(result.error.details.substantial.files, [{ file: 'openspec/odd\nname.md', reason: 'excluded from the routine exemption' }]);
 });
 
+// spec: pull-request-landing / A docs-only change is routine
+test('a ? in an exempt glob matches one whole character, astral ones included', async t => {
+  const { land } = await machine(t);
+  const policy = { ...POLICY, routine: { paths: ['docs/?.md'], excludePaths: [] } };
+  for (const name of ['docs/a.md', 'docs/😀.md', 'docs/𝔬.md']) assert.equal(landed(await land(routes({ policy, files: [file(name)] }), LAND)).substantial.value, false, name);
+  refused(await land(routes({ policy, files: [file('docs/ab.md')] }), LAND), 'REVIEW_MISSING');
+});
+
 // spec: pull-request-landing / Stale, planning and malformed records
 test('stale, plan-phase and malformed records are reported and do not count', async t => {
   const { land } = await machine(t);

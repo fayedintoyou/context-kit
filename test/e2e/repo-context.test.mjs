@@ -1323,11 +1323,21 @@ test('role excludes cover names with newlines, other Unicode spellings and case,
 
 // spec: repository-context / Unknown role
 test('validate warns about a directory-form exclude that matches no file and suggests the ** form', async t => {
-  const { cli } = await packed(t, { context: { roles: { reviewer: { exclude: ['notes/builder', 'notes/review.md'] } } },
+  const { cli, path, fruit } = await packed(t, { context: { roles: { reviewer: { exclude: ['notes/builder', 'notes/review.md'] } } },
     files: { 'notes/builder/plan.md': 'p\n', 'notes/review.md': 'r\n' } });
   const { code, json } = await cli(['validate']);
   assert.equal(code, 0);
   assert.deepEqual(json.warnings, ['team/fruit/orchard: context.roles.reviewer.exclude[0]: "notes/builder" matches no file but names a directory; write "notes/builder/**" to withhold its files']);
+  // On a caseless checkout another case of the directory warns too.
+  const caseless = await realpath(join(path, '.GIT')).then(() => true, () => false);
+  if (caseless) {
+    const file = join(fruit, 'orchard.md');
+    await writeFile(file, (await readFile(file, 'utf8')).replace('"notes/builder"', '"NOTES/Builder"'));
+    assert.match((await cli(['validate'])).json.warnings?.[0] ?? '', /"NOTES\/Builder" matches no file/);
+  }
+  // A stale record, no longer the top of a checkout, is not read.
+  await rm(join(path, '.git'), { recursive: true, force: true });
+  assert.equal((await cli(['validate'])).json.warnings, undefined);
 });
 
 // spec: repository-context / Rebuild, edit and delete
@@ -1357,4 +1367,94 @@ test('an index git cannot read fails with NOT_A_CHECKOUT and a fixed message, ne
     assert.equal(result.error?.code, 'NOT_A_CHECKOUT');
     assert.equal(result.error.message, 'git ls-files could not read the recorded checkout');
   }
+});
+
+// spec: repository-context / A fresh reviewer never sees builder notes
+test('a ? in a role exclude withholds one whole character, astral ones included', async t => {
+  const { cli, pack } = await packed(t, { context: { packs: { all: { description: 'All.', files: ['**'] } }, roles: { reviewer: { exclude: ['notes/?.md', 'n2/?'] } } },
+    files: { 'notes/😀.md': 'e\n', 'notes/a.md': 'a\n', 'notes/ab.md': 'ab\n', 'n2/𝔬': 'o\n' } });
+  const { json } = await cli(['repos', 'open', 'orchard', '--role', 'reviewer']);
+  assert.deepEqual([json.tree.entries, json.withheld.files], [['AGENTS.md', 'notes/', 'notes/ab.md'], 3]);
+  assert.deepEqual(listed(await pack('all', '--role', 'reviewer')), ['AGENTS.md', 'notes/ab.md']);
+});
+
+// spec: repository-context / A fresh reviewer never sees builder notes
+test('under a role a subpath inside a withheld area is unknown, with or without the checkout, judged conservatively without it', async t => {
+  const { path, cli } = await packed(t, {
+    context: { areas: [{ path: 'notes/builder', concepts: ['/guides/release-builder'] }, { path: 'docs', concepts: ['/guides/harvest'] }],
+      roles: { reviewer: { exclude: ['notes/builder/*.md'] }, auditor: { exclude: ['Notes/Builder/**'] }, partial: { exclude: ['docs/drafts/**'] } } },
+    files: { 'notes/builder/plan.md': 'p\n', 'notes/review.md': 'r\n', 'docs/a.md': 'a\n', 'docs/drafts/d.md': 'd\n' } });
+  const located = await cli(['repos', 'open', 'orchard', 'notes/builder', '--role', 'reviewer']);
+  assert.equal(located.error?.code, 'UNKNOWN_PATH');
+  // With a checkout, an area partly withheld still opens.
+  assert.deepEqual((await cli(['repos', 'open', 'orchard', 'docs', '--role', 'partial'])).json.matchedAreas, ['docs']);
+  await rm(path, { recursive: true, force: true });
+  for (const role of ['reviewer', 'auditor']) {
+    for (const subpath of ['notes/builder', 'notes/builder/sub', 'NOTES/builder']) {
+      const result = await cli(['repos', 'open', 'orchard', subpath, '--role', role]);
+      assert.equal(result.error?.code, 'UNKNOWN_PATH', `${role} ${subpath}`);
+    }
+    const root = await cli(['repos', 'open', 'orchard', '--role', role]);
+    assert.deepEqual([root.json.status, root.json.areas.map(area => area.path), root.json.withheld.areas], ['missing', ['docs'], 1], role);
+    assert.ok(!JSON.stringify(root.json).includes('builder'), role);
+  }
+  // Without the checkout an area holding an excluded directory is withheld whole: err on withholding.
+  assert.equal((await cli(['repos', 'open', 'orchard', 'docs', '--role', 'partial'])).error?.code, 'UNKNOWN_PATH');
+  assert.equal((await cli(['repos', 'open', 'orchard', 'notes/builder'])).json.matchedAreas[0], 'notes/builder');
+});
+
+// spec: repository-context / A fresh reviewer never sees builder notes
+test('under a role an invalid context is reported by key paths only, never quoting role entries', async t => {
+  const { cli } = await packed(t, { context: { roles: { reviewer: { exclude: ['notes/builder/{plan,todo}.md'] } } } });
+  const plain = await cli(['repos', 'open', 'orchard']);
+  assert.equal(plain.error.code, 'INVALID_CONTEXT');
+  assert.match(plain.error.message, /notes\/builder/);
+  for (const result of [await cli(['repos', 'open', 'orchard', '--role', 'reviewer']), await cli(['repos', 'pack', 'orchard', 'release', '--role', 'reviewer'])]) {
+    assert.equal(result.error.code, 'INVALID_CONTEXT');
+    assert.match(result.error.message, /context\.roles\.reviewer\.exclude\[0\]: invalid/);
+    assert.doesNotMatch(result.error.message, /builder/);
+  }
+});
+
+// spec: repository-context / Unknown role
+test('validate warns when free text a role shows names a path the role excludes', async t => {
+  const { cli } = await packed(t, { context: { verify: ['npm test', 'cat notes/builder/plan.md'],
+    packs: { release: RELEASE, handoff: { description: 'Reads the notes/builder drafts.', files: ['notes/**'] } },
+    roles: { reviewer: { exclude: ['notes/builder/**'] } } } });
+  const { code, json } = await cli(['validate']);
+  assert.equal(code, 0);
+  assert.deepEqual(json.warnings, ['team/fruit/orchard: context.verify[1] names a path role reviewer excludes; that text is shown under the role',
+    'team/fruit/orchard: context.packs.handoff.description names a path role reviewer excludes; that text is shown under the role']);
+});
+
+// spec: repository-context / Not offered over HTTP
+test('validate_hubs over HTTP reads no checkout: no git runs and the checkout warning is left out', async t => {
+  const { base, env, workspace, stdio } = await packed(t, { context: { roles: { reviewer: { exclude: ['notes/builder'] } } }, files: { 'notes/builder/plan.md': 'p\n' } });
+  const marker = join(base, 'git-ran');
+  const bin = join(base, 'fake-bin');
+  await mkdir(bin);
+  const real = (await exec('/bin/sh', ['-c', 'command -v git'], { env })).stdout.trim();
+  await writeFile(join(bin, 'git'), `#!/bin/sh\ntouch '${marker}'\nexec '${real}' "$@"\n`);
+  await chmod(join(bin, 'git'), 0o755);
+  const watched = { ...env, PATH: `${bin}:${env.PATH}` };
+  const token = 'repo-context-test-token-0123456789abcdef0123';
+  const child = spawn(process.execPath, [join(kit, 'bin/mcp.mjs'), '--root', workspace, '--http', '0'], { env: { ...watched, CONTEXT_KIT_MCP_TOKEN: token }, cwd: base, stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => child.kill());
+  let stderr = '';
+  const { url } = JSON.parse(await new Promise((resolve, reject) => {
+    child.stderr.on('data', chunk => { stderr += chunk; if (stderr.includes('\n')) resolve(stderr.split('\n')[0]); });
+    child.once('exit', () => reject(new Error(`server exited: ${stderr}`)));
+  }));
+  const http = new Client({ name: 'repo-context-test', version: '0.0.0' });
+  await http.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+  t.after(() => http.close());
+  await rm(marker, { force: true });
+  const remote = await call(http, 'validate_hubs', {});
+  assert.equal(remote.json.valid, true, JSON.stringify(remote));
+  assert.equal(remote.json.warnings, undefined);
+  assert.equal(await readFile(marker).then(() => true, () => false), false, 'git ran over HTTP');
+  // Over stdio the same check reads the checkout and warns: the fixture is live.
+  const local = await call(await stdio({ PATH: watched.PATH }), 'validate_hubs', {});
+  assert.equal(local.json.warnings.length, 1);
+  assert.ok(await readFile(marker).then(() => true, () => false));
 });

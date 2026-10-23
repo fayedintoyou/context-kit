@@ -238,11 +238,25 @@ withholds files below the tree's root. `repos open <id> <directory> --role <role
 still opens an omitted directory; when the cut tree held only files, `next` can be
 `[]`. A withheld directory can't be opened (`UNKNOWN_PATH`), so the `AGENTS.md` or
 `CLAUDE.md` inside it is not pointed at either; the root's and those of every
-directory you can open always are.
+directory you can open always are. A subpath the role's excludes match is
+`UNKNOWN_PATH` whatever the checkout's state, and so is one inside a withheld area,
+which `matchedAreas` never names. Without a checkout here the role is applied by its
+globs alone and errs on withholding: an area is withheld when, compared caselessly,
+an exclude matches its directory or literally names it or a directory inside it (as
+`dir/*.md` or `dir/drafts/**` do). Under a role, an invalid `context`
+(`INVALID_CONTEXT`) is reported by key paths only, never quoting values.
+
+Free text is not filtered: `verify` commands, pack names and descriptions, and role
+names are shown under every role as declared. `validate` warns when one of them
+names a path a role excludes; reword it so it doesn't.
 
 An exclude without wildcards withholds only the entry of that name. `validate`
 warns when one names no tracked file but a tracked directory in this machine's
-checkout, suggesting `<dir>/**`. A role the repository doesn't declare fails with
+checkout (compared caselessly on a caseless file system), suggesting `<dir>/**`.
+It reads only a recorded checkout that is still the top of a git checkout, and
+never over HTTP, where `validate_hubs` says nothing about this machine's checkouts.
+`?` matches one Unicode code point, so an emoji or astral letter counts as one,
+but a letter written with a separate combining mark (such as `q̃`) is two. A role the repository doesn't declare fails with
 `UNKNOWN_ROLE`, naming the declared ones (`details.roles`).
 
 ### Context packs
