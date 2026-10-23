@@ -37,7 +37,7 @@
 
 ## 6. Integration
 
-- [x] 6.1 Run `npm test`, `node bin/hub.mjs validate`, `openspec validate repo-context --strict` and `specs archive --rehearse`, and check that every `repository-context` scenario is linked
+- [ ] 6.1 Run `npm test`, `node bin/hub.mjs validate`, `openspec validate repo-context --strict` and `specs archive --rehearse`, and check that every `repository-context` scenario is linked
 
 ## Workflow follow-up
 

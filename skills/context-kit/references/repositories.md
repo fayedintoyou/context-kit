@@ -334,8 +334,13 @@ by default, run nothing else. With `--check-mcp` (MCP `checkMcp: true`) they als
 ask each agent whether it has each name registered, through the agent's own CLI:
 `claude mcp get <name>` for Claude Code and `codex mcp get <name>` for Codex, run
 from the recorded checkout (so project and local registrations count), with the
-scrubbed git environment, no input and a 10-second timeout per call
-(`CONTEXT_KIT_MCP_PROBE_MS` overrides it), at most four at a time per agent.
+scrubbed git environment and no input. Each CLI is found on the `PATH` by absolute
+entries only (a relative entry such as `.` or `node_modules/.bin` is skipped, so a
+checkout's own script is never run) and started by its full path. Each call has a
+10-second timeout and each agent 20 seconds in all (`CONTEXT_KIT_MCP_PROBE_MS`
+sets the per-call time; the total is twice it), at most four calls at a time per
+agent; names not asked by the deadline are `unknown` with `MCP_CLI_TIMEOUT`.
+`repos open` asks only about the names its result shows.
 
 The result is `mcpAvailability` (in `repos open`'s result, and in a pack's
 `annotations`, so the hash never changes): one entry per agent, `claude` then
@@ -344,11 +349,19 @@ with `status` `available` (exit status 0), `missing` (any other exit status) or
 `unknown` with a fixed `code`:
 
 - `MCP_CLI_MISSING`: the agent's CLI is not on the `PATH`.
-- `MCP_CLI_TIMEOUT`: it did not finish in time (its process group is killed).
+- `MCP_CLI_TIMEOUT`: it did not finish in time (its process group is killed; a
+  child that detached into its own session can survive), or the agent's deadline
+  passed before the name was asked.
 - `MCP_CLI_KILLED`: it was ended by a signal.
 - `MCP_CLI_NOT_RUNNABLE`: it could not be started.
 - `MCP_NAME_NOT_PROBED`: the name starts with `-`, which the CLI would read as an option.
 - `CHECKOUT_MISSING`: `repos open` found no checkout here, so nothing was asked.
+
+`available` means registered or configured, as the agent's `mcp get` sees it, not
+that the server works: Claude Code also exits 0 for a project `.mcp.json` server
+still pending approval and for one that fails to connect. Claude Code's `mcp get`
+runs a health check that starts the server it asks about, so `--check-mcp` starts
+each registered server named; Codex's only reads its configuration.
 
 Only names and statuses are reported. The CLIs' output is discarded unread, since
 it can carry URLs, tokens, headers or environment values. In `repos open` the
