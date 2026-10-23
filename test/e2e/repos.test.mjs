@@ -633,7 +633,7 @@ test('the routing body tells agents to open each repository first, by MCP tool a
   assert.deepEqual(opened.map(match => match[1]), [launcher, launcher]);
   assert.deepEqual(opened.map(match => match[2]), ids);
   assert.deepEqual(Object.keys(front.metadata), ids);
-  assert.match(body, /`--role <role>`/);
+  assert.doesNotMatch(body, /--role/);  // roles arrive with the packs slice
   assert.doesNotMatch(body, /list_repos|\bcd\s|npm run/);
   // Run as written from another directory, the open command resolves the repository.
   const room = body.match(/- the room: open with `([^`]+)`/)[1];
