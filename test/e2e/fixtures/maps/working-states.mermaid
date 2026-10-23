@@ -1,0 +1,19 @@
+flowchart TD
+  n_arrives(("A request comes in"))
+  n_urgent{"Is it urgent?"}
+  n_within_the_hour("Triage within the hour")
+  n_next_working_day("Triage on the next working day")
+  n_answer{"Can support answer it?"}
+  n_waiting("Waiting on the customer")
+  n_escalated("Escalated to engineering")
+  n_solved(["Solved"])
+  n_arrives --> n_urgent
+  n_urgent -->|"Yes, an outage or lost data"| n_within_the_hour
+  n_urgent -->|"No"| n_next_working_day
+  n_within_the_hour --> n_answer
+  n_next_working_day --> n_answer
+  n_answer -->|"Yes, we reply with the answer"| n_solved
+  n_answer -->|"We need more from the customer"| n_waiting
+  n_answer -->|"It's a bug we can't work around"| n_escalated
+  n_waiting -->|"The customer replies"| n_answer
+  n_escalated -->|"Engineering ships a fix"| n_solved

@@ -23,7 +23,8 @@ const endMarker = '<!-- context-kit:diagram:end -->';
 // with an isolated OpenSpec registry, driven through the CLI and an MCP SDK client.
 async function fixture(t, name = 'pigeon') {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'context-kit-maps-')));
-  t.after(() => rm(base, { recursive: true, force: true }));
+  // Fetched mounts are read-only exports, so they are made writable before removal.
+  t.after(async () => { await exec('chmod', ['-R', 'u+w', base]).catch(() => {}); await rm(base, { recursive: true, force: true }); });
   const env = { ...process.env, XDG_DATA_HOME: join(base, 'data'), XDG_CONFIG_HOME: join(base, 'config'),
     OPENSPEC_TELEMETRY: '0', DO_NOT_TRACK: '1', OPENSPEC_NO_UPDATE_CHECK: '1' };
   delete env.CONTEXT_KIT_ROOT;
@@ -61,9 +62,10 @@ async function fixture(t, name = 'pigeon') {
   // Rewrites the alerts map: edit receives the map file's text and returns the new text.
   const editMap = async edit => writeFile(mapFile, edit(await readFile(mapFile, 'utf8')));
   // Checks over the CLI and MCP, which must report the same; returns the CLI result.
-  const checkBoth = async name => {
-    const result = await cli('maps', 'check', ...(name === undefined ? [] : [name]));
-    assert.deepEqual(await mcp('check_map', name === undefined ? {} : { map: name }), result.json ?? { error: result.error });
+  // at is the evaluation instant, needed for maps over a hub.
+  const checkBoth = async (name, at) => {
+    const result = await cli('maps', 'check', ...(name === undefined ? [] : [name]), ...(at === undefined ? [] : ['--at', at]));
+    assert.deepEqual(await mcp('check_map', { ...(name === undefined ? {} : { map: name }), ...(at === undefined ? {} : { at }) }), result.json ?? { error: result.error });
     return result;
   };
   return { base, root, env, cli, mcp, checkBoth, mapFile, specFile, original, editMap, git, commit };
@@ -1221,4 +1223,279 @@ test('pinning is CLI-only, needs an explicit root and refuses a map it cannot pi
   assert.equal(flowRefused.error.code, 'INVALID_INPUT');
   assert.match(flowRefused.error.message, /block style/);
   assert.equal(await readFile(mapFile, 'utf8'), flow);
+});
+
+// Hub maps: the fictional Brightdesk support team's hub, whose map draws a request's working
+// states citing the team's concepts. Freshness is always evaluated at a given instant here.
+const SUPPORT = 'brightdesk/support';
+const WORKING_STATES = `${SUPPORT}:/maps/working-states`;
+const workingStatesGolden = await readFile(join(fixtures, 'working-states.mermaid'), 'utf8');
+const ref = concept => `${SUPPORT}:/${concept}`;
+const AT = '2026-03-01T09:00:00Z';
+async function brightdesk(t) {
+  const context = await fixture(t, 'brightdesk');
+  const hub = join(context.root, 'hubs/support');
+  // Adds frontmatter lines to a concept of the hub, after its type.
+  const annotate = async (concept, lines) => {
+    const file = join(hub, `${concept}.md`);
+    await writeFile(file, (await readFile(file, 'utf8')).replace(/^(type: .*)$/m, `$1\n${lines}`));
+  };
+  return { ...context, hub, annotate, mapPath: join(hub, 'maps/working-states.md') };
+}
+const contextWarnings = map => map.warnings.filter(entry => entry.code === 'context_stale').map(({ element, message }) => [element, message]);
+
+// spec: behavior-sources / List hub behaviors
+test('hub behaviors are the hub\'s concepts with trust and freshness, never its maps, and inbox notes only on request', async t => {
+  const { hub, cli, mcp, annotate } = await brightdesk(t);
+  await annotate('policies/escalation', 'stale_after: 2026-02-01T00:00:00Z');
+  await mkdir(join(hub, 'inbox'));
+  await writeFile(join(hub, 'inbox/1767600000000-0f8b2c1e-1d2a-4c3b-9e8f-7a6b5c4d3e2f.md'),
+    '---\ntype: Note\ntitle: Refunds take a week\nstatus: draft\ngenerated: { by: human:ana, at: 2026-01-05T09:00:00Z }\n---\n\n# Refunds take a week\n\nHeard on a call.\n');
+  const at = '2026-03-01T09:00:00Z';
+  const listed = await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--at', at);
+  assert.equal(listed.code, 0, JSON.stringify(listed.error));
+  assert.deepEqual([listed.json.source, listed.json.at], [{ kind: 'hub', hub: SUPPORT }, at]);
+  assert.deepEqual(listed.json.behaviors.map(({ id, kind, title, file, okf, freshness }) => [id, kind, title, file, okf.trust, freshness.action]), [
+    [ref('README'), 'concept', 'Brightdesk support', 'hubs/support/README.md', 'human-reviewed', 'read'],
+    [ref('policies/escalation'), 'concept', 'Escalation', 'hubs/support/policies/escalation.md', 'unverified', 'refresh'],
+    [ref('policies/service-hours'), 'concept', 'Service hours', 'hubs/support/policies/service-hours.md', 'unverified', 'read'],
+    [ref('policies/triage'), 'concept', 'Triage policy', 'hubs/support/policies/triage.md', 'human-reviewed', 'read']]);
+  // The fingerprint covers the whole concept file, frontmatter included.
+  const escalation = listed.json.behaviors[1];
+  assert.equal(escalation.text, await readFile(join(hub, 'policies/escalation.md'), 'utf8'));
+  assert.match(escalation.fingerprint, /^[0-9a-f]{12}$/);
+  assert.ok(!JSON.stringify(listed.json).includes('working-states') && !JSON.stringify(listed.json).includes('Refunds'));
+  assert.deepEqual(await mcp('list_behaviors', { source: 'hub', hub: SUPPORT, at }), listed.json);
+
+  const withInbox = await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--inbox', '--at', at);
+  const note = withInbox.json.behaviors.filter(behavior => behavior.inbox);
+  assert.deepEqual(note.map(({ id, title, okf }) => [id, title, okf.status]), [[ref('inbox/1767600000000-0f8b2c1e-1d2a-4c3b-9e8f-7a6b5c4d3e2f'), 'Refunds take a week', 'draft']]);
+  assert.deepEqual(withInbox.json.behaviors.filter(behavior => !behavior.inbox), listed.json.behaviors);
+  assert.deepEqual(await mcp('list_behaviors', { source: 'hub', hub: SUPPORT, inbox: true, at }), withInbox.json);
+
+  // The hub source needs a hub of the workspace's own; hub and inbox apply only to it.
+  assert.equal((await cli('maps', 'behaviors', '--source', 'hub')).error.code, 'INVALID_INPUT');
+  assert.equal((await cli('maps', 'behaviors', '--source', 'hub', '--hub', 'brightdesk/sales')).error.code, 'UNKNOWN_HUB');
+  assert.equal((await cli('maps', 'behaviors', '--source', 'openspec', '--hub', SUPPORT)).error.code, 'INVALID_INPUT');
+  assert.equal((await mcp('list_behaviors', { source: 'lid', inbox: true })).error.code, 'INVALID_INPUT');
+  assert.equal((await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--store', 'shared')).error.code, 'INVALID_INPUT');
+});
+
+// spec: behavior-sources / Reproducible freshness
+test('freshness is evaluated at the instant given, which the result reports', async t => {
+  const { cli, mcp, annotate } = await brightdesk(t);
+  await annotate('policies/escalation', 'stale_after: 2026-03-10T00:00:00Z');
+  const escalation = async at => {
+    const listed = await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--at', at);
+    assert.equal(listed.code, 0, JSON.stringify(listed.error));
+    assert.deepEqual(await mcp('list_behaviors', { source: 'hub', hub: SUPPORT, at }), listed.json);
+    return [listed.json.at, listed.json.behaviors.find(behavior => behavior.id === ref('policies/escalation'))];
+  };
+  const [beforeAt, before] = await escalation('2026-03-09T00:00:00Z');
+  const [afterAt, after] = await escalation('2026-03-11T00:00:00Z');
+  assert.deepEqual([beforeAt, before.freshness.action, before.okf.stale], ['2026-03-09T00:00:00Z', 'read', false]);
+  assert.deepEqual([afterAt, after.freshness.action, after.okf.stale], ['2026-03-11T00:00:00Z', 'refresh', true]);
+  assert.equal(before.fingerprint, after.fingerprint);
+  // An offset other than Z is the same instant, reported in UTC.
+  assert.equal((await escalation('2026-03-11T01:30:00+01:30'))[0], '2026-03-11T00:00:00Z');
+  // Without an offset the instant would depend on the machine, so it is refused.
+  for (const at of ['2026-03-11T00:00:00', '2026-03-11', 'tomorrow']) {
+    const refused = await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--at', at);
+    assert.equal(refused.error.code, 'INVALID_INPUT', at);
+    assert.deepEqual((await mcp('list_behaviors', { source: 'hub', hub: SUPPORT, at })).error, refused.error);
+    assert.equal((await cli('maps', 'check', '--at', at)).error.code, 'INVALID_INPUT');
+  }
+});
+
+// spec: behavior-maps / A team's working states
+test('a hub map of a team\'s working states is listed, checked and rendered like a repository map', async t => {
+  const { cli, mcp, checkBoth, mapPath } = await brightdesk(t);
+  const listed = await cli('maps', 'list');
+  assert.deepEqual(listed.json.maps.map(({ map, file, title, source, scope }) => ({ map, file, title, source, scope })), [
+    { map: WORKING_STATES, file: 'hubs/support/maps/working-states.md', title: 'A support request', source: { kind: 'hub', hub: SUPPORT }, scope: [''] }]);
+  assert.deepEqual(await mcp('list_maps'), listed.json);
+
+  const at = '2026-03-01T09:00:00Z';
+  const checked = await cli('maps', 'check', WORKING_STATES, '--strict', '--at', at);
+  assert.equal(checked.code, 0);
+  assert.deepEqual(report(checked, WORKING_STATES), { map: WORKING_STATES, valid: true, errors: [], warnings: [], at });
+  assert.deepEqual(await mcp('check_map', { map: WORKING_STATES, at }), checked.json);
+  assert.deepEqual((await cli('maps', 'check', '--at', at)).json, checked.json);
+
+  const drawn = await cli('maps', 'render', WORKING_STATES);
+  assert.equal(drawn.json.diagram, workingStatesGolden);
+  assert.deepEqual(await mcp('render_map', { map: WORKING_STATES }), drawn.json);
+  const json = (await cli('maps', 'render', WORKING_STATES, '--format', 'json')).json;
+  assert.deepEqual(json.nodes.map(({ id, kind, label }) => [id, kind, label]).slice(0, 4), [
+    ['arrives', 'start', 'A request comes in'], ['urgent', 'choice', 'Is it urgent?'],
+    ['within-the-hour', 'state', 'Triage within the hour'], ['next-working-day', 'state', 'Triage on the next working day']]);
+  assert.deepEqual(json.nodes[3].cites.map(({ id, kind, title, pin }) => [id, kind, title, pin]), [
+    [ref('policies/triage'), 'concept', 'Triage policy', 'current'], [ref('policies/service-hours'), 'concept', 'Service hours', 'current']]);
+  assert.deepEqual(await mcp('render_map', { map: WORKING_STATES, format: 'json' }), { map: WORKING_STATES, format: 'json', ...json });
+
+  // Writing the diagram of a hub map changes only its generated block, in the hub's file.
+  const original = await readFile(mapPath, 'utf8');
+  await writeFile(mapPath, original.replace('label: Waiting on the customer', 'label: Waiting for the customer to reply'));
+  assert.deepEqual(codes(report(await checkBoth(WORKING_STATES, AT), WORKING_STATES).warnings), ['diagram_outdated']);
+  assert.equal((await cli('maps', 'render', WORKING_STATES, '--write')).json.written, true);
+  const rewritten = await readFile(mapPath, 'utf8');
+  assert.equal(withoutDiagram(rewritten), withoutDiagram(original).replace('label: Waiting on the customer', 'label: Waiting for the customer to reply'));
+  assert.match(rewritten, /n_waiting\("Waiting for the customer to reply"\)/);
+  assert.deepEqual(report(await checkBoth(WORKING_STATES, AT), WORKING_STATES).warnings, []);
+  assert.equal((await cli('validate')).json.valid, true);
+
+  // Inbox notes are never maps, and a concept that is not a BehaviorMap is no map.
+  await mkdir(join(mapPath, '../../inbox'));
+  await writeFile(join(mapPath, '../../inbox/1767600000000-0f8b2c1e-1d2a-4c3b-9e8f-7a6b5c4d3e2f.md'), original);
+  assert.deepEqual((await cli('maps', 'list')).json.maps.map(map => map.map), [WORKING_STATES]);
+  for (const name of [`${SUPPORT}:/inbox/1767600000000-0f8b2c1e-1d2a-4c3b-9e8f-7a6b5c4d3e2f`, ref('policies/triage'), `${SUPPORT}:/maps/missing`]) {
+    const unknown = await cli('maps', 'check', name);
+    assert.equal(unknown.error.code, 'UNKNOWN_MAP', name);
+    assert.deepEqual((await mcp('check_map', { map: name })).error, unknown.error);
+  }
+});
+
+// spec: behavior-maps / A hub map does not cover itself
+test('a hub map scoped to its whole hub and citing every concept leaves nothing uncovered, maps included', async t => {
+  const { hub, cli, mcp, checkBoth, mapPath } = await brightdesk(t);
+  // A second map in the hub, also scoped to the whole hub.
+  await writeFile(join(hub, 'maps/first-reply.md'), mapText('The first reply', `
+version: 1
+source: { kind: hub, hub: ${SUPPORT} }
+scope: [""]
+nodes:
+  - { id: arrives, kind: start, label: A request comes in }
+  - { id: replied, label: The customer gets a first reply, cites: [${ref('README')}, ${ref('policies/triage')}, ${ref('policies/escalation')}, ${ref('policies/service-hours')}] }
+  - { id: done, kind: end, label: Done }
+transitions:
+  - { from: arrives, to: replied }
+  - { from: replied, to: done }`));
+  const checked = await checkBoth(undefined, AT);
+  assert.deepEqual(checked.json.maps.map(map => [map.map, map.valid, codes(map.warnings.filter(notPin))]), [
+    [`${SUPPORT}:/maps/first-reply`, true, []], [WORKING_STATES, true, []]]);
+  assert.ok(!checked.json.maps.some(map => map.warnings.some(entry => entry.code === 'uncovered')));
+
+  // Coverage still works: a concept nothing cites is uncovered, and a map can't be cited.
+  const original = await readFile(mapPath, 'utf8');
+  await writeFile(mapPath, original.replace('label: A request comes in, cites: [brightdesk/support:/README] }', 'label: A request comes in }'));
+  assert.deepEqual(report(await checkBoth(WORKING_STATES, AT), WORKING_STATES).warnings.filter(entry => entry.code === 'uncovered').map(({ element }) => element), [ref('README')]);
+  await writeFile(mapPath, original.replace('cites: [brightdesk/support:/policies/escalation]', `cites: [brightdesk/support:/policies/escalation, ${SUPPORT}:/maps/first-reply]`));
+  const citedMap = report(await checkBoth(WORKING_STATES, AT), WORKING_STATES);
+  assert.deepEqual(citedMap.errors.map(({ code, element }) => [code, element]), [['unknown_citation', 'escalated']]);
+  assert.match(citedMap.errors[0].message, /maps are not behaviors/);
+
+  // A scope is a directory of the hub, or "" for all of it; only a hub source takes "".
+  await writeFile(mapPath, original.replace('scope: [""]', 'scope: [policies]'));
+  assert.deepEqual(report(await checkBoth(WORKING_STATES, AT), WORKING_STATES).warnings.filter(notPin), []);
+  await writeFile(mapPath, original.replace('scope: [""]', 'scope: [rotas]'));
+  const unknownScope = report(await checkBoth(WORKING_STATES, AT), WORKING_STATES).errors;
+  assert.deepEqual(unknownScope.map(({ code, element }) => [code, element]), [['unknown_citation', 'scope']]);
+  assert.match(unknownScope[0].message, /rotas/);
+  await writeFile(mapPath, original.replace('source: { kind: hub, hub: brightdesk/support }', 'source: { kind: openspec }'));
+  const notHub = report(await checkBoth(WORKING_STATES, AT), WORKING_STATES).errors;
+  assert.deepEqual(codes(notHub), ['schema']);
+  assert.match(notHub[0].message, /whole hub, for the hub source only/);
+  await writeFile(mapPath, original.replace('source: { kind: hub, hub: brightdesk/support }', 'source: { kind: hub }'));
+  assert.match(report(await checkBoth(WORKING_STATES, AT), WORKING_STATES).errors[0].message, /hub/);
+});
+
+// spec: behavior-maps / Map cites an outdated concept
+test('a hub map warns context_stale for each cited concept that is out of date or deprecated at the instant', async t => {
+  const { cli, mcp, annotate } = await brightdesk(t);
+  await annotate('policies/escalation', 'stale_after: 2026-03-10T00:00:00Z');
+  await annotate('policies/service-hours', 'status: deprecated');
+  const check = async at => {
+    const checked = await cli('maps', 'check', WORKING_STATES, '--at', at);
+    assert.deepEqual(await mcp('check_map', { map: WORKING_STATES, at }), checked.json);
+    const map = report(checked, WORKING_STATES);
+    assert.deepEqual([map.valid, map.at], [true, at]);
+    return contextWarnings(map);
+  };
+  const earlier = await check('2026-03-09T00:00:00Z');
+  assert.deepEqual(earlier.map(([element]) => element), ['next-working-day']);
+  assert.match(earlier[0][1], /policies\/service-hours, which is deprecated/);
+  const later = await check('2026-03-11T00:00:00Z');
+  assert.deepEqual(later.map(([element]) => element), ['next-working-day', 'escalated']);
+  assert.match(later[1][1], /policies\/escalation, which is out of date \(stale_after has passed, at 2026-03-10T00:00:00Z\)/);
+
+  // A freshness rule makes an old concept due for a check: verify, also a warning.
+  const hubJson = join((await cli('list')).json.root, 'hubs/support/hub.json');
+  await writeFile(hubJson, JSON.stringify({ ...JSON.parse(await readFile(hubJson, 'utf8')), freshness: { types: { Policy: 'P1Y' } } }));
+  const verify = await check('2027-02-01T00:00:00Z');
+  assert.deepEqual(verify.map(([element]) => element), ['within-the-hour', 'next-working-day', 'next-working-day', 'waiting', 'escalated']);
+  assert.match(verify[0][1], /policies\/triage, which is due for a check \(last verified more than P1Y ago/);
+  // Warnings only: --strict fails on them; the report is the same.
+  assert.equal((await cli('maps', 'check', WORKING_STATES, '--strict', '--at', '2026-03-09T00:00:00Z')).code, 1);
+});
+
+// spec: behavior-maps / Rendering ignores the clock
+test('rendering a hub map gives the same JSON and Mermaid before and after a cited concept goes out of date', async t => {
+  const { cli, mcp, annotate } = await brightdesk(t);
+  // Rendering takes no instant, so this crosses a real stale_after a few seconds ahead.
+  const staleAt = Math.ceil(Date.now() / 1000) * 1000 + 4000;
+  await annotate('policies/escalation', `stale_after: ${new Date(staleAt).toISOString().replace('.000Z', 'Z')}`);
+  const render = async () => {
+    const outputs = [];
+    for (const format of ['json', 'mermaid']) {
+      const rendered = await cli('maps', 'render', WORKING_STATES, '--format', format);
+      assert.equal(rendered.code, 0, JSON.stringify(rendered.error));
+      assert.deepEqual(await mcp('render_map', { map: WORKING_STATES, format }), rendered.json);
+      outputs.push(rendered.stdout);
+    }
+    return outputs;
+  };
+  const before = await render();
+  assert.ok(Date.now() < staleAt, 'rendered before stale_after');
+  const fresh = report(await cli('maps', 'check', WORKING_STATES, '--at', new Date(staleAt - 1000).toISOString()), WORKING_STATES);
+  assert.deepEqual(contextWarnings(fresh), []);
+  await new Promise(resolve => setTimeout(resolve, staleAt - Date.now() + 200));
+  const stale = report(await cli('maps', 'check', WORKING_STATES), WORKING_STATES);
+  assert.deepEqual(contextWarnings(stale).map(([element]) => element), ['escalated']);
+  const after = await render();
+  assert.deepEqual(after, before);
+  for (const output of after) assert.ok(!output.includes('context_stale') && !output.includes('stale_after'));
+  assert.equal((await cli('maps', 'render', WORKING_STATES, '--at', '2026-03-01T00:00:00Z')).error.code, 'INVALID_INPUT');
+  assert.equal((await mcp('render_map', { map: WORKING_STATES, at: '2026-03-01T00:00:00Z' })).error.code, 'INVALID_INPUT');
+});
+
+test('maps read only the workspace\'s own hubs: a mounted hub\'s map is unlisted, and checking or pinning it is UNKNOWN_MAP', async t => {
+  const { base, env, cli, mcp } = await brightdesk(t);
+  Object.assign(env, { HOME: join(base, 'home'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' });
+  for (const name of ['GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_CONFIG_COUNT']) delete env[name];
+  await mkdir(env.HOME);
+  // Another team's repository holding the same kind of hub, map included, mounted as `partners`.
+  const source = join(base, 'partners');
+  await cp(join(fixtures, 'brightdesk/hubs/support'), source, { recursive: true });
+  await writeFile(join(source, 'hub.json'), JSON.stringify({ ...JSON.parse(await readFile(join(source, 'hub.json'), 'utf8')), id: 'partners/support' }));
+  const git = (...args) => exec('git', args, { cwd: source, env });
+  await git('init', '-q', '-b', 'main');
+  await git('add', '-A');
+  await git('commit', '-q', '-m', 'hub');
+  const added = await cli('mounts', 'add', 'partners', `file://${source}`);
+  assert.equal(added.code, 0, JSON.stringify(added.error));
+  const mounted = 'partners:/maps/working-states';
+  assert.equal((await cli('read', mounted)).json.hub, 'partners');
+
+  assert.deepEqual((await cli('maps', 'list')).json.maps.map(map => map.map), [WORKING_STATES]);
+  assert.deepEqual((await mcp('list_maps')).maps.map(map => map.map), [WORKING_STATES]);
+  const checked = await cli('maps', 'check', mounted);
+  assert.equal(checked.error.code, 'UNKNOWN_MAP');
+  assert.match(checked.error.message, /partners:\/maps\/working-states.*not mounted hubs/);
+  assert.deepEqual((await mcp('check_map', { map: mounted })).error, checked.error);
+  assert.equal((await cli('maps', 'render', mounted)).error.code, 'UNKNOWN_MAP');
+  assert.equal((await cli('maps', 'render', mounted, '--write')).error.code, 'UNKNOWN_MAP');
+  assert.equal((await cli('maps', 'pin', mounted)).error.code, 'UNKNOWN_MAP');
+  assert.equal((await cli('maps', 'behaviors', '--source', 'hub', '--hub', 'partners')).error.code, 'UNKNOWN_HUB');
+  assert.deepEqual(report(await cli('maps', 'check', '--at', '2026-03-01T09:00:00Z'), WORKING_STATES).warnings, []);
+});
+
+test('the skill\'s working-states example passes maps check over the Brightdesk hub', async t => {
+  const { cli, mapPath } = await brightdesk(t);
+  const examples = [...(await readFile(join(kit, 'skills/behavior-map/SKILL.md'), 'utf8')).matchAll(/````markdown\n([\s\S]*?)````/g)].map(match => match[1]);
+  const example = examples.find(text => text.includes('kind: hub'));
+  assert.ok(example);
+  await writeFile(mapPath, example);
+  const checked = report(await cli('maps', 'check', WORKING_STATES, '--strict', '--at', AT), WORKING_STATES);
+  assert.deepEqual([checked.valid, checked.errors, checked.warnings], [true, [], []]);
 });

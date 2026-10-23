@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "id": "brightdesk/support",
+  "description": "How the fictional Brightdesk support team works: triage, waiting on customers, escalation and service hours.",
+  "documents": ["README.md"],
+  "skills": [],
+  "links": []
+}
