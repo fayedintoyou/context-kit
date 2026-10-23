@@ -18,7 +18,7 @@
 
 ## 3. Integration
 
-- [ ] 3.1 After the last slice lands, run `npm test`, `node bin/hub.mjs validate`, `npx openspec validate local-only-tools --strict` and `specs archive --rehearse` on `main`
+- [x] 3.1 After the last slice lands, run `npm test`, `node bin/hub.mjs validate`, `npx openspec validate local-only-tools --strict` and `specs archive --rehearse` on `main`. Done 2026-10-22 on `main` at 56c4af6: `npm test` 521 tests, 519 pass, 0 fail, 2 skipped; `validate` valid; `openspec validate local-only-tools --strict` valid; `specs archive --rehearse` reports no issue for `local-only-tools`
 
 ## Workflow follow-up
 
