@@ -168,8 +168,10 @@ MCP server (stdio): `context-kit-mcp --root <workspace> [--allow-write] [--no-sk
 
 Over HTTP: `CONTEXT_KIT_MCP_TOKEN=<32+ characters> context-kit-mcp --root <workspace>
 --http <port> [--host <address>] [--public-host <host>]... [--allow-origin <origin>]...
-[--max-sessions <n>] [--session-idle <seconds>]`. It serves `/mcp` with the same tools,
-prompts and coded errors, requires `Authorization: Bearer <token>` (the token is only
+[--max-sessions <n>] [--session-idle <seconds>] [--machine-name <name>]`. It serves `/mcp`
+with the same tools, prompts and coded errors, except local-only tools (not offered) and
+this machine's paths in results (renamed `servingMachine…`, with `machine`: the
+`--machine-name`, default the host name; see `remote`), requires `Authorization: Bearer <token>` (the token is only
 ever read from the environment) and listens on `127.0.0.1` unless `--host` says
 otherwise; `--http 0` picks a free port, reported as one JSON line on stderr. A request
 whose `Host` is neither the server's own address nor a `--public-host`, or whose

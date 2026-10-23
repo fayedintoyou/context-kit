@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, writeFile, rm, realpath, symlink, readdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -283,10 +283,15 @@ test('links into a mount resolve there, never past its fetched export, over CLI,
   assert.equal(followed.code, 0, JSON.stringify(followed.error));
   assert.deepEqual([followed.json.hub, followed.json.id], ['shared', 'tables/orders']);
   assert.match(followed.json.content, /pelican order/);
-  // The same over MCP, stdio and HTTP.
-  for (const call of [await mcp(), await http()]) {
-    assert.deepEqual((await call('read_concept', { id: 'personal/main', concept: 'links' })).json, read.json);
-    assert.deepEqual((await call('read_concept', { concept: read.json.links[0].ref })).json, followed.json);
+  // The same over MCP, stdio and HTTP; over HTTP this machine's paths (the root, a file: mount
+  // source) are labeled as the serving machine's (remote-access / Serving machine paths).
+  const servingMachine = ({ root, mount, ...rest }) => ({ machine: hostname(), servingMachineRoot: root, ...rest,
+    ...(mount ? { mount: Object.fromEntries(Object.entries(mount).map(([key, value]) => [key === 'source' && value.startsWith('file:') ? 'servingMachineSource' : key, value])) } : {}) });
+  for (const [call, overHttp] of [[await mcp(), false], [await http(), true]]) {
+    const [linked, follow] = [await call('read_concept', { id: 'personal/main', concept: 'links' }), await call('read_concept', { concept: read.json.links[0].ref })];
+    assert.deepEqual(linked.json, overHttp ? servingMachine(read.json) : read.json);
+    assert.deepEqual(follow.json, overHttp ? servingMachine(followed.json) : followed.json);
+    if (overHttp) assert.match(follow.json.mount.servingMachineSource, /^file:/);
   }
 
   // Declared but not fetched (the export is gone): missing with the reason, and the read succeeds.

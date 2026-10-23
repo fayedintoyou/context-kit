@@ -7,16 +7,16 @@ import { serverFactory } from '../lib/mcp/server.mjs';
 import { httpOptions, serveHttp } from '../lib/mcp/http.mjs';
 
 const usage = 'Usage: node bin/mcp.mjs [--root <directory>] [--allow-write] [--no-skill-prompts] ' +
-  '[--http <port> [--host <address>] [--public-host <host>]... [--allow-origin <origin>]... [--max-sessions <n>] [--session-idle <seconds>]]';
+  '[--http <port> [--host <address>] [--public-host <host>]... [--allow-origin <origin>]... [--max-sessions <n>] [--session-idle <seconds>] [--machine-name <name>]]';
 try {
   const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--allow-write', '--no-skill-prompts',
-    '--http', '--host', '--public-host', '--allow-origin', '--max-sessions', '--session-idle'], ['--public-host', '--allow-origin']);
+    '--http', '--host', '--public-host', '--allow-origin', '--max-sessions', '--session-idle', '--machine-name'], ['--public-host', '--allow-origin']);
   if (positional.length) fail('INVALID_INPUT', usage);
   // HTTP settings, including the token, are validated before the workspace is touched or anything listens.
   const http = options['--http'] === undefined ? undefined : httpOptions(options, process.env);
-  if (!http && ['--host', '--public-host', '--allow-origin', '--max-sessions', '--session-idle'].some(name => name in options)) fail('INVALID_INPUT', 'HTTP options require --http. ' + usage);
+  if (!http && ['--host', '--public-host', '--allow-origin', '--max-sessions', '--session-idle', '--machine-name'].some(name => name in options)) fail('INVALID_INPUT', 'HTTP options require --http. ' + usage);
   const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT),
-    allowWrite: Boolean(options['--allow-write']), source: 'mcp', transport: http ? 'http' : 'stdio' };
+    allowWrite: Boolean(options['--allow-write']), source: 'mcp', transport: http ? 'http' : 'stdio', ...(http ? { machine: http.machine } : {}) };
   const create = await serverFactory(selection, { skillPrompts: !options['--no-skill-prompts'] });
   if (http) await serveHttp(create, http);
   else await create().connect(new StdioServerTransport());

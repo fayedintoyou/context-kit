@@ -69,7 +69,10 @@ CONTEXT_KIT_MCP_TOKEN="$(security find-generic-password -a "$USER" -s CONTEXT_KI
   npm run -s mcp -- --http 8788 --public-host context-origin.example.com
 ```
 
-Add `--allow-write` only if remote hosts should capture notes. To keep it running,
+Add `--allow-write` only if remote hosts should capture notes. Results name this
+machine by `--machine-name <name>`, by default its host name, which often carries
+your name or the device's model; set a neutral one, such as `--machine-name
+studio`, in the command your launch agent runs. To keep it running,
 wrap that command in a launch agent (macOS) or a user service (Linux) that reads the
 token at start; without it the server refuses to start rather than run open. A
 login service doesn't load your shell profile, so give the wrapper absolute paths
@@ -82,6 +85,24 @@ client runs somewhere else, so a path it sends, or one it is sent back, would na
 the wrong machine. They are not listed over HTTP, and a call to one fails with
 `UNKNOWN_OPERATION` before anything runs. Each such tool declares `localOnly` where
 it is defined in `lib/operations.mjs`.
+
+Paths in results over HTTP are the serving machine's, never yours, so they are
+labeled. Every result field holding one is renamed with a `servingMachine` prefix
+(the workspace `root` becomes `servingMachineRoot`, a repository's `path` in
+`list_repos` becomes `servingMachinePath`, a party's `checkout` becomes
+`servingMachineCheckout`, a `file:` mount source becomes `servingMachineSource`),
+and the result names the machine as `machine`: `--machine-name <name>`, by default
+its host name. A client that reads `path` gets nothing rather than a directory that
+doesn't exist where it runs. Relative paths, such as a concept's `README.md`, are
+unchanged. Free text that quotes a path, such as a remedy command or a skill
+refresh's reason, names it by its label instead: `git -C <servingMachineCheckout>
+fetch origin`, `<servingMachineSkills> is a symbolic link`, or
+`<servingMachineHome>/…` and `<servingMachineProject>/…` for directories below your
+home or a project that skills are installed in. Each operation
+declares its path fields as `localPaths` in `lib/operations.mjs`. Stdio and the CLI
+return results unchanged. Two things are not relabeled: paths in error messages
+(the error code is the contract), and text you wrote yourself, such as a concept
+whose Markdown mentions a directory.
 
 ## 2. Create the tunnel
 
