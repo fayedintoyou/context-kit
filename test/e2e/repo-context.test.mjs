@@ -285,8 +285,11 @@ test('omitted directories open on their own, and an omitted path too long to sho
   assert.equal(listed.length, 200);
   const omittedFile = tree.first.endsWith('/') ? `${tree.first}file.md` : tree.first;
   assert.ok(listed.includes(omittedFile), omittedFile);
-  // The directory command, run through the CLI, opens the first omitted directory.
-  const directory = (tree.first.endsWith('/') ? tree.first : `${dirname(tree.first)}/`).slice(0, -1);
+  // The directory command, run through the CLI, opens the first omitted directory: the first
+  // omitted entry when that is a directory, else (the cut fell between a directory and its file,
+  // which depends on the checkout path's length) the next directory after it.
+  const shown = json.tree.entries.filter(entry => entry.endsWith('/')).length;
+  const directory = `dir ${String(shown).padStart(3, '0')}-${'x'.repeat(30)}`;
   assert.equal(open, `repos open team/fruit/orchard '${directory}'`);
   const opened = await cli(['repos', 'open', 'team/fruit/orchard', directory]);
   assert.deepEqual([opened.json.path, opened.json.tree.entries], [directory, [`${directory}/file.md`]]);
