@@ -51,7 +51,7 @@ Opening a located repository SHALL return pointers (path, size, SHA-256) to regu
 - **THEN** opening returns no pointer for it and a warning naming `CLAUDE.md`, and the outside file is not read
 
 ### Requirement: Default bootstrap
-Every located repository SHALL get, with no configuration, a bootstrap: instruction pointers, the repository concept and a tree of git-tracked paths under the root or subpath, sorted by code point, to depth 2 and at most 150 entries, with deeper content counted per directory. The whole result SHALL fit 8 KiB of compact JSON, trimming the tree, then declared pointers, with `truncated` reported.
+Every located repository SHALL get, with no configuration, a bootstrap: instruction pointers, the repository concept and a tree of git-tracked paths under the root or subpath, in code-point order, to depth 2 and at most 150 entries, deeper content counted per directory. Any result SHALL fit 8 KiB of compact JSON, keeping the resolution and root instruction pointers and trimming, in order, the concept summary, tree, declared pointers and innermost instruction pointers, reported in `truncated`.
 
 #### Scenario: Zero-configuration bootstrap
 - **WHEN** a Repository concept declares no `context`, and its checkout tracks `README.md`, `src/app.js` and `src/lib/deep/x.js` and has an ignored `build/` directory, and a caller opens it
@@ -59,14 +59,26 @@ Every located repository SHALL get, with no configuration, a bootstrap: instruct
 
 #### Scenario: Large tree
 - **WHEN** a checkout tracks 400 files with long names in its root directory and a caller opens it
-- **THEN** the compact JSON result is at most 8192 bytes, the tree lists a prefix of the files in code-point order, and `truncated` gives the count omitted and the first omitted path
+- **THEN** the compact JSON result is at most 8192 bytes, the tree lists a prefix of the files in code-point order, and `truncated` gives the count omitted, the first omitted path and commands that, run as given, list the omitted entries
+
+#### Scenario: Deep instructions
+- **WHEN** a checkout tracks `AGENTS.md` and `CLAUDE.md` in each of 99 nested directories and a caller opens it at the innermost one
+- **THEN** the result is at most 8192 bytes, keeps both root pointers and an outermost-first prefix of the rest, and `truncated` gives the count omitted and the first directory to read on from
+
+#### Scenario: Adversarial metadata
+- **WHEN** a Repository has 161 aliases, an 80-character title of 4-byte characters and a 30-level concept id, and a caller opens it by each name, at several depths of that checkout
+- **THEN** every result is at most 8192 bytes with the resolution and both root pointers, and every alias cut or field clipped is reported in `truncated` with where to read it in full
 
 ### Requirement: Paths stay inside the checkout
-Subpaths SHALL be relative directories without `.` or `..` segments, backslashes or a leading `/` (`INVALID_PATH`) that exist in the checkout (`UNKNOWN_PATH`). Every file or directory read SHALL have no symlinked component below the checkout root and a real path inside it; otherwise a subpath fails with `PATH_ESCAPE` and a file is skipped.
+Subpaths SHALL be relative directories of at most 200 characters without `.`, `..` or `.git` segments, backslashes, control characters or a leading `/` (`INVALID_PATH`), matched in NFC, and caselessly on a caseless file system, to one tracked directory (`UNKNOWN_PATH` if none, `INVALID_PATH` if several). Every file or directory read SHALL have no symlinked component below the checkout root and a real path inside it; otherwise a subpath fails with `PATH_ESCAPE` and a file is skipped.
 
 #### Scenario: Escaping or missing subpath
 - **WHEN** a caller opens a repository at `../outside`, at `/etc`, and at `docs/none`, which does not exist
 - **THEN** the first two fail with `INVALID_PATH` and the third with `UNKNOWN_PATH`
+
+#### Scenario: Unicode spelling
+- **WHEN** a checkout tracks `café/file.md` spelled in NFC, holds an untracked-only `scratch` directory, and a caller opens it at the NFD spelling of `café`, then at `scratch`
+- **THEN** the first returns the same result as the NFC spelling, in the index's spelling, and the second fails with `UNKNOWN_PATH`; once the index also tracks an NFD `café/`, both spellings fail with `INVALID_PATH`, as `docs` does beside a tracked `Docs/` on a caseless file system
 
 #### Scenario: Symlinked parent
 - **WHEN** a tracked directory `notes` is replaced by a symlink to a directory outside the checkout holding `AGENTS.md` and `x.md`, and a caller opens the repository at `notes` and builds a pack including `notes/**`

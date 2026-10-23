@@ -985,7 +985,7 @@ test('the launcher runs the workspace from any directory, with or without its di
   assert.deepEqual([status.state, status.onPath], ['installed', false]);
   assert.match(status.reason, /is not on PATH; add export PATH=/);
   // Off PATH, the skill names the launcher by its absolute path.
-  assert.ok((await routingBody(join(base, 'claude/skills/my-repos'))).includes(`\`${launcher} repos\``));
+  assert.ok((await routingBody(join(base, 'claude/skills/my-repos'))).includes(`\`${launcher} repos open <repo>\``));
 
   // With its directory on PATH, `context-kit` alone works at a shell, but the skill keeps the
   // absolute path: agent apps started outside a shell may not have that PATH.
@@ -996,7 +996,7 @@ test('the launcher runs the workspace from any directory, with or without its di
   status = launcherItem((await run(['--root', workspace, 'agents', 'status'], onPath)).json.items);
   assert.deepEqual([status.state, status.onPath], ['installed', true]);
   const body = await routingBody(join(env.HOME, '.agents/skills/my-repos'));
-  assert.ok(body.includes(`\`${launcher} repos\`. Both work from any directory. At a terminal,\n\`context-kit\` is the same launcher`), body);
+  assert.ok(body.includes(`\`${launcher} repos open <repo>\`. Both work from any directory. At a terminal,\n\`context-kit\` is the same launcher`), body);
   const bare = await launch('/bin/sh', ['-c', 'context-kit repos'], { HOME: env.HOME, PATH: `${dirname(launcher)}:/usr/bin:/bin` }, elsewhere);
   assert.deepEqual(bare.json.repositories.map(item => item.id), ['personal/main/room']);
 
@@ -1481,8 +1481,8 @@ test('--global-rule writes a small Claude Code user rule naming the resolve oper
   assert.match(ruleResults(installed.json.results)[0].reason, /no user rules directory/);
   const text = await readFile(ruleOf(base), 'utf8');
   assert.ok(points(text) < 600, `${points(text)} characters`);
-  assert.match(text, /`list_repos` tool of the `context-workspace` MCP server/);
-  assert.ok(text.includes(`${join(base, 'home/.local/bin/context-kit')} repos`), text);
+  assert.match(text, /`open_repo` tool of the `context-workspace` MCP server/);
+  assert.ok(text.includes(`${join(base, 'home/.local/bin/context-kit')} repos open <repo>`), text);
   assert.doesNotMatch(text, /the room|fayelore|github\.com\/me\/room/);
   assert.doesNotMatch(text, /^---/, 'no paths frontmatter: it loads in every project');
   const status = (await agents('status')).json.items.find(item => item.kind === 'rule');
@@ -1558,7 +1558,7 @@ test('an opted-in edited rule is kept unless forced, and uninstall removes only 
   assert.deepEqual([kept.action, kept.code], ['edited', 'RULE_EDITED']);
   assert.equal(await readFile(ruleOf(base), 'utf8'), 'mine\n');
   assert.equal(claudeRule((await agents('install', '--force')).json.results).action, 'updated');
-  assert.match(await readFile(ruleOf(base), 'utf8'), /list_repos/);
+  assert.match(await readFile(ruleOf(base), 'utf8'), /open_repo/);
   await writeFile(join(base, 'claude/rules/mine.md'), 'my own rule\n');
   const removed = await agents('uninstall');
   assert.equal(claudeRule(removed.json.results).action, 'removed');
@@ -1652,7 +1652,7 @@ test('the opt-in follows CLAUDE_CONFIG_DIR: the old rule goes, the new directory
   const moved = await run(['--root', workspace, 'agents', 'install', '--agent', 'claude'], { CLAUDE_CONFIG_DIR: join(base, 'claude2') });
   assert.deepEqual(ruleResults(moved.json.results).map(item => [item.path, item.action]), [[ruleOf(base), 'removed'], [join(base, 'claude2/rules/context-kit.md'), 'installed']]);
   assert.equal(await exists(ruleOf(base)), false);
-  assert.match(await readFile(join(base, 'claude2/rules/context-kit.md'), 'utf8'), /list_repos/);
+  assert.match(await readFile(join(base, 'claude2/rules/context-kit.md'), 'utf8'), /open_repo/);
 });
 
 // Harnesses beyond Claude Code and Codex. Copilot CLI and Cursor register through their JSON
