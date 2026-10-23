@@ -1286,6 +1286,12 @@ test('hub behaviors are the hub\'s concepts with trust and freshness, never its 
   assert.equal((await mcp('list_behaviors', { source: 'lid', inbox: true })).error.code, 'INVALID_INPUT');
   assert.equal((await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--store', 'shared')).error.code, 'INVALID_INPUT');
   assert.equal((await cli('maps', 'behaviors', '--source', 'openspec', '--full')).error.code, 'INVALID_INPUT');
+  // Only hub behaviors depend on the clock, so only they take an instant.
+  const timeless = await cli('maps', 'behaviors', '--source', 'lid', '--at', at);
+  assert.equal(timeless.error.code, 'INVALID_INPUT');
+  assert.match(timeless.error.message, /only to the hub source/);
+  assert.deepEqual((await mcp('list_behaviors', { source: 'lid', at })).error, timeless.error);
+  assert.equal((await mcp('list_behaviors', { source: 'openspec', at })).error.code, 'INVALID_INPUT');
   assert.equal((await cli('maps', 'list', '--full')).error.code, 'INVALID_INPUT');
 
   await annotate('policies/escalation', 'owner: Rui');
@@ -1297,6 +1303,19 @@ test('hub behaviors are the hub\'s concepts with trust and freshness, never its 
   const rota = (await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--at', at)).json.behaviors.find(behavior => behavior.title === 'Rota');
   assert.equal(rota.description, 'Two people are on shift at all times.');
   await rm(join(hub, 'policies/rota.md'));
+
+  // Summaries stay small and one line whatever the frontmatter holds; --full and read have the rest.
+  const huge = 'Every request is answered. '.repeat(800);
+  await writeFile(join(hub, 'policies/huge.md'), `---\ntype: Policy\ntitle: ${'Long title '.repeat(500)}\ndescription: |\n  First line.\n  ${huge}\n---\n\n# Huge\n`);
+  const bounded = await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--at', at);
+  const entry = bounded.json.behaviors.find(behavior => behavior.file === 'hubs/support/policies/huge.md');
+  for (const value of [entry.title, entry.description, entry.okf.title, entry.okf.description]) {
+    assert.ok([...value].length <= 300 && !value.includes('\n'), value.slice(0, 80));
+    assert.ok(value.endsWith('…'));
+  }
+  assert.ok(entry.description.startsWith('First line. Every request'));
+  assert.ok(Buffer.byteLength(bounded.stdout) < 8000, String(Buffer.byteLength(bounded.stdout)));
+  assert.deepEqual(await mcp('list_behaviors', { source: 'hub', hub: SUPPORT, at }), bounded.json);
 });
 
 // spec: behavior-sources / Reproducible freshness
@@ -1316,12 +1335,17 @@ test('freshness is evaluated at the instant given, which the result reports', as
   assert.equal(before.fingerprint, after.fingerprint);
   // An offset other than Z is the same instant, reported in UTC.
   assert.equal((await escalation('2026-03-11T01:30:00+01:30'))[0], '2026-03-11T00:00:00Z');
-  // Leap days are real dates in leap years.
-  assert.equal((await escalation('2028-02-29T12:00:00Z'))[0], '2028-02-29T12:00:00Z');
+  // Every real date is accepted as written: the end of a short February, leap days in leap years
+  // (2000, but not 1900 or 2100, below), the last instant ISO 8601 writes in four digits.
+  for (const at of ['2026-02-28T09:00:00Z', '2026-02-02T00:00:00Z', '2100-02-28T00:00:00Z', '2000-02-29T00:00:00Z', '2028-02-29T12:00:00Z',
+    '2026-04-30T23:59:59Z', '0050-03-01T00:00:00Z', '9999-12-31T23:59:59.999Z']) assert.equal((await escalation(at))[0], at, at);
   // Without an offset the instant would depend on the machine, so it is refused.
   // Nor is an impossible date or time, which would otherwise roll over into another instant.
   for (const at of ['2026-03-11T00:00:00', '2026-03-11', 'tomorrow', '2026-02-30T00:00:00Z', '2026-02-29T00:00:00Z', '1900-02-29T00:00:00Z',
-    '2026-13-01T00:00:00Z', '2026-00-10T00:00:00Z', '2026-03-11T24:00:00Z', '2026-03-11T10:60:00Z', '2026-03-11T10:00:60Z', '2026-03-11T10:00:00+24:00']) {
+    '2026-13-01T00:00:00Z', '2026-00-10T00:00:00Z', '2026-03-11T24:00:00Z', '2026-03-11T10:60:00Z', '2026-03-11T10:00:60Z', '2026-03-11T10:00:00+24:00',
+    '2100-02-29T00:00:00Z', '2026-04-31T00:00:00Z', '0000-01-01T00:00:00Z', '2026-03-11T10:00:00.1234Z',
+    // An offset that moves the instant past year 9999 or before year 1.
+    '9999-12-31T23:59:59-23:59', '0001-01-01T00:00:00+00:01']) {
     const refused = await cli('maps', 'behaviors', '--source', 'hub', '--hub', SUPPORT, '--at', at);
     assert.equal(refused.error.code, 'INVALID_INPUT', at);
     assert.deepEqual((await mcp('list_behaviors', { source: 'hub', hub: SUPPORT, at })).error, refused.error);

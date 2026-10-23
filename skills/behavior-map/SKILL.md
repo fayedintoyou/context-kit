@@ -240,6 +240,8 @@ hub:
   is due for a check, out of date or deprecated: tell the user which state rests
   on it, and suggest they update or verify the concept in the hub. Don't change
   the map to hide the warning; the diagram never shows it.
+- A declared status's evidence path is relative to the repository (workspace)
+  root, not to the hub: `hubs/support/policies/triage.md`, not `policies/triage.md`.
 - Only the workspace's own hubs are read. A mounted hub's maps aren't listed and
   its concepts can't be cited.
 

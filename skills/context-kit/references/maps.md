@@ -72,7 +72,8 @@ listed in `skipped` with its reason: `symlink`, `too large` (over 128 KiB) or
 concept's, or its first line of prose), `file`, `fingerprint` (of the whole file,
 frontmatter included), `okf` (the trust summary: `type`, `status`, `trust`,
 `stale`, ...) and `freshness` (`action` `read`, `verify` or `refresh`, with its
-`reason` and `due`). The text is left out, so a big hub stays a small result:
+`reason` and `due`). Titles and descriptions are one line, cut to 200 and 300
+characters with `…`. The text is left out, so a big hub stays a small result:
 `read <hub-id>:/<concept-id>` (MCP `read_concept`) reads one concept, and `--full`
 (MCP `full: true`) adds every concept's `text`. `BehaviorMap`
 concepts are never listed: maps aren't behaviors. Inbox notes are listed only
@@ -90,8 +91,12 @@ Freshness depends on the clock, so `maps behaviors` and `maps check` take
 current time. A time without an offset (`2026-03-01T09:00:00`, `2026-03-01`)
 fails with `INVALID_INPUT`, since it would mean different instants on different
 machines, and so does an impossible date or time (`2026-02-30`, a February 29
-outside a leap year, hour 24, minute or second 60, an offset of 24 hours or more)
-rather than rolling over into another instant. Results that depend on it report the instant used, in UTC, as `at`: a
+outside a leap year, hour 24, minute or second 60, an offset of 24 hours or more,
+more than three digits of a second) rather than rolling over into another instant,
+and so does a time whose offset moves it outside years 0001 to 9999. Fractions of
+a second have at most three digits (`2026-03-01T09:00:00.250Z`). Only `hub`
+listings depend on the clock: `--at` with `--source openspec` or `lid` fails with
+`INVALID_INPUT`. `maps check --at` applies the instant to maps over a hub. Results that depend on it report the instant used, in UTC, as `at`: a
 `hub` listing, and the check report of each map over a hub. Rendering never
 depends on the clock and takes no `--at`.
 
