@@ -496,7 +496,8 @@ test('an authorized HTTP client reads a mounted hub exactly as a stdio client do
 // which the workspace repository also references. The store's parties are recorded: site is
 // fetched, game's checkout lost its remote and kiosk's was never fetched, so their remedies quote
 // checkouts. Agents are installed for Codex in the temporary HOME, and the installed my-repos was
-// then replaced, so a skill refresh reports a reason naming its directory. Git and gh are
+// then replaced, and in a project outside home and every checkout whose skills directory then
+// became a symbolic link, so a skill refresh reports reasons naming both directories. Git and gh are
 // isolated: PATH holds only git and a stand-in codex, so nothing reaches a network.
 async function pathsWorkspace({ base, workspace, env }) {
   const bin = join(base, 'bin');
@@ -576,6 +577,12 @@ async function pathsWorkspace({ base, workspace, env }) {
   const installed = join(env.HOME, '.agents/skills/my-repos');
   await rm(installed, { recursive: true, force: true });
   await put(installed, 'SKILL.md', '---\nname: my-repos\ndescription: Mine.\n---\n\nMine.\n');
+  // And for a project outside home and every checkout, whose skills directory then became a symbolic link.
+  const project = join(base, 'proj');
+  await mkdir(project);
+  await hub('agents', 'install', '--agent', 'codex', '--scope', 'project', '--project', project);
+  await exec('mv', [join(project, '.agents/skills'), join(base, 'moved-skills')]);
+  await symlink(join(base, 'moved-skills'), join(project, '.agents/skills'));
   await commitAll(workspace);
   return { room: await realpath(room) };
 }
@@ -673,4 +680,7 @@ test('every tool listed over HTTP, called with valid arguments, returns no fixtu
   assert.equal(replaced.code, 'SKILL_REPLACED', JSON.stringify(added.skills));
   assert.equal(replaced.servingMachinePath, join(context.env.HOME, '.agents/skills/my-repos'));
   assert.match(replaced.reason, /^<servingMachinePath> was replaced since install/);
+  const linked = added.skills.filter(item => item.code === 'SYMLINKED_PATH');
+  assert.ok(linked.length, JSON.stringify(added.skills));
+  for (const item of linked) assert.match(item.reason, /^<servingMachineSkills> is a symbolic link; Context Kit writes <servingMachineSkills> only through real directories$/);
 });

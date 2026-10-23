@@ -96,7 +96,9 @@ its host name. A client that reads `path` gets nothing rather than a directory t
 doesn't exist where it runs. Relative paths, such as a concept's `README.md`, are
 unchanged. Free text that quotes a path, such as a remedy command or a skill
 refresh's reason, names it by its label instead: `git -C <servingMachineCheckout>
-fetch origin`, `<servingMachineHome>/.agents/skills is not writable`. Each operation
+fetch origin`, `<servingMachineSkills> is a symbolic link`, or
+`<servingMachineHome>/…` and `<servingMachineProject>/…` for directories below your
+home or a project that skills are installed in. Each operation
 declares its path fields as `localPaths` in `lib/operations.mjs`. Stdio and the CLI
 return results unchanged. Two things are not relabeled: paths in error messages
 (the error code is the contract), and text you wrote yourself, such as a concept
