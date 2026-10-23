@@ -199,7 +199,12 @@ When any repositories are registered, core generates a `my-repos` skill and
 `agents install` installs it. Agents choose skills by their descriptions, so the
 description names your repositories, and agents pick it up when you mention one
 from any directory. Its body gives each upstream, alias, keyword and local path
-and tells agents not to search the filesystem. `repos locate`, `clone`, `scan` and
+and tells agents not to search the filesystem. It tells them to open a mentioned
+repository first, with the exact `repos open <id>` launcher command for each one
+(or the `open_repo` tool), adding `--role <role>` when reviewing with a role, then
+to read the instruction files and concept the result points at. Nothing from a
+repository's `context` is copied into the skill, so its frontmatter and body don't
+change when `context` does. `repos locate`, `clone`, `scan` and
 `setup` update installed copies at once.
 
 A skill description holds at most 1,024 characters, counted as Unicode code points,
@@ -237,7 +242,7 @@ gets them from its own `agents install`.
 ## Reaching the workspace from anywhere
 
 The skill never says `cd` into the workspace. It names one operation for resolving a
-repository (today `list_repos`): as a tool of the workspace's MCP server, by the
+repository (`open_repo`, `repos open`): as a tool of the workspace's MCP server, by the
 name it is registered under, and as a command of the `context-kit` launcher. Every
 other command it gives, such as `repos clone`, `repos locate`, `read` and
 `repos sync`, also runs through the launcher.

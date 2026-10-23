@@ -11,8 +11,8 @@
 
 ## 2. Routing skill (slice `routing`)
 
-- [ ] 2.0 Before starting, confirm that `machine-setup` is archived on `main` (its `skill-frontmatter` slice, the routing renderer that names the `resolve` operation, and `portable-entry` slice, the `context-kit` launcher, landed), and record the output in the slice PR description
-- [ ] 2.1 Add the "open it first" instruction with the exact `repos open <id>` command per repository (and `--role` when reviewing) to the `my-repos` body in `lib/repos.mjs`, leaving the frontmatter renderer, which `machine-setup` owns, untouched; verify with `test/e2e/repos.test.mjs` linked to `repository-context / One call to start`, asserting the body names `open_repo` and `context-kit repos open <id>` for the same ids, not `list_repos` as the resolve step, and identical frontmatter with and without `context`
+- [x] 2.0 Before starting, confirm that `machine-setup` is archived on `main` (its `skill-frontmatter` slice, the routing renderer that names the `resolve` operation, and `portable-entry` slice, the `context-kit` launcher, landed), and record the output in the slice PR description
+- [x] 2.1 Add the "open it first" instruction with the exact `repos open <id>` command per repository (and `--role` when reviewing) to the `my-repos` body in `lib/repos.mjs`, leaving the frontmatter renderer, which `machine-setup` owns, untouched; verify with `test/e2e/repos.test.mjs` linked to `repository-context / One call to start`, asserting the body names `open_repo` and `context-kit repos open <id>` for the same ids, not `list_repos` as the resolve step, and identical frontmatter with and without `context`
 
 ## 3. The `context` field and declared pointers (slice `fields`)
 
