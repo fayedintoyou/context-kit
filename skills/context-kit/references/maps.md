@@ -143,7 +143,8 @@ A declared `status` says what the map's author can show:
 - `evidence` lists at least one item: a repository path (relative to the root,
   without `.` or `..` segments; it must exist, and is looked up without
   following symlinks, so it can't name anything outside the repository; a
-  directory on its path replaced while it is checked is an error too), a pull
+  symlink on its path, or a directory on it replaced while it is checked, gives
+  one `evidence_missing` message that never depends on what is outside), a pull
   request as `#<n>`, or an `https://` link. Anything else is `evidence_missing`.
 - `fixed_by` names the node that shows the fix, which must declare `fixed`
   (otherwise `fix_target`). The diagram draws a dashed "with the fix" edge

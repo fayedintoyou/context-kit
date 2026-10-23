@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -548,6 +548,57 @@ test('evidence naming a repository path that does not exist is an error naming t
   assert.deepEqual(accepted.errors, []);
   assert.deepEqual(accepted.statuses['two-popups'].declared.evidence, [{ kind: 'path', value: 'models' }, { kind: 'pull_request', value: '#212' },
     { kind: 'link', value: 'https://example.com/pigeon/issues/212' }]);
+});
+
+// spec: behavior-maps / Missing evidence file
+test('evidence through a swapped directory reads the same over CLI and MCP whether or not it exists outside', async t => {
+  const { base, root, cli, mcp, editMap, checkBoth } = await fixture(t, 'pigeon-status');
+  await mkdir(join(root, 'proofs'));
+  await mkdir(join(base, 'outside'));
+  await writeFile(join(base, 'outside/Secret.tla'), 'only outside the repository\n');
+  // The two-popups error for one evidence item, with the item's name replaced, over CLI and MCP alike.
+  const outcome = async item => {
+    await editMap(text => text.replace(/evidence: \[[^\]]*, "#212"\]/, `evidence: [${item}, "#212"]`));
+    const errors = report(await checkBoth('alerts')).errors;
+    return JSON.stringify(errors).replaceAll(item, '<item>');
+  };
+  const missing = await outcome('proofs/Ghost.tla');
+  assert.equal(await outcome('proofs/Secret.tla'), missing);
+  assert.match(missing, /does not exist in the repository/);
+
+  // proofs/ replaced by a symlink to the directory outside: one answer, whether the file is there or not.
+  await rename(join(root, 'proofs'), join(base, 'proofs-dir'));
+  await symlink(join(base, 'outside'), join(root, 'proofs'));
+  const swapped = await outcome('proofs/Ghost.tla');
+  assert.equal(await outcome('proofs/Secret.tla'), swapped);
+  assert.match(swapped, /evidence_missing.*not a plain path in the repository/);
+
+  // proofs/ swapped back and forth while the checks run: each check, over either transport, gives
+  // one of those two answers (CLI and MCP are separate checks here, so each may land on either).
+  await rm(join(root, 'proofs'));
+  await rename(join(base, 'proofs-dir'), join(root, 'proofs'));
+  let flipping = true;
+  const flipper = (async () => {
+    while (flipping) {
+      await rename(join(root, 'proofs'), join(base, 'proofs-dir'));
+      await symlink(join(base, 'outside'), join(root, 'proofs'));
+      await new Promise(resolve => setImmediate(resolve));
+      await rm(join(root, 'proofs'));
+      await rename(join(base, 'proofs-dir'), join(root, 'proofs'));
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  })();
+  try {
+    for (let round = 0; round < 4; round++) {
+      for (const item of ['proofs/Secret.tla', 'proofs/Ghost.tla']) {
+        await editMap(text => text.replace(/evidence: \[[^\]]*, "#212"\]/, `evidence: [${item}, "#212"]`));
+        for (const result of [report(await cli('maps', 'check', 'alerts')).errors, report({ json: await mcp('check_map', { map: 'alerts' }) }).errors]) {
+          const seen = JSON.stringify(result).replaceAll(item, '<item>');
+          assert.ok([missing, swapped].includes(seen), `${item}: ${seen}`);
+        }
+      }
+    }
+  } finally { flipping = false; await flipper; }
 });
 
 // One state with a linked test, one without, and one declared working without one.
