@@ -188,6 +188,16 @@ The mounted directory must hold a `hub.json` and an OKF bundle. `mounts add` wri
 the declaration; `mounts fetch` exports the pinned commit, read-only, into untracked
 `.state/mounts/<name>/`, never under `hubs/`. The `mounts` help topic has the rules.
 
+A fetched mount is read like a workspace hub, under its mount name, and every
+concept result carries a qualified `ref`, `<hub-id>:/<concept-id>`. Every MCP
+client the server admits, over stdio or the remote HTTP server, sees mounted
+content and its `mount` provenance exactly like workspace hubs. Its Repository
+concepts join the registry as `<mount>:/<concept-id>`, with checkouts recorded per
+machine as for any repository. Concepts sharing an upstream are one repository
+(workspace hubs first, then mounts by name), and a title or alias a mount claims
+for a different upstream than a workspace hub, or that only mounts claim, is a
+warning, never a `validate` failure.
+
 ## Migrating
 
 Hubs created before OKF support have plain Markdown documents. For each one, add

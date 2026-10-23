@@ -127,7 +127,10 @@ A hub kept in another git repository can be mounted next to your own:
 `mounts add <name> <source> [--ref <ref>] [--path <dir>]` pins it to a commit in
 `context-kit.json`, `mounts fetch` fetches exactly the pinned commits on another
 machine, and `mounts` lists them with their status and trust counts. Sources never
-carry credentials; private ones use your git credential helpers or SSH. See
+carry credentials; private ones use your git credential helpers or SSH. A
+mounted hub's Repository concepts reach `repos` and `my-repos` as
+`<mount>:/<concept-id>`, mapped to this machine's checkouts, and every MCP client
+you admit (stdio or HTTP) sees mounted content like your own hubs. See
 `help mounts`.
 
 ## Agents over MCP

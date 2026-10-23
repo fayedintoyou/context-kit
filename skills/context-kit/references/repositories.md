@@ -392,6 +392,10 @@ room left for further names. Each shard's description says `(1 of 2)` and its bo
 its own repositories and names the other shards. Shards are installed, updated and
 removed like the skill itself, so removing repositories folds them back into one.
 
+Repositories from mounted hubs are listed too, as `<mount>:/<concept-id>` with
+their mount; names they dispute, recovery for mounts not fetched here and how one
+upstream registered twice is one repository are in [mounts](mounts.md#repositories-from-mounts).
+
 Generated skills use only the standard Agent Skills frontmatter keys (`name`,
 `description` and `metadata`). `npm run skills-ref` in the toolkit checks rendered
 skills with the reference validator when `uv` is installed.

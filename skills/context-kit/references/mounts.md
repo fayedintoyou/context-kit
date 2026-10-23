@@ -143,6 +143,67 @@ A declared mount that is not available never breaks the other hubs:
   not a concept): addressing it fails with `MOUNT_BROKEN` naming the file; the
   same commands warn. Pin a commit whose content is a hub, or `mounts remove` it.
 
+## Repositories from mounts
+
+Repository concepts in a fetched mount (outside its inbox) join the registry as
+`<mount>:/<concept-id>`, such as `shared:/repos/orders`, carrying `mount`. `repos`,
+`list_repos`, `repos locate`, `clone`, `scan`, `open` and `my-repos` include them.
+Checkouts stay per machine in `.state/checkouts.json`, keyed by upstream: every
+workspace mounting the hub shares the list, and each machine records its own paths.
+A new repository in a mounted hub is added in that hub's repository and arrives
+here with `mounts upgrade`. `mounts add`, `fetch`, `upgrade` and `remove` refresh
+`my-repos` and its installed, unchanged copies; a refresh that fails is a
+warning, since the mount change is already made.
+
+- **One repository per upstream.** Concepts sharing an upstream, a mount among
+  them, are one repository. Its id is the first by precedence (workspace hubs by
+  hub then concept ID, then mounts by name then concept ID); the rest are its
+  `alternateIds`, which every `repos` command accepts. Only that concept's title,
+  aliases and `context` count, and `context` refs resolve in its own hub, so
+  `repos open shared:/repos/orders` may open `data:/repos/orders` with a warning
+  that the other concept's `context` is ignored.
+- **Names across mounts.** Every kind of name (id, alternate id, title, alias,
+  upstream name, keyword) goes through one precedence, each collision a warning,
+  never a `validate` failure: an id is its repository's alone; a name a workspace
+  hub's repository claims in any way is lost by every mount claiming it; a title,
+  alias or upstream name only mounts claim names none of them
+  (`AMBIGUOUS_REPOSITORY`; use the id). An exact id always resolves. A mounted
+  repository's names compare with any other after Unicode compatibility
+  normalization (NFKC) and full case folding, so `café` in NFD and fullwidth
+  `ｓｉｔｅ` are the same names as `café` and `site`; two workspace repositories'
+  names compare case-insensitively, as without mounts. Claims among
+  workspace hubs alone still fail `validate`. `repos`, `list_repos`, `repos open`
+  and `my-repos` show a repository only the names that open it.
+- **Effective names.** `my-repos` triggers only on names a repository owns
+  undisputed. A disputed name appears only in the body, with the ids it may mean.
+  Keywords are never identifiers: a keyword several repositories share is listed
+  once, and one naming another repository, a mount involved, is dropped with a
+  warning. All of this happens before the description budget, so a dispute
+  between mounts never costs another repository a name.
+- **Mounted text stays text.** A mount's names reach the description only as YAML
+  strings, on one line with format characters (bidi overrides, zero widths)
+  removed, and its ids are shell-quoted in every command. A mounted Repository
+  concept whose ID or resource holds whitespace, a backtick, or a control or
+  format character, or whose resource is a local path, is not registered, with a
+  warning. A mounted repository brings at most 20 aliases and 20 keywords of at
+  most 60 characters (and a title of at most 80); more are dropped with a warning.
+  A mount registers at most 200 Repository concepts (by concept ID in code point
+  order) whose resource is at most 300 characters. Warnings are at most 500
+  characters each and 100 in all, those naming a workspace repository first, and
+  the body's "Names that need an id" lines name at most five of a shard's ids.
+- **Your names first.** The workspace's repositories share a `my-repos` shard with
+  mounted ones only when everything fits one description, none of the workspace's
+  names is skipped and the mounted part of the body is small; otherwise they get
+  their own shard(s) first and the mounts' repositories follow in theirs. A mounted
+  shard's body is bounded (about 24 KiB and under 500 lines), and at most four shards
+  hold mounted repositories; the last says how many more there are, which `repos`
+  lists and `repos open <id>` opens.
+- **Recovery.** For each declared mount that is not fetched or is broken, the
+  `my-repos` body gives the exact `mounts fetch <name>` command through the
+  launcher, never a `cd`. A workspace whose only repositories would come from such
+  mounts still gets a `my-repos` that says so. Fetching is CLI-only; the sync hooks
+  never fetch.
+
 ## What is exported, and limits
 
 The export holds the raw bytes of the pinned tree's regular files, read straight
