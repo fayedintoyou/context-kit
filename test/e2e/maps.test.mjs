@@ -29,12 +29,12 @@ async function fixture(t, name = 'pigeon') {
   delete env.CONTEXT_KIT_ROOT;
   const root = join(base, name);
   await cp(join(fixtures, name), root, { recursive: true });
-  // A git index, since a declared status's path evidence must be a tracked file; track() adds
-  // everything written since.
-  const git = (...args) => exec('git', args, { cwd: root, env });
+  // A git repository, since a declared status's path evidence must be a committed file; commit()
+  // commits everything written since.
+  const git = (...args) => exec('git', ['-c', 'user.name=Pigeon', '-c', 'user.email=pigeon@example.com', ...args], { cwd: root, env });
   await git('init', '-q');
-  const track = () => git('add', '-A');
-  await track();
+  const commit = async () => { await git('add', '-A'); await git('commit', '-q', '--allow-empty', '-m', 'fixture'); };
+  await commit();
   const cli = async (...args) => {
     const parse = text => (text.trim() ? JSON.parse(text) : undefined);
     try {
@@ -66,7 +66,7 @@ async function fixture(t, name = 'pigeon') {
     assert.deepEqual(await mcp('check_map', name === undefined ? {} : { map: name }), result.json ?? { error: result.error });
     return result;
   };
-  return { base, root, env, cli, mcp, checkBoth, mapFile, specFile, original, editMap, git, track };
+  return { base, root, env, cli, mcp, checkBoth, mapFile, specFile, original, editMap, git, commit };
 }
 
 // A map file around a yaml map block.
@@ -460,12 +460,14 @@ test('writing refuses a map with errors, and map files are never followed throug
 });
 
 // Writes a test file into a fixture repository with a `// spec:` link above each test, for the
-// derived statuses, and tracks it. The link comments are assembled, so this file's own lines are not links.
+// derived statuses, and commits it. The link comments are assembled, so this file's own lines are not links.
 async function linkTests(root, file, scenarios, body = '') {
   await mkdir(join(root, 'test/e2e'), { recursive: true });
   const tests = scenarios.map(scenario => `${'//'} spec: ${scenario}\ntest(${JSON.stringify(scenario)}, () => {${body}});\n`);
   await writeFile(join(root, 'test/e2e', file), `import test from 'node:test';\n\n${tests.join('\n')}`);
-  await exec('git', ['add', '-A'], { cwd: root }); // a test file can be a declared status's evidence
+  // A test file can be a declared status's evidence, which must be committed.
+  await exec('git', ['add', '-A'], { cwd: root });
+  await exec('git', ['-c', 'user.name=Pigeon', '-c', 'user.email=pigeon@example.com', 'commit', '-q', '-m', 'tests'], { cwd: root });
 }
 const statusGolden = await readFile(join(fixtures, 'alerts-status.mermaid'), 'utf8');
 
@@ -525,9 +527,10 @@ test('an issue a model checker found, with its fix, is reported as declared with
 });
 
 // spec: behavior-maps / Missing evidence file
-test('evidence naming a path that is not a file tracked in the repository is an error naming the state and the path', async t => {
-  const { base, root, cli, editMap, checkBoth, git, track } = await fixture(t, 'pigeon-status');
-  const message = item => `two-popups declares issue with evidence ${item} is not a file tracked in the repository`;
+test('evidence naming a path that is not a file committed to the repository is an error naming the state and the path', async t => {
+  const { base, root, cli, editMap, checkBoth, git, commit } = await fixture(t, 'pigeon-status');
+  const message = item => `two-popups declares issue with evidence ${item} is not a file committed to the repository (in HEAD)`;
+  const missing = item => ({ code: 'evidence_missing', element: 'two-popups', message: message(item) });
   const errorsFor = async items => {
     await editMap(text => text.replace(/evidence: \[[^\]]*, "#212"\]/, `evidence: [${items.map(item => JSON.stringify(item)).join(', ')}, "#212"]`));
     return report(await checkBoth('alerts')).errors;
@@ -535,37 +538,55 @@ test('evidence naming a path that is not a file tracked in the repository is an 
   await editMap(text => text.replace('evidence: [models/Alerts.tla, "#212"]', 'evidence: [models/Alert.tla, "#212"]'));
   const checked = await checkBoth('alerts');
   assert.equal(checked.code, 1);
-  assert.deepEqual(report(checked).errors, [{ code: 'evidence_missing', element: 'two-popups', message: message('models/Alert.tla') }]);
+  assert.deepEqual(report(checked).errors, [missing('models/Alert.tla')]);
   assert.equal((await cli('maps', 'render', 'alerts')).error.code, 'INVALID_INPUT');
 
-  // On disk is not enough: an untracked file, an ignored one and a directory are not tracked files.
+  // On disk, or staged, is not enough: an untracked file, an ignored one, a staged one and a directory
+  // are not committed files.
   await writeFile(join(root, 'models/Draft.tla'), 'not added\n');
+  await writeFile(join(root, 'models/Staged.tla'), 'added, not committed\n');
   await writeFile(join(root, '.gitignore'), 'Secret.tla\n');
   await writeFile(join(root, 'models/Secret.tla'), 'ignored\n');
-  await git('add', '.gitignore');
-  // A symlink committed to the index, to a file outside the repository or inside it, is refused
-  // without being followed; so is a path through a committed symlinked directory.
+  // A committed symlink, to a file outside the repository or inside it, is refused without being
+  // followed; so is a path through a committed symlinked directory.
   await writeFile(join(base, 'outside.tla'), 'outside the repository\n');
   await symlink(join(base, 'outside.tla'), join(root, 'models/Linked.tla'));
   await symlink('Alerts.tla', join(root, 'models/Same.tla'));
   await symlink(base, join(root, 'up'));
-  await git('add', 'models/Linked.tla', 'models/Same.tla', 'up');
+  await git('add', '.gitignore', 'models/Linked.tla', 'models/Same.tla', 'up');
+  await git('commit', '-q', '-m', 'links');
+  await git('add', 'models/Staged.tla');
   // Path forms are refused before any lookup: absolute, `..`, `.` and empty segments, backslashes.
-  const items = ['models/Draft.tla', 'models/Secret.tla', 'models', 'models/Linked.tla', 'models/Same.tla', 'up/outside.tla',
+  const items = ['models/Draft.tla', 'models/Staged.tla', 'models/Secret.tla', 'models', 'models/Linked.tla', 'models/Same.tla', 'up/outside.tla',
     '../outside.tla', '/etc/hosts', 'models/../models/Alerts.tla', './models/Alerts.tla', 'models//Alerts.tla', 'models\\Alerts.tla', 'models/Alerts.tla/inner'];
-  const refused = await errorsFor(items);
-  assert.deepEqual(refused, items.map(item => ({ code: 'evidence_missing', element: 'two-popups', message: message(item) })));
+  assert.deepEqual(await errorsFor(items), items.map(missing));
   // Links and pull request numbers are checked by form.
   assert.deepEqual((await errorsFor(['http://example.com/212', '#0'])).map(({ code }) => code), ['evidence_missing', 'evidence_missing']);
 
-  // A tracked file, under any Unicode form of its name, a pull request and an https link are evidence, as written.
-  await writeFile(join(root, 'models/Café.tla'), 'tracked\n');
-  await track();
-  const accepted = await errorsFor(['models/Café.tla', 'models/Alerts.tla', 'https://example.com/pigeon/issues/212']);
-  assert.deepEqual(accepted, []);
+  // A committed file, under any Unicode form of its name, a pull request and an https link are evidence, as written.
+  await writeFile(join(root, 'models/Café.tla'), 'committed\n');
+  await commit();
+  assert.deepEqual(await errorsFor(['models/Café.tla', 'models/Staged.tla', 'models/Alerts.tla', 'https://example.com/pigeon/issues/212']), []);
   assert.deepEqual(report(await checkBoth('alerts')).statuses['two-popups'].declared.evidence, [{ kind: 'path', value: 'models/Café.tla' },
-    { kind: 'path', value: 'models/Alerts.tla' }, { kind: 'link', value: 'https://example.com/pigeon/issues/212' }, { kind: 'pull_request', value: '#212' }]);
-  // The index is read without running the checkout's fsmonitor, filters or hooks.
+    { kind: 'path', value: 'models/Staged.tla' }, { kind: 'path', value: 'models/Alerts.tla' }, { kind: 'link', value: 'https://example.com/pigeon/issues/212' },
+    { kind: 'pull_request', value: '#212' }]);
+
+  // Two committed entries whose names differ only in Unicode normalization, a symlink and a regular
+  // file, make that name ambiguous: neither spelling is evidence.
+  const blob = text => new Promise((resolve, reject) => {
+    const child = execFile('git', ['hash-object', '-w', '--stdin'], { cwd: root }, (error, stdout) => (error ? reject(error) : resolve(stdout.trim())));
+    child.stdin.end(text);
+  });
+  const nfd = 'models/Résumé.tla';
+  const nfc = nfd.normalize('NFC');
+  await git('-c', 'core.precomposeunicode=false', 'update-index', '--add', '--cacheinfo', `120000,${await blob('../../outside.tla')},${nfd}`);
+  await git('-c', 'core.precomposeunicode=false', 'update-index', '--add', '--cacheinfo', `100644,${await blob('a regular file\n')},${nfc}`);
+  await git('commit', '-q', '-m', 'two spellings');
+  assert.match((await git('-c', 'core.quotepath=false', '-c', 'core.precomposeunicode=false', 'ls-tree', '-r', '--name-only', 'HEAD', 'models')).stdout,
+    new RegExp(`${nfd}\n[\\s\\S]*${nfc}\n|${nfc}\n[\\s\\S]*${nfd}\n`));
+  assert.deepEqual(await errorsFor([nfc, nfd]), [missing(nfc), missing(nfd)]);
+
+  // The repository is read without running the checkout's fsmonitor, filters or hooks.
   const marker = join(base, 'ran');
   await writeFile(join(base, 'hook.sh'), `#!/bin/sh\necho ran >> '${marker}'\ncat\n`, { mode: 0o755 });
   await writeFile(join(root, '.gitattributes'), '*.tla filter=mark\n');
@@ -574,9 +595,12 @@ test('evidence naming a path that is not a file tracked in the repository is an 
   }
   assert.deepEqual(await errorsFor(['models/Alerts.tla']), []);
   await assert.rejects(readFile(marker), { code: 'ENOENT' });
-  // Without a git repository nothing is tracked.
+  // A repository with no commit, or none at all, has nothing committed.
   await rm(join(root, '.git'), { recursive: true });
-  assert.deepEqual(await errorsFor(['models/Alerts.tla']), [{ code: 'evidence_missing', element: 'two-popups', message: message('models/Alerts.tla') }]);
+  assert.deepEqual(await errorsFor(['models/Alerts.tla']), [missing('models/Alerts.tla')]);
+  await git('init', '-q');
+  await git('add', '-A');
+  assert.deepEqual(await errorsFor(['models/Alerts.tla']), [missing('models/Alerts.tla')]);
 });
 
 // One state with a linked test, one without, and one declared working without one.

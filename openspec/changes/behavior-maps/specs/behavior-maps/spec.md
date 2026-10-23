@@ -103,14 +103,14 @@ The check SHALL report as errors node labels over 70 characters, `when` labels o
 - **THEN** the check reports no label error, and without `GitHub` in the vocabulary it reports one naming that token
 
 ### Requirement: Declared status
-A node MAY declare status `works`, `issue` or `fixed`, with at least one evidence item: a file tracked in the repository's git index, a pull request number or an https link. An `issue` SHALL say who found it (`model-checker`, `test`, `review`, `user-report` or `other`) and MAY name a `fixed_by` node, which SHALL declare `fixed`. An untracked path or wrong fix target SHALL be an error.
+A node MAY declare status `works`, `issue` or `fixed`, with at least one evidence item: a file committed to the repository (in HEAD), a pull request number or an https link. An `issue` SHALL say who found it (`model-checker`, `test`, `review`, `user-report` or `other`) and MAY name a `fixed_by` node, which SHALL declare `fixed`. Any other path or a wrong fix target SHALL be an error.
 
 #### Scenario: Issue and its fix
-- **WHEN** a state declares an issue found by a model checker, citing a tracked model file, with `fixed_by` naming a state declared `fixed` with a pull request
+- **WHEN** a state declares an issue found by a model checker, citing a committed model file, with `fixed_by` naming a state declared `fixed` with a pull request
 - **THEN** the check reports both statuses as declared, with their evidence, and no error
 
 #### Scenario: Missing evidence file
-- **WHEN** a declared issue's evidence names a path that is not a file tracked in the repository
+- **WHEN** a declared issue's evidence names a path that is not a file committed to the repository
 - **THEN** the check reports an error naming the state and the path
 
 ### Requirement: Status from linked tests
