@@ -48,5 +48,5 @@ topics, so `help / Help covers the tool` keeps passing.
 
 ## 6. Finish
 
-- [ ] 6.1 Run `npm test`, `node bin/hub.mjs validate`, `openspec validate hub-federation --strict` and `specs archive --rehearse`
-- [ ] 6.2 Reconcile the change with `reconcile-change` after the last slice lands
+- [x] 6.1 Run `npm test`, `node bin/hub.mjs validate`, `openspec validate hub-federation --strict` and `specs archive --rehearse`. Done 2026-10-23 on `main` at c28e058: `npm test` 601 tests, 599 pass, 0 fail, 2 skipped; `validate` valid; `openspec validate hub-federation --strict` valid; `specs archive --rehearse` reports no issue for `hub-federation`
+- [x] 6.2 Reconcile the change with `reconcile-change` after the last slice lands. Done 2026-10-23 on `main` at c28e058: `specs reconcile hub-federation` shows all five slices landed and scope-checked, no uncovered requirement, no untested scenario and no stray trailer; out-of-scope files (lib/arguments.mjs, lib/files.mjs, lib/hubs.mjs, lib/workspace.mjs, lib/operations.mjs, lib/repo-context.mjs and two tests) were each noted in their slice PRs

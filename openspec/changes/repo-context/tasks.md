@@ -37,7 +37,7 @@
 
 ## 6. Integration
 
-- [ ] 6.1 Run `npm test`, `node bin/hub.mjs validate`, `openspec validate repo-context --strict` and `specs archive --rehearse`, and check that every `repository-context` scenario is linked
+- [x] 6.1 Run `npm test`, `node bin/hub.mjs validate`, `openspec validate repo-context --strict` and `specs archive --rehearse`, and check that every `repository-context` scenario is linked. Done 2026-10-23 on `main` at c28e058: `npm test` 601 tests, 599 pass, 0 fail, 2 skipped; `validate` valid; `openspec validate repo-context --strict` valid; `specs archive --rehearse` reports no issue for `repo-context`; `spec-links` links all 49 `repository-context` scenarios, none pending
 
 ## Workflow follow-up
 
