@@ -41,11 +41,11 @@ upstream, golden diagrams) under `test/e2e/fixtures/maps/`.
 
 ## 5. Slice `evidence`
 
-- [ ] 5.1 Declared status, evidence (confined repository paths, `#<n>`, `https://`), `fixed_by` targets, fix edges counting for reachability
-- [ ] 5.2 Derived `tested`/`untested`/`unknown` from `testLinks()` in `lib/specs/links.mjs`, store sources `unknown`, both origins in the report and JSON (decision 11)
-- [ ] 5.3 Status classes, the key and fix edges in Mermaid (decision 12), `status` and `fixes` in JSON (decision 13); update golden files; the skill's status and evidence guidance and the Pigeon example's pop-up issue and fix
+- [x] 5.1 Declared status, evidence (confined repository paths, `#<n>`, `https://`), `fixed_by` targets, fix edges counting for reachability
+- [x] 5.2 Derived `tested`/`untested`/`unknown` from `testLinks()` in `lib/specs/links.mjs`, store sources `unknown`, both origins in the report and JSON (decision 11)
+- [x] 5.3 Status classes, the key and fix edges in Mermaid (decision 12), `status` and `fixes` in JSON (decision 13); update golden files; the skill's status and evidence guidance and the Pigeon example's pop-up issue and fix
 - [ ] 5.4 Add "Status key shows on GitHub" to `test/manual-checks.md` (push a fixture map with statuses and a written diagram to a scratch branch and view it)
-- [ ] 5.5 Link tests to "Issue and its fix", "Missing evidence file", "Tested and untested states", "Statuses in JSON" and "Render a map with a fix"
+- [x] 5.5 Link tests to "Issue and its fix", "Missing evidence file", "Tested and untested states", "Statuses in JSON" and "Render a map with a fix"
 - [ ] 5.6 Run `npm test`, `node bin/hub.mjs validate`, `npx openspec validate behavior-maps --strict` and `specs reconcile behavior-maps`
 
 ## Workflow follow-up

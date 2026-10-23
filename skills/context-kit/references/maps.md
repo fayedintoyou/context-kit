@@ -12,7 +12,7 @@ Maps are read from the selected root (`--root <repository>`, as for `specs`).
 |---|---|---|
 | What a map can cite | `maps behaviors --source openspec/lid [--store <id>]` | `list_behaviors` |
 | The repository's maps | `maps list` | `list_maps` |
-| Check one map, or all | `maps check [<map>] [--strict]` | `check_map` |
+| Check one map, or all, with each node's statuses | `maps check [<map>] [--strict]` | `check_map` |
 | Draw a map | `maps render <map> [--format mermaid/json]` | `render_map` |
 | Write the diagram into the map file | `maps render <map> --write` | CLI only (`write_map_diagram`) |
 | Pin each citation's fingerprint | `maps pin <map>` | CLI only (`pin_map`) |
@@ -108,20 +108,70 @@ pins:
   (`AUTH` or `AUTH-UI` covers `AUTH-UI-001`; `AUTH-U` covers nothing).
 - `cites`: for `lid`, entry IDs such as `AUTH-UI-001`.
 - `nodes`: `id` (kebab-case), `label`, `kind` (`start`, `state`, `choice`, `end`;
-  `state` when omitted) and `cites`, a list of behavior IDs.
+  `state` when omitted), `cites`, a list of behavior IDs, and an optional
+  declared `status` (see Status).
 - `transitions`: `from`, `to`, `when` (needed when leaving a choice) and `cites`.
 - `vocabulary`: product words the label lint should accept as written.
 - `pins`: each citation's fingerprint when the map was last reviewed, written by
   `maps pin`; don't edit it by hand.
 
 Every key is checked; an unknown one is an error. In YAML flow style (`{ ... }`),
-quote a label that contains a comma or starts with `@`.
+quote a label that contains a comma or starts with `@`, and an evidence item
+starting with `#`.
+
+## Status
+
+Each node has a **derived** status, and may have a **declared** one. Context
+Kit never promotes one into the other, never fetches evidence, and never runs a
+test or a model: it only reads.
+
+A declared `status` says what the map's author can show:
+
+```yaml
+  - id: two-popups
+    label: A pop-up appears on every device at once
+    cites: [alerts / Desktop pop-up]
+    status:
+      state: issue                 # works, issue or fixed
+      found_by: model-checker      # issue only: model-checker, test, review, user-report or other
+      finder: TLA+                 # issue only, optional: shown in the diagram's key
+      note: Laptop and tablet both alert when both apps are open   # optional, one line
+      evidence: [models/Alerts.tla, "#212"]
+      fixed_by: one-popup          # issue only, optional: a node declared fixed
+```
+
+- `evidence` lists at least one item: a repository path (relative to the root,
+  without `.` or `..` segments; it must exist, and is looked up without
+  following symlinks, so it can't name anything outside the repository), a pull
+  request as `#<n>`, or an `https://` link. Anything else is `evidence_missing`.
+- `fixed_by` names the node that shows the fix, which must declare `fixed`
+  (otherwise `fix_target`). The diagram draws a dashed "with the fix" edge
+  between them, and the fix counts as reached through it.
+- `finder` is drawn in the key, so it is linted like a label (up to 40 characters).
+
+The derived status comes from the repository's test links, as `npm test` reads
+them (a `// spec: <capability> / <scenario>` comment directly above `test(` in
+`test/**/*.test.mjs`, or a `- spec:` line in `test/manual-checks.md`):
+
+| Derived | When |
+|---|---|
+| `tested` | Every scenario the node cites, and every scenario of a requirement it cites, has a linked test |
+| `untested` | Some cited scenario has none (named in `untested`), or a cited requirement has no scenarios |
+| `unknown` | The node cites nothing, the source is `lid`, or the source is a store (its tests live in its parties) |
+
+Each status is `{ state, origin, reason, evidence }`, with `origin` `declared` or
+`derived`. Declared evidence items are `{ kind: path|pull_request|link, value }`;
+derived ones are the linked tests, `{ kind: test, value: <file>:<line>, scenario }`.
+A declared status also carries `found_by`, `finder`, `fixed_by` and `note` when
+given. A declared `works` beside a derived `untested` is shown as both, not
+reconciled. Results of test runs are not read.
 
 ## Check report
 
-`maps check` returns `{ root, valid, maps: [{ map, valid, errors, warnings }] }`,
-each entry `{ code, element, message }`, where the element is a node ID, a
-transition as `from -> to`, `scope`, `diagram` or a behavior ID.
+`maps check` returns `{ root, valid, maps: [{ map, valid, errors, warnings, statuses }] }`,
+each error or warning `{ code, element, message }`, where the element is a node ID, a
+transition as `from -> to`, `scope`, `diagram` or a behavior ID. `statuses` maps
+each node ID to `{ declared?, derived }` (see Status).
 
 | Code | Kind | Means |
 |---|---|---|
@@ -130,7 +180,9 @@ transition as `from -> to`, `scope`, `diagram` or a behavior ID.
 | `uncited_state` | error | A `state` cites nothing (start, choice and end nodes may) |
 | `unknown_citation` | error | A citation, or a scope entry, names no behavior |
 | `ambiguous_citation` | error | A citation names more than one behavior (a requirement and a scenario, or two scenarios, sharing a name), listing them |
-| `label` | error | A node label over 70 characters or a `when` over 50, or a token that reads as code or spec language: a backtick, an underscore, an inner capital (`unreadCount`, also `GitHub` unless in `vocabulary`), a file path, `::`, `()`, `=>`, `==`, diagram or web markup (`<`, `>`, `{`, `}`, `%%`, `:::`, `->`, `[[`, `]]`), a spec ID such as `AUTH-UI-001`, or SHALL, MUST, WHEN, THEN |
+| `evidence_missing` | error | A declared status's evidence item is a path that doesn't exist, isn't relative to the root, has `.` or `..` segments or goes through a symlink, or is neither `#<n>` nor an `https://` link |
+| `fix_target` | error | `fixed_by` names no node of the map, or a node not declared `fixed` |
+| `label` | error | A node label (or an issue's `finder`, up to 40) over 70 characters or a `when` over 50, or a token that reads as code or spec language: a backtick, an underscore, an inner capital (`unreadCount`, also `GitHub` unless in `vocabulary`), a file path, `::`, `()`, `=>`, `==`, diagram or web markup (`<`, `>`, `{`, `}`, `%%`, `:::`, `->`, `[[`, `]]`), a spec ID such as `AUTH-UI-001`, or SHALL, MUST, WHEN, THEN |
 | `uncovered` | warning | A scenario in scope that no element cites, directly or through its requirement, or a `lid` entry in scope that no element cites |
 | `unpinned` | warning | An element cites a behavior the map has no pin for (one warning per citing element) |
 | `stale` | warning | An element cites a behavior whose fingerprint differs from its pin: its text changed since the map was pinned (one warning per citing element) |
@@ -152,11 +204,29 @@ digits, spaces and `,.'!?@()/+-` becomes a Mermaid entity code (`#37;` for `%`,
 `#quot;` for `"`), and words Mermaid reads as statements (`click`, `style`,
 `class`, `end`, ...) never appear verbatim, so no label can become a directive,
 style, link or markup.
+
+Statuses are drawn as classes, after the lines and the dashed fix edges
+(`-. "with the fix" .->`, issue to fix). A node takes its declared status's
+class when it has one, else its derived one: `st_works` grey (fill `#e5e7eb`,
+stroke `#6b7280`), `st_issue` red (`#fee2e2`, `#dc2626`), `st_fixed` green
+(`#dcfce7`, `#16a34a`), `st_tested` white with a solid grey outline, `st_untested`
+white with a dashed one; `unknown` is unstyled. A `Key` subgraph then lists only
+the classes present, in that order: "Works", "Problem TLA+ found" (from `finder`,
+else "Problem a model checker found", "Problem a test found", "Problem found in
+review", "Problem a user reported" or "Problem found"; one entry per wording),
+"Fixed", "Has linked tests (derived)" and "No tests yet (derived)". Class names
+and styles are fixed text; a `finder` is escaped like a label, and notes and
+evidence are never drawn.
+
 `--format json` returns the map's model: `map`, `title`, `source`, `scope`, `nodes`
 and `transitions` in file order with their kinds and labels, and each element's
 `cites` resolved to `id`, `kind`, `title`, `fingerprint` and `pin`: `current`,
-`stale` or `unpinned`, as the check reports it. The same map and specs
-give byte-identical output; nothing depends on the clock.
+`stale` or `unpinned`, as the check reports it. Each node has its `status`
+(`{ declared?, derived }`, as the check reports it), and `fixes` lists the fix
+edges as `{ from, to }`. The same map, specs and test links give byte-identical
+output; nothing depends on the clock. Since derived statuses follow the test
+links, linking a test to a cited scenario can make a written diagram
+`diagram_outdated`.
 
 `maps render <map> --write` (CLI only, never over MCP) puts the diagram in the map
 file between `<!-- context-kit:diagram:start ... -->` and

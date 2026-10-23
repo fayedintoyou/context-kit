@@ -9,3 +9,8 @@ flowchart TD
   n_what_kind -->|"A DM or an @mention"| n_badge
   n_dot --> n_seen
   n_badge --> n_seen
+  classDef st_untested fill:#ffffff,stroke:#6b7280,stroke-dasharray:5 4,color:#111827
+  class n_dot,n_badge st_untested
+  subgraph status_key["Key"]
+    key_untested("No tests yet (derived)"):::st_untested
+  end
