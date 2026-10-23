@@ -73,6 +73,7 @@ untracked `.state/checkouts.json`:
   registered repository's checkout: that one is recorded, not entered.
 - `repos setup` sets up a new machine, below.
 - `repos which [<path>]` says which repository a path belongs to, below.
+- `repos open <repo> [<subpath>]` opens a repository to start work on it, below.
 
 Recording and cloning are CLI-only; agents run them when you ask.
 
@@ -100,6 +101,46 @@ with the `candidates` in id order. A path in a hub also names the `hub`. A path
 that isn't one of your repositories reports `repository: null` and exits 0.
 Over MCP it is the `which_repo` tool, which takes an absolute path and is offered
 only over stdio (see `remote`).
+
+### Opening a repository
+
+`repos open <repo> [<subpath>]` is the one call to start work on a repository. It
+resolves `<repo>` (an id, title, alias or the upstream's name) to the checkout this
+machine recorded, ignoring the current directory, and returns, read-only:
+
+- `status`: `located`, or `missing` when no checkout is recorded or the recorded
+  directory is gone or no longer a checkout's top. `missing` gives a `reason` and
+  `next`, the exact `repos locate` and `repos clone` commands, and no
+  instruction files or tree. It never clones, records or searches.
+- `repository` (`id`, `title`, `aliases`, `hub`, `concept`): the concept to read.
+- `resolution`: how it resolved. `matched` is the field (`id`, `title`, `alias`
+  or `upstreamName`); `concept` and `alternateIds`, the upstream (its clean form),
+  and the `path` from this machine's record (`source: machine`).
+- `instructions`: `path`, `size`, `sha256` and `tracked` for each regular file
+  named exactly `AGENTS.md` or `CLAUDE.md` at the root and in each directory down to
+  the subpath, outermost first, tracked by git or not. A symlinked one is not read;
+  `warnings` names it.
+- `tree`: the bootstrap, built from the git index, so ignored and untracked files
+  never appear. Paths at depth 1 and 2 below the root or subpath in code-point
+  order (`entries`, directories ending in `/`), at most 150, with each listed
+  directory's tracked-file count in `counts` and `files` the total.
+- `truncated`: `null`, or what didn't fit. The whole result is at most 8 KiB of
+  compact JSON (about 2k tokens), so the tree is cut from the end: `omitted` counts
+  the entries left out and `first` is the first of them.
+
+The subpath is a directory relative to the checkout's root without `.`, `..` or
+`.git` segments, backslashes or a leading `/`, at most 200 characters
+(`INVALID_PATH`); one that isn't a directory in the checkout is `UNKNOWN_PATH`.
+Every read walks from the checkout's real root and stops at any symlink below it:
+a symlinked subpath directory fails with `PATH_ESCAPE`. Git is read only through
+`rev-parse` and `ls-files -z --stage`, with every `GIT_*` variable removed, global
+and system config, hooks and fsmonitor off, so the checkout's own git
+configuration (filters, fsmonitor, hooks) never runs; files are hashed by Context
+Kit itself. `AMBIGUOUS_REPOSITORY` names every candidate id.
+
+Over MCP it is `open_repo` (`repository`, optional `path`), offered only over stdio
+(see `remote`), with the same result. It is the operation the routing skill and
+the global rule name for resolving a repository.
 
 ### A new machine
 

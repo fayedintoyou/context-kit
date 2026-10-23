@@ -548,17 +548,17 @@ test('the routing body names the MCP server\'s resolve tool and the launcher com
   assert.equal(installed.results.find(item => item.kind === 'launcher').action, 'installed');
   const launcher = shellQuote(join(bin, 'context-kit'));
   let { body } = await agentSkill(join(base, 'claude/skills/my-repos'));
-  assert.ok(body.includes('call the\n`list_repos` tool of the `context-home` MCP server, or run\n' + `\`${launcher} repos\``), body);
+  assert.ok(body.includes('call the\n`open_repo` tool of the `context-home` MCP server, or run\n' + `\`${launcher} repos open <repo>\``), body);
   assert.doesNotMatch(body, /\bcd\s|npm run/);
   assert.ok(!body.includes(`${workspace} `) && !body.includes(`${workspace}"`), 'the workspace path appears only as the closing note');
-  // Run as written from another directory, it resolves the repository.
-  const command = body.match(/or run\n`([^`]+)`/)[1];
+  // Run as written from another directory, with a repository's name for <repo>, it resolves the repository.
+  const command = body.match(/or run\n`([^`]+)`/)[1].replace('<repo>', "'the room'");
   const { stdout } = await exec('/bin/sh', ['-c', command], { cwd: base, env: { HOME: context.env.HOME, PATH: '/usr/bin:/bin' } });
-  assert.deepEqual(JSON.parse(stdout).repositories.map(item => item.id), ['personal/main/room']);
+  assert.equal(JSON.parse(stdout).repository.id, 'personal/main/room');
   // On PATH too, the skill keeps the absolute path; the server name is the one registered.
   await installFor(context, ['--name', 'context-home'], { XDG_BIN_HOME: bin, PATH: `${bin}:/usr/bin:/bin` });
   ({ body } = await agentSkill(join(base, 'claude/skills/my-repos')));
-  assert.ok(body.includes('`context-home` MCP server, or run\n' + `\`${launcher} repos\``), body);
+  assert.ok(body.includes('`context-home` MCP server, or run\n' + `\`${launcher} repos open <repo>\``), body);
   // Status renders with the recorded server name and launcher, so the copy is current.
   const status = JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, 'agents', 'status'],
     { env: { HOME: context.env.HOME, XDG_BIN_HOME: bin, PATH: '/usr/bin:/bin' } })).stdout);
@@ -573,25 +573,25 @@ test('without this workspace\'s launcher in place, the routing body runs the cor
   const direct = `${process.execPath} ${join(kit, 'bin/hub.mjs')} --root ${workspace}`;
   const body = async () => (await agentSkill(join(workspace, '.state/generated/my-repos'))).body;
   const runs = async text => {
-    const command = text.match(/or run\n`([^`]+)`/)[1];
+    const command = text.match(/or run\n`([^`]+)`/)[1].replace('<repo>', "'the room'");
     const { stdout } = await exec('/bin/sh', ['-c', command], { cwd: base, env: { HOME: env.HOME, PATH: '/usr/bin:/bin' } });
-    return JSON.parse(stdout).repositories.map(item => item.id);
+    return [JSON.parse(stdout).repository.id];
   };
   // Never installed: no launcher at all.
   await cli('agents', 'status');
   let text = await body();
-  assert.ok(text.includes(`or run\n\`${direct} repos\``), text);
+  assert.ok(text.includes(`or run\n\`${direct} repos open <repo>\``), text);
   assert.ok(text.includes(`\`${direct} repos clone personal/main/room\``) && text.includes(`\`${direct} read personal/main room\``), text);
   assert.doesNotMatch(text, /\bcd\s|npm run/);
   assert.deepEqual(await runs(text), ['personal/main/room']);
   // Installed, then the launcher replaced by someone else's file: back to the core by path.
   await installFor(context);
   const launcher = join(env.HOME, '.local/bin/context-kit');
-  assert.ok((await body()).includes(`or run\n\`${launcher} repos\``));
+  assert.ok((await body()).includes(`or run\n\`${launcher} repos open <repo>\``));
   await writeFile(launcher, '#!/bin/sh\necho mine\n');
   assert.equal((await cli('repos', 'sync')).code, 0);
   text = await body();
-  assert.ok(text.includes(`or run\n\`${direct} repos\``) && !text.includes(launcher), text);
+  assert.ok(text.includes(`or run\n\`${direct} repos open <repo>\``) && !text.includes(launcher), text);
   assert.deepEqual(await runs(text), ['personal/main/room']);
 });
 

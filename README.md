@@ -104,7 +104,9 @@ skills in the project and keeps the MCP server private to it (Codex needs
 reloads them.
 
 Agents find your repositories through the generated `my-repos` skill, whose
-description names them. `--global-rule` is an optional extra for Claude Code: a
+description names them. `repos open <repo>` (MCP `open_repo`, stdio only) starts
+work in one call: it resolves the repository to this machine's checkout and
+returns its `AGENTS.md`/`CLAUDE.md` files and a small tree of tracked files. `--global-rule` is an optional extra for Claude Code: a
 short user rule, `~/.claude/rules/context-kit.md`, that says how repositories
 resolve from any directory, without listing them. Later installs keep it until
 `--no-global-rule` or `uninstall`; other agents report it `unsupported`.

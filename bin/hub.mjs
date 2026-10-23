@@ -24,6 +24,7 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   repos add <hub-id> [<upstream>] [--path <checkout>] [--alias a,b] [--title <t>] [--concept <id>] [--description <d>]
   repos | repos locate <repo> <path> | repos clone <repo> [<path>] | repos scan <directory> [--depth <n>] | repos sync
   repos which [<path>]   (which registered repository the innermost checkout at a path, default here, belongs to)
+  repos open <repo> [<subpath>]   (resolve a repository to this machine's checkout: instruction files and a bounded tree)
   repos setup [--scan <directory>]... [--depth <n>] [--clone a,b] [--ask]   (scan, then clone only what is named or answered)
   mounts | mounts add <name> <source> [--ref <ref>] [--path <dir>] | mounts fetch [<name>] | mounts remove <name>
   mounts upgrade <name> [--to <rev>] [--check]   (rev: a branch, tag or full commit)
@@ -117,6 +118,7 @@ try {
         else if (args[0] === 'locate' && args.length === 3) result = await execute(selection, 'locate_repo', { repository: args[1], path: args[2] });
         else if (args[0] === 'clone' && [2, 3].includes(args.length)) result = await execute(selection, 'clone_repo', { repository: args[1], ...(args[2] ? { path: args[2] } : {}) });
         else if (args[0] === 'sync' && args.length === 1) result = await execute(selection, 'sync_repos');
+        else if (args[0] === 'open' && [2, 3].includes(args.length)) result = await execute(selection, 'open_repo', { repository: args[1], ...(args[2] === undefined ? {} : { path: args[2] }) });
         else if (args[0] === 'which' && [1, 2].includes(args.length)) result = await execute(selection, 'which_repo', { path: resolve(args[1] ?? process.cwd()) });
         else if (args[0] === 'scan' && args.length === 2) result = await execute(selection, 'scan_repos', { directory: args[1], ...depth });
         else if (args[0] === 'setup' && args.length === 1) {
