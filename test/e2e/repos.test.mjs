@@ -1334,3 +1334,61 @@ test('which_repo over stdio returns what repos which returns, and wants an absol
   const relativePath = await client.callTool({ name: 'which_repo', arguments: { path: 'src/lib' } });
   assert.equal(JSON.parse(relativePath.content[0].text).error.code, 'INVALID_INPUT');
 });
+
+// spec: repository-registry / Nested subdirectory
+test('repos which and repos sync from a linked workspace\'s post-merge hook, where git exports GIT_DIR, read the checkout asked about', async t => {
+  const f = await fixture(t);
+  const gitIn = (cwd, ...args) => exec('git', args, { cwd, env: f.env });
+  // The workspace's own repository is registered too, so reading the hook's repository by mistake names it.
+  const remote = join(f.base, 'workspace-remote.git');
+  await f.register('personal', 'hubs', { title: 'hubs', resource: remote });
+  await f.register('personal', 'room', room);
+  const top = await f.checkout(join(f.base, 'code/room'), { origin: 'https://github.com/me/room' });
+  await mkdir(join(top, 'a/b'), { recursive: true });
+  await gitIn(f.workspace, 'init', '-q', '-b', 'main');
+  await gitIn(f.workspace, 'add', '-A');
+  await gitIn(f.workspace, 'commit', '-qm', 'workspace');
+  await gitIn(f.base, 'clone', '-q', '--bare', f.workspace, remote);
+  await gitIn(f.workspace, 'remote', 'add', 'origin', remote);
+  await gitIn(f.workspace, 'fetch', '-q', 'origin');
+  // The linked workspace: a worktree of the workspace checkout, tracking origin/main.
+  const linked = join(f.base, 'linked');
+  await gitIn(f.workspace, 'worktree', 'add', '-q', '-b', 'linked', linked, 'origin/main');
+  await gitIn(linked, 'branch', '-q', '--set-upstream-to', 'origin/main');
+  await mkdir(join(linked, '.state'), { recursive: true });
+  await writeFile(join(linked, '.state/checkouts.json'), JSON.stringify({ version: 1, checkouts: { 'github.com/me/room': top } }));
+  // A real post-merge hook (hooks are shared by every worktree), run by a plain git pull.
+  const out = join(f.base, 'hook');
+  await mkdir(out);
+  const quote = value => `'${value.replaceAll("'", `'\\''`)}'`;
+  const hub = `${quote(process.execPath)} ${quote(join(kit, 'bin/hub.mjs'))} --root ${quote(linked)}`;
+  await writeFile(join(f.workspace, '.git/hooks/post-merge'), `#!/bin/sh\nenv > ${quote(join(out, 'env'))}\n` +
+    `${hub} repos which ${quote(join(top, 'a/b'))} > ${quote(join(out, 'which'))} 2>&1\n` +
+    `(cd ${quote(join(top, 'a'))} && ${hub} repos which) > ${quote(join(out, 'which-here'))} 2>&1\n` +
+    `${hub} repos sync > ${quote(join(out, 'sync'))} 2>&1\nexit 0\n`, { mode: 0o755 });
+  const other = join(f.base, 'other');
+  await gitIn(f.base, 'clone', '-q', remote, other);
+  await writeFile(join(other, 'NOTE.md'), 'x\n');
+  await gitIn(other, 'add', '-A');
+  await gitIn(other, 'commit', '-qm', 'note');
+  await gitIn(other, 'push', '-q');
+  await gitIn(linked, 'pull', '-q', '--no-rebase');
+  // The hook really ran with the worktree's GIT_DIR exported.
+  assert.match(await readFile(join(out, 'env'), 'utf8'), /^GIT_DIR=.*worktrees/m);
+  for (const file of ['which', 'which-here']) {
+    const found = JSON.parse(await readFile(join(out, file), 'utf8'));
+    assert.equal(found.repository?.id, 'personal/main/room', file);
+    assert.equal(found.checkout, top, file);
+    assert.equal(found.status, 'recorded', file);
+  }
+  assert.equal(JSON.parse(await readFile(join(out, 'which'), 'utf8')).relative, 'a/b');
+  const synced = JSON.parse(await readFile(join(out, 'sync'), 'utf8'));
+  assert.ok(synced.skills.length, JSON.stringify(synced));
+  assert.ok((await readFile(join(linked, '.state/generated/my-repos/SKILL.md'), 'utf8')).includes(`at ${top}`));
+  // Location and config injection from the environment are ignored as well.
+  const injected = { ...f.env, GIT_DIR: join(f.workspace, '.git'), GIT_WORK_TREE: f.workspace, GIT_INDEX_FILE: join(f.workspace, '.git/index'),
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'remote.origin.url', GIT_CONFIG_VALUE_0: remote, GIT_CONFIG_PARAMETERS: `'remote.origin.url'='${remote}'` };
+  const direct = JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', linked, 'repos', 'which', join(top, 'a/b')], { env: injected })).stdout);
+  assert.equal(direct.repository?.id, 'personal/main/room');
+  assert.equal(direct.checkout, top);
+});
