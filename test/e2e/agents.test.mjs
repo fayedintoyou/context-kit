@@ -404,6 +404,35 @@ test('a pull that brings a new repository rebuilds the installed my-repos skill'
   assert.deepEqual(status.json.items.filter(item => item.kind === 'hook').map(item => item.name), ['post-merge', 'post-rewrite']);
 });
 
+// spec: agent-installation / A pull rebuilds the skill
+test('agents install with another repository\'s GIT_DIR inherited writes the sync hooks only into the workspace checkout', async t => {
+  const { base, workspace, run } = await fixture(t);
+  await repository(workspace, 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const { git, other } = await gitWorkspace(base, workspace);
+  // Repository A, whose hook or shell exported its location.
+  const a = join(base, 'a');
+  await mkdir(a);
+  await git(a, 'init', '-q', '-b', 'main');
+  for (const extra of [{ GIT_DIR: join(a, '.git') }, { GIT_DIR: join(a, '.git'), GIT_WORK_TREE: a, GIT_INDEX_FILE: join(a, '.git/index'), GIT_CONFIG_PARAMETERS: `'core.hooksPath'='${join(a, 'hooks')}'` }]) {
+    const installed = await run(['--root', workspace, 'agents', 'install'], extra);
+    assert.equal(installed.code, 0, JSON.stringify(installed.error));
+    const hooks = installed.json.results.filter(item => item.kind === 'hook');
+    assert.deepEqual(hooks.map(item => [item.name, item.path]), [['post-merge', join(workspace, '.git/hooks/post-merge')], ['post-rewrite', join(workspace, '.git/hooks/post-rewrite')]]);
+    for (const name of ['post-merge', 'post-rewrite']) {
+      assert.equal(await exists(join(a, '.git/hooks', name)), false, name);
+      assert.equal(await exists(join(a, 'hooks', name)), false, name);
+    }
+  }
+  assert.match(await readFile(join(workspace, '.git/hooks/post-merge'), 'utf8'), /repos sync/);
+  // The hooks it wrote are the workspace's: a pull there rebuilds the skill.
+  await repository(other, 'garden', { title: 'the garden', resource: 'https://github.com/me/garden' });
+  await git(other, 'add', '-A');
+  await git(other, 'commit', '-qm', 'garden');
+  await git(other, 'push', '-q');
+  await git(workspace, 'pull', '-q', '--no-rebase');
+  assert.match(await readFile(join(skillsOf(base, 'claude'), 'my-repos/SKILL.md'), 'utf8'), /the garden/);
+});
+
 // spec: agent-installation / Existing hooks are kept
 test('install keeps a post-merge hook it did not write, and uninstall removes only its own', async t => {
   const { base, workspace, agents } = await fixture(t);

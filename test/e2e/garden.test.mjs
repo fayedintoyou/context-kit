@@ -246,8 +246,11 @@ test('gardening rejects a snapshot changed during collection', async t => {
   const shim = join(base, 'bin');
   await mkdir(shim);
   const realGit = (await exec('sh', ['-c', 'command -v git'])).stdout.trim();
+  // The kit names the repository with -C <dir> before the subcommand.
   await writeFile(join(shim, 'git'), `#!/bin/sh
-if [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then
+sub=$1; [ "$1" = -C ] && sub=$3
+next=$2; [ "$1" = -C ] && next=$4
+if [ "$sub" = rev-parse ] && [ "$next" = --show-toplevel ]; then
   n=$(( $(cat "${base}/git-count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "${base}/git-count"
   [ "$n" = 2 ] && printf '\\nChanged.\\n' >> "${root}/openspec/specs/locations/spec.md"
 fi

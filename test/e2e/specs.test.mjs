@@ -232,12 +232,15 @@ test('an audit fails when a referenced store changes between its collections', a
   const shim = join(base, 'bin');
   await mkdir(shim);
   const realGit = (await exec('sh', ['-c', 'command -v git'])).stdout.trim();
+  // The kit names the repository with -C <dir>; the stand-in reads it from there.
   await writeFile(join(shim, 'git'), `#!/bin/sh
-if [ "$(pwd -P)" = "${store}" ] && [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then
+dir=$(pwd -P)
+if [ "$1" = -C ]; then dir=$(cd "$2" && pwd -P); shift 2; fi
+if [ "$dir" = "${store}" ] && [ "$1" = rev-parse ] && [ "$2" = --show-toplevel ]; then
   n=$(( $(cat "${base}/git-count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "${base}/git-count"
   [ "$n" = 2 ] && printf '\\nEdited mid-audit.\\n' >> "${store}/openspec/specs/shared-auth/spec.md"
 fi
-exec "${realGit}" "$@"
+exec "${realGit}" -C "$dir" "$@"
 `);
   await chmod(join(shim, 'git'), 0o755);
   const audit = await hubCli.withEnv({ PATH: `${shim}:${process.env.PATH}` })('specs', 'audit');
