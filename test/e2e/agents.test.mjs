@@ -18,6 +18,8 @@ const fake = (base, agent) => `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(join(base, 'calls.jsonl'))}, JSON.stringify({ agent: ${JSON.stringify(agent)}, cwd: process.cwd(), args }) + '\\n');
+// The git variables it was started with, apart from the calls.
+fs.appendFileSync(${JSON.stringify(join(base, 'agent-git-env.jsonl'))}, JSON.stringify(Object.keys(process.env).filter(key => key.startsWith('GIT_'))) + '\\n');
 const file = ${JSON.stringify(join(base, `${agent}-servers.json`))};
 const servers = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
 const rest = args.slice(1).filter((arg, i, all) => arg !== '-s' && all[i - 1] !== '-s');
@@ -423,6 +425,10 @@ test('agents install with another repository\'s GIT_DIR inherited writes the syn
       assert.equal(await exists(join(a, 'hooks', name)), false, name);
     }
   }
+  // The agent CLIs it ran got the scrubbed environment too.
+  const seen = (await readFile(join(base, 'agent-git-env.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.ok(seen.length > 0);
+  assert.deepEqual([...new Set(seen.flat())], []);
   assert.match(await readFile(join(workspace, '.git/hooks/post-merge'), 'utf8'), /repos sync/);
   // The hooks it wrote are the workspace's: a pull there rebuilds the skill.
   await repository(other, 'garden', { title: 'the garden', resource: 'https://github.com/me/garden' });
