@@ -98,6 +98,9 @@ OKF's permissiveness: a `context` key on them means nothing. Reads are lenient:
 `repos open` refuses only a structurally invalid `context`, and returns a
 reference that stopped resolving as a pointer marked `missing`.
 
+The bounds don't cap the file: a `context` within every bound can still make the
+concept file larger than the 128 KiB a concept may be, which fails as `TOO_LARGE`.
+
 A concept with `type: BehaviorMap` is a behavior map: one fenced `yaml map` block
 with a source, a scope, nodes and transitions, and optionally a generated Mermaid
 diagram between `context-kit:diagram` markers. A repository keeps its maps in

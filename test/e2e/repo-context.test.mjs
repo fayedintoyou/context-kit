@@ -663,10 +663,14 @@ test('validate refuses verify as a bare string or with a multi-line command', as
   const { cli, register } = await fixture(t);
   await register('apple', { title: 'apple', resource: 'https://github.com/example/apple', context: { verify: 'npm test' } });
   await register('banana', { title: 'banana', resource: 'https://github.com/example/banana', context: { verify: ['npm test\nrm -rf /'] } });
+  // Line and paragraph separators and other control characters break a line as surely as a newline.
+  await register('cherry', { title: 'cherry', resource: 'https://github.com/example/cherry', context: { verify: ['npm test', 'npm test\u2028rm -rf /', 'npm\ttest', 'npm test\u0085x'] } });
   const { error } = await cli(['validate']);
   assert.equal(error.code, 'INVALID_CONTEXT');
   assert.match(error.message, /team\/fruit\/apple: context\.verify: must be a list/);
   assert.match(error.message, /team\/fruit\/banana: context\.verify\[0\]: must be a single line/);
+  for (const index of [1, 2, 3]) assert.ok(error.message.includes(`team/fruit/cherry: context.verify[${index}]: must be a single line`), String(index));
+  assert.doesNotMatch(error.message, /cherry: context\.verify\[0\]/);
 });
 
 // spec: repository-context / References across hubs
@@ -758,13 +762,15 @@ test('MCP entries are server names only; URLs, command lines and mappings are re
 // spec: repository-context / Bad area paths
 test('validate refuses escaping, glob and duplicate area paths and accepts the first', async t => {
   const { cli, register } = await fixture(t);
-  await register('orchard', { title: 'the orchard', resource: ORCHARD, context: { areas: [{ path: 'services/billing' }, { path: '../shared' }, { path: 'src/**' }, { path: 'services/billing' }] } });
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, context: { areas: [{ path: 'services/billing' }, { path: '../shared' }, { path: 'src/**' }, { path: 'services/billing' }, { path: 'Services/Billing' }] } });
   const { error } = await cli(['validate']);
   assert.equal(error.code, 'INVALID_CONTEXT');
   assert.doesNotMatch(error.message, /areas\[0\]\.path/);
   assert.match(error.message, /context\.areas\[1\]\.path: "\.\.\/shared" must be a directory/);
   assert.match(error.message, /context\.areas\[2\]\.path: "src\/\*\*" must be a directory/);
   assert.match(error.message, /context\.areas\[3\]\.path: "services\/billing" repeats context\.areas\[0\]/);
+  // A case-only difference names the same directory on a caseless file system.
+  assert.match(error.message, /context\.areas\[4\]\.path: "Services\/Billing" repeats context\.areas\[0\]/);
 });
 
 // spec: repository-context / Invalid packs
@@ -922,4 +928,25 @@ test('declared items at every bound still fit 8 KiB, trimmed after the tree and 
     // Everything after the kept commands: matched area or area summaries, 50 concepts, 50 MCP names, 8 roles, 20 packs.
     assert.equal(omitted, 10 - json.verify.length + (subpath ? 1 : 50) + 50 + 50 + 8 + 20);
   }
+});
+
+// spec: repository-context / Adversarial metadata
+test('the command to read a trimmed context in full is shell-quoted and, run by a shell, returns the frontmatter', async t => {
+  const { base, workspace, fruit, cli } = await fixture(t);
+  const marker = join(base, 'marker');
+  const name = `my repo $(touch ${marker})`;
+  const wide = '𝔸'.repeat(299);
+  await writeConcept(fruit, name, { type: 'Repository', title: 'the orchard', resource: ORCHARD, aliases: ['orchard'],
+    context: { packs: Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`pack-${index}`, { description: wide, files: ['**'] }])) } });
+  assert.equal((await cli(['validate'])).code, 0, 'the fixture is valid');
+  const { json } = await cli(['repos', 'open', 'orchard']);
+  assert.ok(compact(json) <= 8192);
+  const { next } = json.truncated.declared;
+  assert.equal(next, `read 'team/fruit:/${name}' --frontmatter`);
+  const quoted = word => `'${word.replaceAll("'", `'\\''`)}'`;
+  const { stdout } = await exec('/bin/sh', ['-c', `${quoted(process.execPath)} ${quoted(join(kit, 'bin/hub.mjs'))} --root ${quoted(workspace)} ${next}`], { env: { ...process.env, CONTEXT_KIT_ROOT: '' } });
+  const read = JSON.parse(stdout);
+  assert.equal(read.id, name);
+  assert.equal(Object.keys(read.frontmatter.context.packs).length, 20);
+  await assert.rejects(readFile(marker), { code: 'ENOENT' });
 });
