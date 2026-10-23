@@ -6,9 +6,9 @@
 
 ## 1. Local-only tools (slice `local-only`, no dependencies)
 
-- [ ] 1.1 Add `repos which [<path>]` and stdio `which_repo` (innermost checkout via `git rev-parse --show-toplevel`, main worktree via `git worktree list --porcelain`, realpath-normalized, no fallback to an enclosing checkout, `origin` breaking ties, else `ambiguous`); verify `test/e2e/repos.test.mjs` linked to `repository-registry / Nested subdirectory`, `Linked worktree`, `Unrecorded checkout`, `Innermost checkout decides`, `Several registered remotes`, `Not a repository of the user's` and `Agent asks where it is`
-- [ ] 1.2 Add the `localOnly` operation flag (set on `which_repo`), pass the transport into the selection, and withhold local-only tools over HTTP, so `repo-context` can flag its tools on top; verify `test/e2e/remote.test.mjs` linked to `remote-access / Same tools over HTTP`, `Local-only tools stay local` and `Every local-only tool is withheld`
-- [ ] 1.3 Document `which` and the local-only rule in `repositories.md`, `remote.md`, `commands.md` and the `bin/hub.mjs` usage; verify `test/e2e/help.test.mjs` passes
+- [x] 1.1 Add `repos which [<path>]` and stdio `which_repo` (innermost checkout via `git rev-parse --show-toplevel`, main worktree via `git worktree list --porcelain`, realpath-normalized, no fallback to an enclosing checkout, `origin` breaking ties, else `ambiguous`); verify `test/e2e/repos.test.mjs` linked to `repository-registry / Nested subdirectory`, `Linked worktree`, `Unrecorded checkout`, `Innermost checkout decides`, `Several registered remotes`, `Not a repository of the user's` and `Agent asks where it is`
+- [x] 1.2 Add the `localOnly` operation flag (set on `which_repo`), pass the transport into the selection, and withhold local-only tools over HTTP, so `repo-context` can flag its tools on top; verify `test/e2e/remote.test.mjs` linked to `remote-access / Same tools over HTTP`, `Local-only tools stay local` and `Every local-only tool is withheld`
+- [x] 1.3 Document `which` and the local-only rule in `repositories.md`, `remote.md`, `commands.md` and the `bin/hub.mjs` usage; verify `test/e2e/help.test.mjs` passes
 
 ## 2. Serving-machine paths (slice `remote-paths`, after `local-only`)
 

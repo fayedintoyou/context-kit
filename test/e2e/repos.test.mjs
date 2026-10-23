@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { appendFile, cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, cp, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1153,4 +1153,184 @@ test('validate suggests the clean form for an HTTPS resource with a plain userna
   const validate = await cli('validate');
   assert.equal(validate.error.code, 'INVALID_REPOSITORY');
   assert.equal(validate.error.message, 'personal/main/bucket: resource must not carry credentials, a query or a fragment; use https://bitbucket.org/faye-team/bucket.git');
+});
+
+// `repos which` run from a directory (the CLI's working directory), with exit status and JSON.
+async function whichFrom({ env, workspace }, cwd, ...args) {
+  try { return { code: 0, json: JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, 'repos', 'which', ...args], { env, cwd })).stdout) }; }
+  catch (error) { return { code: error.code, error: JSON.parse(error.stderr).error }; }
+}
+const room = { title: 'the room', resource: 'https://github.com/me/room' };
+const studio = { title: 'studio', resource: 'https://github.com/me/studio' };
+
+// spec: repository-registry / Nested subdirectory
+test('repos which from three levels inside a recorded checkout names its repository, top, relative path and recorded', async t => {
+  const f = await fixture(t);
+  await f.register('personal', 'room', room);
+  const top = await f.checkout(join(f.base, 'code/room'), { origin: 'https://github.com/me/room' });
+  assert.equal((await f.cli('repos', 'locate', 'room', top)).code, 0);
+  await mkdir(join(top, 'a/b/c'), { recursive: true });
+  const found = await whichFrom(f, join(top, 'a/b/c'));
+  assert.equal(found.code, 0, JSON.stringify(found.error));
+  assert.deepEqual(found.json.repository, { id: 'personal/main/room', title: 'the room', hub: 'personal/main', concept: 'room', upstream: 'github.com/me/room' });
+  assert.equal(found.json.status, 'recorded');
+  assert.equal(found.json.checkout, top);
+  assert.equal(found.json.relative, 'a/b/c');
+  assert.equal(found.json.path, join(top, 'a/b/c'));
+  assert.equal(found.json.recorded, top);
+  // A file inside it, and the top itself, given as arguments.
+  await writeFile(join(top, 'a/notes.md'), 'x\n');
+  assert.equal((await whichFrom(f, f.base, join(top, 'a/notes.md'))).json.relative, 'a/notes.md');
+  assert.equal((await whichFrom(f, f.base, top)).json.relative, '.');
+});
+
+// spec: repository-registry / Linked worktree
+test('repos which on a linked worktree given through a symlink reports worktree with the real paths, and never follows a symlink out by name', async t => {
+  const f = await fixture(t);
+  await f.register('personal', 'room', room);
+  await f.register('personal', 'studio', studio);
+  const main = await f.checkout(join(f.base, 'code/room'), { origin: 'https://github.com/me/room' });
+  await f.commit(main);
+  await f.cli('repos', 'locate', 'room', main);
+  await exec('git', ['worktree', 'add', '-q', join(f.base, 'code/room-fix')], { cwd: main });
+  const worktree = await realpath(join(f.base, 'code/room-fix'));
+  await mkdir(join(f.base, 'links'));
+  await symlink(worktree, join(f.base, 'links/fix'));
+  const found = await whichFrom(f, f.base, join(f.base, 'links/fix'));
+  assert.equal(found.code, 0, JSON.stringify(found.error));
+  assert.equal(found.json.repository.id, 'personal/main/room');
+  assert.equal(found.json.status, 'worktree');
+  assert.equal(found.json.checkout, worktree);
+  assert.equal(found.json.main, main);
+  assert.equal(found.json.path, worktree);
+  // A symlink inside the recorded checkout that points elsewhere reports where it points.
+  const elsewhere = await mkdir(join(f.base, 'plain'), { recursive: true }).then(() => realpath(join(f.base, 'plain')));
+  await symlink(elsewhere, join(main, 'out'));
+  const out = await whichFrom(f, f.base, join(main, 'out'));
+  assert.equal(out.code, 0);
+  assert.equal(out.json.repository, null);
+  assert.equal(out.json.path, elsewhere);
+  assert.equal(out.json.checkout, undefined);
+  // A worktree of a bare repository: worktree, with no main and a reason.
+  const bare = (await f.upstream('studio')).slice('file://'.length);
+  await exec('git', ['remote', 'set-url', 'origin', 'https://github.com/me/studio'], { cwd: bare });
+  await exec('git', ['worktree', 'add', '-q', join(f.base, 'code/studio-wt')], { cwd: bare });
+  const ofBare = await whichFrom(f, f.base, join(f.base, 'code/studio-wt'));
+  assert.equal(ofBare.json.repository.id, 'personal/main/studio');
+  assert.equal(ofBare.json.status, 'worktree');
+  assert.equal(ofBare.json.main, null);
+  assert.match(ofBare.json.reason, /bare repository/);
+  // A worktree whose main checkout was deleted can't name its repository, and says why.
+  await rm(main, { recursive: true, force: true });
+  const orphan = await whichFrom(f, f.base, worktree);
+  assert.equal(orphan.code, 0, JSON.stringify(orphan.error));
+  assert.equal(orphan.json.repository, null);
+  assert.match(orphan.json.reason, /no longer exists/);
+});
+
+// spec: repository-registry / Unrecorded checkout
+test('repos which in a second clone reports unrecorded and the recorded path, and records nothing', async t => {
+  const f = await fixture(t);
+  await f.register('personal', 'room', room);
+  const first = await f.checkout(join(f.base, 'code/room'), { origin: 'https://github.com/me/room' });
+  await f.cli('repos', 'locate', 'room', first);
+  const second = await f.checkout(join(f.base, 'scratch/room'), { origin: 'git@github.com:me/room.git' });
+  const before = await readFile(join(f.workspace, '.state/checkouts.json'), 'utf8');
+  const found = await whichFrom(f, second);
+  assert.equal(found.code, 0, JSON.stringify(found.error));
+  assert.equal(found.json.repository.id, 'personal/main/room');
+  assert.equal(found.json.status, 'unrecorded');
+  assert.equal(found.json.checkout, second);
+  assert.equal(found.json.recorded, first);
+  assert.equal(await readFile(join(f.workspace, '.state/checkouts.json'), 'utf8'), before);
+  assert.equal((await f.cli('repos')).json.repositories[0].path, first);
+});
+
+// spec: repository-registry / Innermost checkout decides
+test('repos which inside a registered submodule names it, and inside an unrelated inner repository names none, not the enclosing one', async t => {
+  const f = await fixture(t);
+  await f.register('personal', 'room', room);
+  await f.register('personal', 'studio', studio);
+  const source = (await f.upstream('studio')).slice('file://'.length);
+  const top = await f.checkout(join(f.base, 'code/room'), { origin: 'https://github.com/me/room' });
+  await f.commit(top);
+  await f.cli('repos', 'locate', 'room', top);
+  await exec('git', ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', source, 'vendor/studio'], { cwd: top, env: f.env });
+  await exec('git', ['remote', 'set-url', 'origin', 'https://github.com/me/studio'], { cwd: join(top, 'vendor/studio') });
+  await f.checkout(join(top, 'scratch'), { origin: 'https://github.com/someone/else' });
+  await f.checkout(join(top, 'bare-init'));
+  await mkdir(join(top, 'vendor/studio/src'));
+  const sub = await whichFrom(f, join(top, 'vendor/studio/src'));
+  assert.equal(sub.code, 0, JSON.stringify(sub.error));
+  assert.equal(sub.json.repository.id, 'personal/main/studio');
+  assert.equal(sub.json.checkout, join(top, 'vendor/studio'));
+  assert.equal(sub.json.relative, 'src');
+  assert.equal(sub.json.status, 'unrecorded');
+  for (const inner of ['scratch', 'bare-init']) {
+    const found = await whichFrom(f, join(top, inner));
+    assert.equal(found.code, 0, JSON.stringify(found.error));
+    assert.equal(found.json.repository, null, inner);
+    assert.equal(found.json.checkout, join(top, inner), inner);
+  }
+});
+
+// spec: repository-registry / Several registered remotes
+test('with two registered remotes origin decides, and without origin the answer is ambiguous in id order', async t => {
+  const f = await fixture(t);
+  await f.register('personal', 'studio', studio);
+  await f.register('personal', 'room', room);
+  const withOrigin = await f.checkout(join(f.base, 'code/one'), { upstream: 'https://github.com/me/room', origin: 'https://github.com/me/studio' });
+  const found = await whichFrom(f, withOrigin);
+  assert.equal(found.code, 0, JSON.stringify(found.error));
+  assert.equal(found.json.repository.id, 'personal/main/studio');
+  const token = 'ghp_' + 'a'.repeat(36);
+  const without = await f.checkout(join(f.base, 'code/two'), { zeta: `https://me:${token}@github.com/me/studio.git`, alpha: 'git@github.com:me/room.git' });
+  const ambiguous = await whichFrom(f, without);
+  assert.equal(ambiguous.code, 0, JSON.stringify(ambiguous.error));
+  assert.equal(ambiguous.json.repository, null);
+  assert.equal(ambiguous.json.status, 'ambiguous');
+  assert.deepEqual(ambiguous.json.candidates.map(item => [item.id, item.upstream]), [['personal/main/room', 'github.com/me/room'], ['personal/main/studio', 'github.com/me/studio']]);
+  // Remotes are named only by their identity, never as the URL the checkout holds.
+  const text = JSON.stringify(ambiguous.json);
+  assert.ok(!text.includes(token) && !text.includes('me:') && !text.includes('git@'), text);
+});
+
+// spec: repository-registry / Not a repository of the user's
+test('repos which outside any checkout or in an unrelated one reports none with status 0, and in a hub names the hub', async t => {
+  const f = await fixture(t);
+  await f.register('personal', 'room', room);
+  await mkdir(join(f.base, 'plain/deep'), { recursive: true });
+  const outside = await whichFrom(f, join(f.base, 'plain/deep'));
+  assert.equal(outside.code, 0, JSON.stringify(outside.error));
+  assert.deepEqual(outside.json, { root: f.workspace, path: join(f.base, 'plain/deep'), repository: null });
+  const other = await f.checkout(join(f.base, 'other'), { origin: 'https://github.com/someone/else' });
+  const unrelated = await whichFrom(f, other);
+  assert.equal(unrelated.code, 0);
+  assert.equal(unrelated.json.repository, null);
+  assert.ok(!JSON.stringify(unrelated.json).includes('someone'));
+  const inHub = await whichFrom(f, join(f.workspace, 'hubs/personal'));
+  assert.equal(inHub.code, 0);
+  assert.equal(inHub.json.hub, 'personal/main');
+  assert.equal(inHub.json.repository, null);
+  assert.equal((await whichFrom(f, f.base, join(f.base, 'missing'))).error.code, 'INVALID_PATH');
+});
+
+// spec: repository-registry / Agent asks where it is
+test('which_repo over stdio returns what repos which returns, and wants an absolute path', async t => {
+  const f = await fixture(t);
+  await f.register('personal', 'room', room);
+  const top = await f.checkout(join(f.base, 'code/room'), { origin: 'https://github.com/me/room' });
+  await f.cli('repos', 'locate', 'room', top);
+  await mkdir(join(top, 'src/lib'), { recursive: true });
+  const client = new Client({ name: 'repos-which', version: '1.0.0' });
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', f.workspace], env: f.env, stderr: 'pipe' }));
+  t.after(() => client.close());
+  const tool = (await client.listTools()).tools.find(item => item.name === 'which_repo');
+  assert.equal(tool?.annotations.readOnlyHint, true);
+  const called = await client.callTool({ name: 'which_repo', arguments: { path: join(top, 'src/lib') } });
+  assert.ok(!called.isError, called.content[0].text);
+  assert.deepEqual(called.structuredContent, (await whichFrom(f, join(top, 'src/lib'))).json);
+  assert.equal(called.structuredContent.repository.id, 'personal/main/room');
+  const relativePath = await client.callTool({ name: 'which_repo', arguments: { path: 'src/lib' } });
+  assert.equal(JSON.parse(relativePath.content[0].text).error.code, 'INVALID_INPUT');
 });

@@ -75,6 +75,13 @@ token at start; without it the server refuses to start rather than run open. A
 login service doesn't load your shell profile, so give the wrapper absolute paths
 for `node` and the workspace.
 
+Over HTTP the server offers the same tools as over stdio, except local-only ones:
+tools that resolve a path or checkout on this machine, such as `which_repo`. The
+client runs somewhere else, so a path it sends, or one it is sent back, would name
+the wrong machine. They are not listed over HTTP, and a call to one fails with
+`UNKNOWN_OPERATION` before anything runs. Each such tool declares `localOnly` where
+it is defined in `lib/operations.mjs`.
+
 ## 2. Create the tunnel
 
 With [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/):

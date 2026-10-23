@@ -72,8 +72,34 @@ untracked `.state/checkouts.json`:
   when it is a checkout, such as a home directory kept in git, unless it is a
   registered repository's checkout: that one is recorded, not entered.
 - `repos setup` sets up a new machine, below.
+- `repos which [<path>]` says which repository a path belongs to, below.
 
 Recording and cloning are CLI-only; agents run them when you ask.
+
+### Which repository is this
+
+`repos which [<path>]` (default: the current directory) finds the innermost git
+checkout containing the path, after resolving symlinks, and matches its remotes
+against the registered repositories. It reports the repository (`id`, `title`,
+`hub`, `concept` and `upstream` as host/owner/name, never the remote's URL), the
+checkout's top as `checkout`, the path inside it as `relative`, the `recorded`
+path, and a `status`:
+
+- `recorded`: this is the recorded checkout.
+- `worktree`: a linked worktree whose main checkout (`main`) is the recorded one.
+  A worktree of a bare repository, or one whose main isn't a checkout, gives
+  `main: null` and a `reason`.
+- `unrecorded`: another checkout of it, such as a second clone. Nothing is recorded;
+  run `repos locate` if it should be.
+
+Only the innermost checkout counts: inside a submodule that is another registered
+repository, that repository is reported; inside an unrelated repository nested in
+one of yours, none is, never the enclosing one. When remotes match several
+repositories, the one `origin` points to wins; otherwise `status` is `ambiguous`
+with the `candidates` in id order. A path in a hub also names the `hub`. A path
+that isn't one of your repositories reports `repository: null` and exits 0.
+Over MCP it is the `which_repo` tool, which takes an absolute path and is offered
+only over stdio (see `remote`).
 
 ### A new machine
 

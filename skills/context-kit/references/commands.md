@@ -23,6 +23,7 @@ repos` works anywhere (see `repositories`).
 | `capture <hub> <title>` | `capture_note` | New unreviewed note from stdin (`--by`) |
 | `repos add <hub> [<upstream>]` | `add_repo` | Registers a repository in a hub (`--path`, `--alias`, `--title`, `--concept`, `--description`); MCP needs `--allow-write` and takes no path |
 | `repos` | `list_repos` | Registered repositories and local checkouts |
+| `repos which [<path>]` | `which_repo` | Which registered repository the innermost checkout at a path (default here) belongs to; MCP takes an absolute path, stdio only |
 | `repos locate <repo> <path>` | | Records an existing checkout (CLI only) |
 | `repos clone <repo> [<path>]` | | Clones and records a repository (CLI only) |
 | `repos scan <directory>` | | Records matching checkouts down to `--depth` levels (default 1, at most 6; CLI only) |

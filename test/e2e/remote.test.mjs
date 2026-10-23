@@ -13,6 +13,7 @@ import { parse as parseYaml } from 'yaml';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { localOnlyOperations } from '../../lib/operations.mjs';
 
 const exec = promisify(execFile);
 const kit = await realpath(fileURLToPath(new URL('../../', import.meta.url)));
@@ -103,12 +104,60 @@ test('HTTP lists the same tools and returns the same context as stdio', async t 
   const { serve, stdio, remote } = await fixture(t);
   const { url } = await serve();
   const [http, local] = [await remote(url), await stdio()];
-  assert.deepEqual((await http.listTools()).tools, (await local.listTools()).tools);
+  // The same tools apart from the local-only ones, which only stdio lists.
+  const localTools = (await local.listTools()).tools;
+  assert.ok(localTools.some(tool => tool.name === 'which_repo'));
+  assert.deepEqual((await http.listTools()).tools, localTools.filter(tool => !localOnlyOperations().includes(tool.name)));
   const call = client => client.callTool({ name: 'get_context', arguments: { id: 'personal/main' } });
   const [overHttp, overStdio] = [await call(http), await call(local)];
   assert.ok(!overHttp.isError);
   assert.deepEqual(overHttp.structuredContent, overStdio.structuredContent);
   assert.deepEqual(parse(overHttp), parse(overStdio));
+});
+
+// spec: remote-access / Local-only tools stay local
+test('which_repo is listed over stdio, not over HTTP, and an HTTP call to it is unknown and runs nothing', async t => {
+  const { base, workspace, serve, stdio, remote } = await fixture(t);
+  const { url, port } = await serve();
+  const [http, local] = [await remote(url), await stdio()];
+  assert.ok((await local.listTools()).tools.some(tool => tool.name === 'which_repo'));
+  assert.ok(!(await http.listTools()).tools.some(tool => tool.name === 'which_repo'));
+  // Over stdio it runs; over HTTP the same call, and calls that would fail its validation or
+  // its lookup if it ran, are all unknown.
+  assert.ok(!(await local.callTool({ name: 'which_repo', arguments: { path: workspace } })).isError);
+  for (const args of [{ path: workspace }, { path: 'relative' }, { path: join(base, 'missing') }, {}]) {
+    const called = await http.callTool({ name: 'which_repo', arguments: args });
+    assert.equal(called.isError, true);
+    assert.equal(parse(called).error.code, 'UNKNOWN_OPERATION', JSON.stringify(args));
+    assert.equal(called.structuredContent, undefined);
+  }
+  // A raw tools/call in a raw session, as a client that never listed tools would send.
+  const init = await raw(url, { headers: { ...bearer, Host: `127.0.0.1:${port}` }, body: initialize() });
+  const session = init.headers['mcp-session-id'];
+  const called = await raw(url, { headers: { ...bearer, Host: `127.0.0.1:${port}`, 'Mcp-Session-Id': session, 'Mcp-Protocol-Version': '2025-06-18' },
+    body: toolCall('which_repo', { path: workspace }) });
+  const { result } = called.json();
+  assert.equal(result.isError, true);
+  assert.equal(JSON.parse(result.content[0].text).error.code, 'UNKNOWN_OPERATION');
+});
+
+// spec: remote-access / Every local-only tool is withheld
+test('no operation the core declares local-only is listed or callable over HTTP, whatever the options', async t => {
+  const { workspace, serve, stdio, remote } = await fixture(t);
+  const declared = localOnlyOperations();
+  assert.ok(declared.includes('which_repo'));
+  // Every addon group enabled and writes allowed, so nothing else keeps a tool off the list.
+  await writeFile(join(workspace, 'context-kit.json'), JSON.stringify({ version: 1, addons: ['maps', 'reflect', 'review', 'specs'] }));
+  const { url } = await serve(['--allow-write']);
+  const [http, local] = [await remote(url), await stdio('--allow-write')];
+  const offered = (await http.listTools()).tools.map(tool => tool.name);
+  const stdioOffered = (await local.listTools()).tools.map(tool => tool.name);
+  for (const name of declared) {
+    assert.ok(!offered.includes(name), name);
+    assert.ok(stdioOffered.includes(name), name);
+    assert.equal(parse(await http.callTool({ name, arguments: {} })).error.code, 'UNKNOWN_OPERATION', name);
+  }
+  assert.deepEqual(offered, stdioOffered.filter(name => !declared.includes(name)));
 });
 
 // spec: remote-access / Same prompts over HTTP
