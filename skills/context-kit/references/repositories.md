@@ -125,20 +125,27 @@ machine recorded, ignoring the current directory, and returns, read-only:
   order (`entries`, directories ending in `/`), at most 150, with each listed
   directory's tracked-file count in `counts` and `files` the total.
 - `truncated`: `null`, or what didn't fit, each with `next`, where to get the rest.
-  Any result is at most 8 KiB of compact JSON (about 2k tokens). The resolution and
-  the root's instruction pointers are always kept, each string bounded and clipped
-  with a trailing `…` (listed in `fields`). Then, in order: the concept summary is
+  Any result is at most 8 KiB as compact JSON (`JSON.stringify` without spacing,
+  about 2k tokens), counted for one copy of the result: the CLI prints it
+  indented, and MCP carries it as text and as `structuredContent`. The
+  resolution and the root's instruction pointers are always kept, each string
+  bounded and clipped with a trailing `…`. Then, in order: the concept summary is
   bounded (`repository`: aliases cut from the end), the tree is cut from the end
-  (`tree`: `omitted` and the `first` left out), and deeper instruction pointers
-  go innermost first (`instructions`: `omitted` and `from`, the first directory
-  whose `AGENTS.md` and `CLAUDE.md` you then read yourself, down to `path`).
+  (`tree`: `omitted`, the `first` left out, and `next`: a `git ls-files` command
+  that lists every tracked file below the tree's root the way Context Kit reads
+  them, plus `repos open <id> <directory>` for the first omitted directory), and
+  deeper instruction pointers go innermost first (`instructions`: `omitted` and
+  `from`, the first directory whose `AGENTS.md` and `CLAUDE.md` you then read
+  yourself, down to `path`). `fields` lists every value clipped or withheld; a
+  path or command too long to give whole is `null`, never cut.
 
 The subpath is a directory relative to the checkout's root without `.`, `..` or
 `.git` segments, backslashes, control characters or a leading `/`, at most 200
 characters (`INVALID_PATH`). It is matched in Unicode NFC against the tracked
-paths, so an NFD spelling (which macOS accepts) opens the same directory, reported
-in the index's spelling. One holding no tracked files is `UNKNOWN_PATH`; a name
-that two tracked spellings share once normalized is ambiguous (`INVALID_PATH`).
+paths, and caselessly when the checkout's file system ignores case, so an NFD or
+other-case spelling (which macOS accepts) opens the same directory, reported in
+the index's spelling. One holding no tracked files is `UNKNOWN_PATH`; a name that
+two tracked spellings share once compared that way is ambiguous (`INVALID_PATH`).
 Every read walks from the checkout's real root and stops at any symlink below it:
 a symlinked subpath directory fails with `PATH_ESCAPE`. Git is read only through
 `rev-parse` and `ls-files -z --stage`, with every `GIT_*` variable removed, global

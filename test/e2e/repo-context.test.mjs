@@ -256,11 +256,53 @@ test('400 long root file names fit 8 KiB as a code-point-ordered prefix, with th
   const shown = json.tree.entries.length;
   assert.ok(shown > 10 && shown < 150, `${shown} entries`);
   assert.deepEqual(json.tree.entries, sorted.slice(0, shown));
-  assert.deepEqual(json.truncated, { tree: { omitted: 400 - shown, first: sorted[shown], next: 'repos open team/fruit/orchard <directory>' } });
+  assert.deepEqual(json.truncated, { tree: { omitted: 400 - shown, first: sorted[shown],
+    next: [`git -C ${path} -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.quotePath=false ls-files -- .`] } });
+  // The command given lists what was left out.
+  const listed = (await exec('/bin/sh', ['-c', json.truncated.tree.next[0]], { cwd: base })).stdout.split('\n').filter(Boolean);
+  assert.deepEqual(listed.slice(shown), sorted.slice(shown));
   assert.equal(json.tree.files, 400);
   const mcp = (await tool(await stdio(), { repository: 'orchard' })).json;
   assert.deepEqual(mcp, json);
   assert.ok(compact(mcp) <= 8192);
+});
+
+// spec: repository-context / Large tree
+test('omitted directories open on their own, and an omitted path too long to show whole is withheld, not cut', async t => {
+  const { base, cli, register, checkout, locate } = await fixture(t);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'] });
+  // 200 directories with a file each: the tree is directory, file, directory, file, ...
+  const files = Object.fromEntries(Array.from({ length: 200 }, (_, index) => [`dir ${String(index).padStart(3, '0')}-${'x'.repeat(30)}/file.md`, 'x\n']));
+  const path = await checkout(join(base, 'code/orchard'), ORCHARD, files);
+  await locate('orchard', path);
+  const { json } = await cli(['repos', 'open', 'orchard']);
+  assert.ok(compact(json) <= 8192);
+  const { tree } = json.truncated;
+  assert.equal(tree.next.length, 2);
+  const [listing, open] = tree.next;
+  // The git command, run as written, lists every file, the omitted ones included.
+  const listed = (await exec('/bin/sh', ['-c', listing], { cwd: base })).stdout.split('\n').filter(Boolean);
+  assert.equal(listed.length, 200);
+  const omittedFile = tree.first.endsWith('/') ? `${tree.first}file.md` : tree.first;
+  assert.ok(listed.includes(omittedFile), omittedFile);
+  // The directory command, run through the CLI, opens the first omitted directory.
+  const directory = (tree.first.endsWith('/') ? tree.first : `${dirname(tree.first)}/`).slice(0, -1);
+  assert.equal(open, `repos open team/fruit/orchard '${directory}'`);
+  const opened = await cli(['repos', 'open', 'team/fruit/orchard', directory]);
+  assert.deepEqual([opened.json.path, opened.json.tree.entries], [directory, [`${directory}/file.md`]]);
+
+  // Names longer than the allowance for `first` give null and say so, never a cut path.
+  const longNames = Object.fromEntries(Array.from({ length: 60 }, (_, index) => [`long/${String(index).padStart(2, '0')}${'é'.repeat(110)}.md`, 'x\n']));
+  const second = await checkout(join(base, 'code/orchard-long'), ORCHARD, longNames);
+  await locate('orchard', second);
+  const long = (await cli(['repos', 'open', 'orchard', 'long'])).json;
+  assert.ok(compact(long) <= 8192);
+  assert.ok(long.truncated.tree.omitted > 0);
+  assert.equal(long.truncated.tree.first, null);
+  assert.ok(long.truncated.fields.includes('truncated.tree.first'));
+  assert.ok(!JSON.stringify(long).includes('…'), 'nothing was cut');
+  const all = (await exec('/bin/sh', ['-c', long.truncated.tree.next[0]], { cwd: base })).stdout.split('\n').filter(Boolean);
+  assert.equal(all.length, 60);
 });
 
 // A checkout whose directories d, d/d, ... nest `depth` levels deep, each with a tracked
@@ -369,6 +411,26 @@ test('an NFD spelling of a tracked NFC directory opens it in the index spelling;
     const ambiguous = await cli(['repos', 'open', 'orchard', spelling]);
     assert.equal(ambiguous.error?.code, 'INVALID_PATH', spelling);
     assert.match(ambiguous.error.message, /differ only in Unicode normalization/);
+  }
+});
+
+// spec: repository-context / Unicode spelling
+test('on a case-insensitive file system another case opens the tracked directory, and a case-only collision is refused', async t => {
+  const { base, env, cli, register, checkout, locate } = await fixture(t);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'] });
+  const path = await checkout(join(base, 'code/orchard'), ORCHARD, { 'docs/a.md': 'a\n' });
+  const caseless = await realpath(join(path, '.GIT')).then(() => true, () => false);
+  if (!caseless) { t.skip('this file system is case-sensitive'); return; }
+  await locate('orchard', path);
+  const upper = await cli(['repos', 'open', 'orchard', 'DOCS']);
+  assert.deepEqual([upper.json?.path, upper.json?.tree.entries], ['docs', ['docs/a.md']], JSON.stringify(upper.error));
+  await writeFile(join(base, 'blob.txt'), 'b\n');
+  const sha = (await exec('git', ['hash-object', '-w', join(base, 'blob.txt')], { cwd: path, env })).stdout.trim();
+  await exec('git', ['-c', 'core.ignoreCase=false', 'update-index', '--add', '--cacheinfo', `100644,${sha},Docs/b.md`], { cwd: path, env });
+  for (const spelling of ['docs', 'Docs', 'DOCS']) {
+    const ambiguous = await cli(['repos', 'open', 'orchard', spelling]);
+    assert.equal(ambiguous.error?.code, 'INVALID_PATH', spelling);
+    assert.match(ambiguous.error.message, /or case; it is ambiguous/);
   }
 });
 
