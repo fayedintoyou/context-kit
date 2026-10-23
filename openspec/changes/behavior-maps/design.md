@@ -239,8 +239,14 @@ or a person, and everything mechanical about them is the kit's.
     | derived | `untested` | some cited scenario has none |
     | derived | `unknown` | no citations, a `lid` or `hub` source, or a store source (its tests live in its parties) |
 
-    Evidence is a repository path (must exist, confined to the root), `#<n>` for a
-    pull request or an `https://` URL; nothing is fetched. Links come from
+    Evidence is a regular file committed to the repository, in the tree at
+    HEAD (read with `git rev-parse --show-prefix` and `git ls-tree -r -z
+    --full-tree HEAD` under the sanitized environment of `repo-context`
+    decision 7; neither the index nor the working tree is consulted, so no
+    staged change, symlink, race or existence outside the root can matter; a
+    symlink entry, a submodule, and a name that several entries share once
+    normalized to NFC are refused; with no commit nothing is evidence),
+    `#<n>` for a pull request or an `https://` URL; nothing is fetched. Links come from
     `testLinks()` in `lib/specs/links.mjs`, so maps and `npm test` agree on what a
     link is. A declared `works` beside a derived `untested` is shown, not
     reconciled: the reader sees both.

@@ -1,0 +1,36 @@
+flowchart TD
+  n_posted(("A teammate posts"))
+  n_what_kind{"What kind of post is it?"}
+  n_dot("A quiet dot appears next to the room")
+  n_badge("The room shows a number badge")
+  n_where{"Where are you?"}
+  n_two_popups("A pop-up appears on every device at once")
+  n_one_popup("One pop-up appears, on the device you used last")
+  n_watch("Your watch taps your wrist")
+  n_seen(["You've seen it"])
+  n_posted --> n_what_kind
+  n_what_kind -->|"A post in a room, no @mention"| n_dot
+  n_what_kind -->|"A DM or an @mention"| n_badge
+  n_badge --> n_where
+  n_where -->|"At your desk"| n_two_popups
+  n_where -->|"Away from your desk"| n_watch
+  n_one_popup --> n_seen
+  n_watch --> n_seen
+  n_dot --> n_seen
+  n_two_popups -. "with the fix" .-> n_one_popup
+  classDef st_works fill:#e5e7eb,stroke:#6b7280,color:#111827
+  class n_badge st_works
+  classDef st_issue fill:#fee2e2,stroke:#dc2626,color:#111827
+  class n_two_popups st_issue
+  classDef st_fixed fill:#dcfce7,stroke:#16a34a,color:#111827
+  class n_one_popup st_fixed
+  classDef st_untested fill:#ffffff,stroke:#6b7280,stroke-dasharray:5 4,color:#111827
+  class n_dot,n_watch st_untested
+  subgraph status_key["Key"]
+    direction LR
+    key_works("Works"):::st_works
+    key_issue("Problem TLA+ found"):::st_issue
+    key_fixed("Fixed"):::st_fixed
+    key_untested("No tests yet (derived)"):::st_untested
+    key_works ~~~ key_issue ~~~ key_fixed ~~~ key_untested
+  end

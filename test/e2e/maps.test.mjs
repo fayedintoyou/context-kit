@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +29,12 @@ async function fixture(t, name = 'pigeon') {
   delete env.CONTEXT_KIT_ROOT;
   const root = join(base, name);
   await cp(join(fixtures, name), root, { recursive: true });
+  // A git repository, since a declared status's path evidence must be a committed file; commit()
+  // commits everything written since.
+  const git = (...args) => exec('git', ['-c', 'user.name=Pigeon', '-c', 'user.email=pigeon@example.com', ...args], { cwd: root, env });
+  await git('init', '-q');
+  const commit = async () => { await git('add', '-A'); await git('commit', '-q', '--allow-empty', '-m', 'fixture'); };
+  await commit();
   const cli = async (...args) => {
     const parse = text => (text.trim() ? JSON.parse(text) : undefined);
     try {
@@ -60,7 +66,7 @@ async function fixture(t, name = 'pigeon') {
     assert.deepEqual(await mcp('check_map', name === undefined ? {} : { map: name }), result.json ?? { error: result.error });
     return result;
   };
-  return { base, root, env, cli, mcp, checkBoth, mapFile, specFile, original, editMap };
+  return { base, root, env, cli, mcp, checkBoth, mapFile, specFile, original, editMap, git, commit };
 }
 
 // A map file around a yaml map block.
@@ -197,7 +203,8 @@ test('a valid map checks valid with no errors over CLI and MCP alike', async t =
   const checked = await checkBoth('alerts');
   assert.equal(checked.code, 0);
   assert.equal(checked.json.valid, true);
-  assert.deepEqual(checked.json.maps, [{ map: 'alerts', valid: true, errors: [], warnings: [] }]);
+  assert.deepEqual(checked.json.maps.map(({ statuses, ...rest }) => rest), [{ map: 'alerts', valid: true, errors: [], warnings: [] }]);
+  assert.deepEqual(Object.keys(checked.json.maps[0].statuses), ['posted', 'what-kind', 'dot', 'badge', 'seen']);
   assert.deepEqual(await mcp('check_map', { map: 'alerts' }), checked.json);
   assert.deepEqual((await checkBoth()).json, checked.json);
 });
@@ -410,12 +417,15 @@ test('labels with characters Mermaid treats specially render as plain text', asy
 });
 
 test('the skill and help examples pass maps check', async t => {
-  const { cli, mapFile, checkBoth } = await fixture(t);
-  for (const file of ['skills/behavior-map/SKILL.md', 'skills/context-kit/references/maps.md']) {
+  // The skill's example declares statuses, over the Pigeon fixture with the pop-up specs and model.
+  for (const [file, name] of [['skills/behavior-map/SKILL.md', 'pigeon-status'], ['skills/context-kit/references/maps.md', 'pigeon']]) {
+    const { cli, mapFile } = await fixture(t, name);
     const example = (await readFile(join(kit, file), 'utf8')).match(/````markdown\n([\s\S]*?)````/)[1];
     await writeFile(mapFile, example);
     const checked = report(await cli('maps', 'check', 'alerts', '--strict'));
     assert.deepEqual([checked.valid, checked.errors, checked.warnings], [true, [], []], file);
+    const declared = Object.entries(checked.statuses).filter(([, status]) => status.declared).map(([id, status]) => [id, status.declared.state]);
+    assert.deepEqual(declared, name === 'pigeon-status' ? [['badge', 'works'], ['two-popups', 'issue'], ['one-popup', 'fixed']] : [], file);
   }
 });
 
@@ -447,6 +457,339 @@ test('writing refuses a map with errors, and map files are never followed throug
   assert.equal((await cli('maps', 'list')).error.code, 'PATH_ESCAPE');
   assert.equal((await checkBoth('alerts')).error.code, 'PATH_ESCAPE');
   assert.equal((await cli('maps', 'render', 'alerts', '--write')).error.code, 'PATH_ESCAPE');
+});
+
+// Writes a test file into a fixture repository with a `// spec:` link above each test, for the
+// derived statuses, and commits it. The link comments are assembled, so this file's own lines are not links.
+async function linkTests(root, file, scenarios, body = '') {
+  await mkdir(join(root, 'test/e2e'), { recursive: true });
+  const tests = scenarios.map(scenario => `${'//'} spec: ${scenario}\ntest(${JSON.stringify(scenario)}, () => {${body}});\n`);
+  await writeFile(join(root, 'test/e2e', file), `import test from 'node:test';\n\n${tests.join('\n')}`);
+  // A test file can be a declared status's evidence, which must be committed.
+  await exec('git', ['add', '-A'], { cwd: root });
+  await exec('git', ['-c', 'user.name=Pigeon', '-c', 'user.email=pigeon@example.com', 'commit', '-q', '-m', 'tests'], { cwd: root });
+}
+const statusGolden = await readFile(join(fixtures, 'alerts-status.mermaid'), 'utf8');
+
+// spec: behavior-maps / Issue and its fix
+test('an issue a model checker found, with its fix, is reported as declared with its evidence', async t => {
+  const { cli, mapFile, editMap, checkBoth } = await fixture(t, 'pigeon-status');
+  const fresh = await readFile(mapFile, 'utf8');
+  const checked = await checkBoth('alerts');
+  assert.equal(checked.code, 0);
+  const map = report(checked);
+  assert.deepEqual([map.valid, map.errors, map.warnings], [true, [], []]);
+  assert.deepEqual(map.statuses['two-popups'].declared, { state: 'issue', origin: 'declared', reason: 'declared in the map: a problem TLA+ found',
+    evidence: [{ kind: 'path', value: 'models/Alerts.tla' }, { kind: 'pull_request', value: '#212' }],
+    found_by: 'model-checker', finder: 'TLA+', fixed_by: 'one-popup', note: 'Laptop and tablet both alert when both apps are open' });
+  assert.deepEqual(map.statuses['one-popup'].declared, { state: 'fixed', origin: 'declared', reason: 'declared fixed in the map, fixing two-popups',
+    evidence: [{ kind: 'pull_request', value: '#231' }] });
+  assert.deepEqual(map.statuses.badge.declared, { state: 'works', origin: 'declared', reason: 'declared working in the map', evidence: [{ kind: 'pull_request', value: '#198' }] });
+  // Every node has a derived status beside any declared one; a node that cites nothing is unknown.
+  assert.equal(map.statuses['one-popup'].derived.state, 'untested');
+  assert.deepEqual(map.statuses.posted, { derived: { state: 'unknown', origin: 'derived', reason: 'posted cites no behavior', evidence: [] } });
+
+  // The fix is reached only through its fix edge; without fixed_by nothing reaches it.
+  await editMap(text => text.replace('      fixed_by: one-popup\n', ''));
+  assert.deepEqual(report(await checkBoth('alerts')).errors.map(({ code, element }) => [code, element]), [['structure', 'one-popup']]);
+
+  // A fix target must be a node of the map, declared fixed.
+  await editMap(text => text.replace('      evidence: [models/Alerts.tla, "#212"]\n', '      evidence: [models/Alerts.tla, "#212"]\n      fixed_by: one-pop-up\n'));
+  let errors = report(await checkBoth('alerts')).errors;
+  assert.deepEqual(errors.map(({ code, element }) => [code, element]), [['structure', 'one-popup'], ['fix_target', 'two-popups']]);
+  assert.match(errors[1].message, /one-pop-up, which is no node/);
+  await editMap(text => text.replace('fixed_by: one-pop-up', 'fixed_by: watch'));
+  errors = report(await checkBoth('alerts')).errors;
+  assert.deepEqual(errors.map(({ code, element }) => [code, element]), [['structure', 'one-popup'], ['fix_target', 'two-popups']]);
+  assert.match(errors[1].message, /watch, which does not declare fixed/);
+
+  // Status is closed: an issue says who found it, every declared status has evidence, and only
+  // an issue names a fix.
+  const schemaErrors = async (from, to) => {
+    await writeFile(mapFile, fresh.replace(from, to));
+    return report(await checkBoth('alerts')).errors.filter(error => error.code === 'schema').map(({ element, message }) => [element, message]);
+  };
+  let found = await schemaErrors('      found_by: model-checker\n', '');
+  assert.equal(found.length, 1);
+  assert.deepEqual(found[0][0], 'two-popups');
+  assert.match(found[0][1], /found_by/);
+  found = await schemaErrors('status: { state: works, evidence: ["#198"] }', 'status: { state: works }');
+  assert.deepEqual(found.map(([element]) => element), ['badge']);
+  assert.match(found[0][1], /evidence/);
+  found = await schemaErrors('status: { state: works, evidence: ["#198"] }', 'status: { state: works, evidence: [] }');
+  assert.match(found[0][1], /at least one evidence item/);
+  found = await schemaErrors('status: { state: works, evidence: ["#198"] }', 'status: { state: works, evidence: ["#198"], fixed_by: dot }');
+  assert.match(found[0][1], /Unknown key: fixed_by/);
+  found = await schemaErrors('status: { state: works, evidence: ["#198"] }', 'status: { state: passing, evidence: ["#198"] }');
+  assert.deepEqual(found.map(([element]) => element), ['badge']);
+  assert.match(found[0][1], /works, issue or fixed/);
+  assert.equal((await cli('maps', 'render', 'alerts')).error.code, 'INVALID_INPUT');
+});
+
+// spec: behavior-maps / Missing evidence file
+test('evidence naming a path that is not a file committed to the repository is an error naming the state and the path', async t => {
+  const { base, root, cli, editMap, checkBoth, git, commit } = await fixture(t, 'pigeon-status');
+  const message = item => `two-popups declares issue with evidence ${item} is not a file committed to the repository (in HEAD)`;
+  const missing = item => ({ code: 'evidence_missing', element: 'two-popups', message: message(item) });
+  const errorsFor = async items => {
+    await editMap(text => text.replace(/evidence: \[[^\]]*, "#212"\]/, `evidence: [${items.map(item => JSON.stringify(item)).join(', ')}, "#212"]`));
+    return report(await checkBoth('alerts')).errors;
+  };
+  await editMap(text => text.replace('evidence: [models/Alerts.tla, "#212"]', 'evidence: [models/Alert.tla, "#212"]'));
+  const checked = await checkBoth('alerts');
+  assert.equal(checked.code, 1);
+  assert.deepEqual(report(checked).errors, [missing('models/Alert.tla')]);
+  assert.equal((await cli('maps', 'render', 'alerts')).error.code, 'INVALID_INPUT');
+
+  // On disk, or staged, is not enough: an untracked file, an ignored one, a staged one and a directory
+  // are not committed files.
+  await writeFile(join(root, 'models/Draft.tla'), 'not added\n');
+  await writeFile(join(root, 'models/Staged.tla'), 'added, not committed\n');
+  await writeFile(join(root, '.gitignore'), 'Secret.tla\n');
+  await writeFile(join(root, 'models/Secret.tla'), 'ignored\n');
+  // A committed symlink, to a file outside the repository or inside it, is refused without being
+  // followed; so is a path through a committed symlinked directory.
+  await writeFile(join(base, 'outside.tla'), 'outside the repository\n');
+  await symlink(join(base, 'outside.tla'), join(root, 'models/Linked.tla'));
+  await symlink('Alerts.tla', join(root, 'models/Same.tla'));
+  await symlink(base, join(root, 'up'));
+  await git('add', '.gitignore', 'models/Linked.tla', 'models/Same.tla', 'up');
+  await git('commit', '-q', '-m', 'links');
+  await git('add', 'models/Staged.tla');
+  // Path forms are refused before any lookup: absolute, `..`, `.` and empty segments, backslashes.
+  const items = ['models/Draft.tla', 'models/Staged.tla', 'models/Secret.tla', 'models', 'models/Linked.tla', 'models/Same.tla', 'up/outside.tla',
+    '../outside.tla', '/etc/hosts', 'models/../models/Alerts.tla', './models/Alerts.tla', 'models//Alerts.tla', 'models\\Alerts.tla', 'models/Alerts.tla/inner'];
+  assert.deepEqual(await errorsFor(items), items.map(missing));
+  // Links and pull request numbers are checked by form.
+  assert.deepEqual((await errorsFor(['http://example.com/212', '#0'])).map(({ code }) => code), ['evidence_missing', 'evidence_missing']);
+
+  // A committed file, under any Unicode form of its name, a pull request and an https link are evidence, as written.
+  await writeFile(join(root, 'models/Café.tla'), 'committed\n');
+  await commit();
+  assert.deepEqual(await errorsFor(['models/Café.tla', 'models/Staged.tla', 'models/Alerts.tla', 'https://example.com/pigeon/issues/212']), []);
+  assert.deepEqual(report(await checkBoth('alerts')).statuses['two-popups'].declared.evidence, [{ kind: 'path', value: 'models/Café.tla' },
+    { kind: 'path', value: 'models/Staged.tla' }, { kind: 'path', value: 'models/Alerts.tla' }, { kind: 'link', value: 'https://example.com/pigeon/issues/212' },
+    { kind: 'pull_request', value: '#212' }]);
+
+  // Two committed entries whose names differ only in Unicode normalization, a symlink and a regular
+  // file, make that name ambiguous: neither spelling is evidence.
+  const blob = text => new Promise((resolve, reject) => {
+    const child = execFile('git', ['hash-object', '-w', '--stdin'], { cwd: root }, (error, stdout) => (error ? reject(error) : resolve(stdout.trim())));
+    child.stdin.end(text);
+  });
+  const nfd = 'models/Résumé.tla';
+  const nfc = nfd.normalize('NFC');
+  await git('-c', 'core.precomposeunicode=false', 'update-index', '--add', '--cacheinfo', `120000,${await blob('../../outside.tla')},${nfd}`);
+  await git('-c', 'core.precomposeunicode=false', 'update-index', '--add', '--cacheinfo', `100644,${await blob('a regular file\n')},${nfc}`);
+  await git('commit', '-q', '-m', 'two spellings');
+  assert.match((await git('-c', 'core.quotepath=false', '-c', 'core.precomposeunicode=false', 'ls-tree', '-r', '--name-only', 'HEAD', 'models')).stdout,
+    new RegExp(`${nfd}\n[\\s\\S]*${nfc}\n|${nfc}\n[\\s\\S]*${nfd}\n`));
+  assert.deepEqual(await errorsFor([nfc, nfd]), [missing(nfc), missing(nfd)]);
+
+  // The repository is read without running the checkout's fsmonitor, filters or hooks.
+  const marker = join(base, 'ran');
+  await writeFile(join(base, 'hook.sh'), `#!/bin/sh\necho ran >> '${marker}'\ncat\n`, { mode: 0o755 });
+  await writeFile(join(root, '.gitattributes'), '*.tla filter=mark\n');
+  for (const [key, value] of [['core.fsmonitor', join(base, 'hook.sh')], ['filter.mark.clean', join(base, 'hook.sh')], ['filter.mark.process', join(base, 'hook.sh')], ['core.hooksPath', base]]) {
+    await git('config', key, value);
+  }
+  assert.deepEqual(await errorsFor(['models/Alerts.tla']), []);
+  await assert.rejects(readFile(marker), { code: 'ENOENT' });
+  // A repository with no commit, or none at all, has nothing committed.
+  await rm(join(root, '.git'), { recursive: true });
+  assert.deepEqual(await errorsFor(['models/Alerts.tla']), [missing('models/Alerts.tla')]);
+  await git('init', '-q');
+  await git('add', '-A');
+  assert.deepEqual(await errorsFor(['models/Alerts.tla']), [missing('models/Alerts.tla')]);
+});
+
+// One state with a linked test, one without, and one declared working without one.
+const testedMap = mapText('Mentions', `
+version: 1
+source: { kind: openspec }
+scope: [alerts]
+nodes:
+  - { id: mentioned, kind: start, label: Someone mentions you }
+  - id: counted
+    label: The badge counts the mentions
+    cites: [alerts / Badge counts mentions]
+  - id: cleared
+    label: The badge goes away
+    cites: [alerts / Badge clears when read]
+  - id: dot
+    label: A quiet dot appears next to the room
+    cites: [alerts / Room post without a mention]
+    status: { state: works, evidence: [test/e2e/alerts.test.mjs] }
+  - { id: seen, kind: end, label: You've seen it }
+transitions:
+  - { from: mentioned, to: counted }
+  - { from: counted, to: cleared }
+  - { from: cleared, to: dot }
+  - { from: dot, to: seen }`);
+
+// spec: behavior-maps / Tested and untested states
+test('derived status is tested or untested from linked tests, beside any declared status', async t => {
+  const { root, mapFile, checkBoth } = await fixture(t);
+  await writeFile(mapFile, testedMap);
+  await linkTests(root, 'alerts.test.mjs', ['alerts / Badge counts mentions']);
+  // A link that is not directly above a test is no link, as npm test reads it.
+  await writeFile(join(root, 'test/e2e/notes.test.mjs'), `${'//'} spec: alerts / Badge clears when read\nconst later = 1;\n`);
+  const map = report(await checkBoth('alerts'));
+  assert.deepEqual([map.valid, map.errors], [true, []]);
+  assert.deepEqual(map.statuses.counted, { derived: { state: 'tested', origin: 'derived', reason: 'every cited scenario has a linked test (1)',
+    evidence: [{ kind: 'test', value: 'test/e2e/alerts.test.mjs:3', scenario: 'alerts / Badge counts mentions' }] } });
+  assert.deepEqual(map.statuses.cleared, { derived: { state: 'untested', origin: 'derived', reason: 'no linked test for alerts / Badge clears when read',
+    evidence: [], untested: ['alerts / Badge clears when read'] } });
+  assert.deepEqual(map.statuses.dot, {
+    declared: { state: 'works', origin: 'declared', reason: 'declared working in the map', evidence: [{ kind: 'path', value: 'test/e2e/alerts.test.mjs' }] },
+    derived: { state: 'untested', origin: 'derived', reason: 'no linked test for alerts / Quiet dot for a room post', evidence: [], untested: ['alerts / Quiet dot for a room post'] } });
+  // A cited requirement is tested only when each of its scenarios is.
+  await writeFile(mapFile, testedMap.replace('cites: [alerts / Badge counts mentions]', 'cites: [alerts / Mention badge]'));
+  assert.deepEqual(report(await checkBoth('alerts')).statuses.counted.derived.untested, ['alerts / Badge clears when read']);
+  await linkTests(root, 'badge.test.mjs', ['alerts / Badge clears when read']);
+  assert.deepEqual(report(await checkBoth('alerts')).statuses.counted.derived.evidence.map(item => item.value),
+    ['test/e2e/alerts.test.mjs:3', 'test/e2e/badge.test.mjs:3']);
+});
+
+// spec: behavior-maps / Tested and untested states
+test('only links the test policy accepts make a state tested, and a manual check is evidence of its own kind', async t => {
+  const { root, mapFile, checkBoth } = await fixture(t);
+  await writeFile(mapFile, testedMap);
+  const derived = async id => report(await checkBoth('alerts')).statuses[id].derived;
+  const write = async (file, text) => { await mkdir(join(root, file, '..'), { recursive: true }); await writeFile(join(root, file), text); };
+  const link = scenario => `${'//'} spec: ${scenario}`;
+  // A test outside test/e2e and test/unit, and a unit test that doesn't say why, are not accepted links.
+  await write('test/integration/badge.test.mjs', `import test from 'node:test';\n${link('alerts / Badge counts mentions')}\ntest('x', () => {});\n`);
+  await write('test/unit/badge.test.mjs', `import test from 'node:test';\n${link('alerts / Badge counts mentions')}\ntest('x', () => {});\n`);
+  assert.equal((await derived('counted')).state, 'untested');
+  // A unit test with its reason is.
+  await write('test/unit/badge.test.mjs', `import test from 'node:test';\n${link('alerts / Badge counts mentions')}\n${'//'} because: the race needs a fake clock.\ntest('x', () => {});\n`);
+  assert.deepEqual(await derived('counted'), { state: 'tested', origin: 'derived', reason: 'every cited scenario has a linked test (1)',
+    evidence: [{ kind: 'test', value: 'test/unit/badge.test.mjs:2', scenario: 'alerts / Badge counts mentions' }] });
+  // A manual check counts, as it does for npm test, and says it is one.
+  await write('test/manual-checks.md', '# Manual checks\n\n- spec: alerts / Badge clears when read — Open a room with a badge and see it go.\n');
+  assert.deepEqual(await derived('cleared'), { state: 'tested', origin: 'derived', reason: 'every cited scenario has a linked test (1)',
+    evidence: [{ kind: 'manual_check', value: 'test/manual-checks.md:3', scenario: 'alerts / Badge clears when read' }] });
+});
+
+// spec: behavior-maps / Tested and untested states
+test('a declared fix stays declared beside a linked test that fails, which is never run', async t => {
+  const { root, checkBoth, cli } = await fixture(t, 'pigeon-status');
+  const ran = join(root, 'ran.txt');
+  await linkTests(root, 'popups.test.mjs', ['alerts / Laptop and tablet both open'],
+    ` require('node:fs').writeFileSync(${JSON.stringify(ran)}, 'ran'); throw new Error('two pop-ups again'); `);
+  const map = report(await checkBoth('alerts'));
+  assert.deepEqual([map.valid, map.errors], [true, []]);
+  assert.equal(map.statuses['one-popup'].declared.state, 'fixed');
+  assert.deepEqual(map.statuses['one-popup'].derived, { state: 'tested', origin: 'derived', reason: 'every cited scenario has a linked test (1)',
+    evidence: [{ kind: 'test', value: 'test/e2e/popups.test.mjs:3', scenario: 'alerts / Laptop and tablet both open' }] });
+  // The derived status changed the drawing of nothing declared, so the written diagram is current.
+  assert.deepEqual(map.warnings, []);
+  assert.equal((await cli('maps', 'render', 'alerts')).json.diagram, statusGolden);
+  await assert.rejects(readFile(ran), { code: 'ENOENT' });
+});
+
+// spec: behavior-maps / Tested and untested states
+test('a store source and the lid source derive unknown, whatever tests the repository has', async t => {
+  const { base, root, env, mapFile, checkBoth } = await fixture(t);
+  const store = join(base, 'platform-store');
+  await cp(join(root, 'openspec'), join(store, 'openspec'), { recursive: true });
+  await writeFile(join(store, 'openspec/config.yaml'), 'schema: spec-driven\n');
+  await exec(process.execPath, [join(kit, 'node_modules/@fission-ai/openspec/bin/openspec.js'), 'store', 'register', store, '--id', 'platform', '--yes', '--json'], { env });
+  await writeFile(join(root, 'openspec/config.yaml'), 'schema: spec-driven\nreferences:\n  - platform\n');
+  await writeFile(mapFile, testedMap.replace('source: { kind: openspec }', 'source: { kind: openspec, store: platform }').replace('test/e2e/alerts.test.mjs', '"#7"'));
+  await linkTests(root, 'alerts.test.mjs', ['alerts / Badge counts mentions']);
+  const map = report(await checkBoth('alerts'));
+  assert.deepEqual([map.valid, map.errors], [true, []]);
+  for (const id of ['counted', 'cleared', 'dot']) {
+    assert.deepEqual(map.statuses[id].derived, { state: 'unknown', origin: 'derived', reason: 'the store platform is tested in its parties, not in this repository', evidence: [] });
+  }
+  assert.equal(map.statuses.dot.declared.state, 'works');
+
+  const lid = await fixture(t, 'lid');
+  await mkdir(join(lid.root, 'maps'));
+  await writeFile(lid.mapFile, mapText('Signing in', `
+version: 1
+source: { kind: lid }
+scope: [AUTH-UI-001]
+nodes:
+  - { id: home, kind: start, label: You open the home screen }
+  - { id: button, label: A sign-in button shows, cites: [AUTH-UI-001] }
+transitions:
+  - { from: home, to: button }`));
+  await linkTests(lid.root, 'auth.test.mjs', ['auth / AUTH-UI-001']);
+  assert.deepEqual(report(await lid.checkBoth('alerts')).statuses.button,
+    { derived: { state: 'unknown', origin: 'derived', reason: 'the lid source has no test links to read', evidence: [] } });
+});
+
+// spec: behavior-maps / Statuses in JSON
+test('JSON rendering gives each node the statuses, origins, reasons and evidence the check reports', async t => {
+  const { root, mapFile, cli, mcp, checkBoth } = await fixture(t);
+  await writeFile(mapFile, testedMap);
+  await linkTests(root, 'alerts.test.mjs', ['alerts / Badge counts mentions']);
+  const { statuses } = report(await checkBoth('alerts'));
+  const rendered = await cli('maps', 'render', 'alerts', '--format', 'json');
+  assert.equal(rendered.code, 0, JSON.stringify(rendered.error));
+  assert.deepEqual(Object.fromEntries(rendered.json.nodes.map(node => [node.id, node.status])), statuses);
+  assert.deepEqual(rendered.json.fixes, []);
+  assert.deepEqual(await mcp('render_map', { map: 'alerts', format: 'json' }), rendered.json);
+  const fixed = await fixture(t, 'pigeon-status');
+  const json = (await fixed.cli('maps', 'render', 'alerts', '--format', 'json')).json;
+  assert.deepEqual(json.fixes, [{ from: 'two-popups', to: 'one-popup' }]);
+  assert.deepEqual(Object.fromEntries(json.nodes.map(node => [node.id, node.status])), report(await fixed.checkBoth('alerts')).statuses);
+});
+
+// spec: behavior-maps / Render a map with a fix
+test('a diagram colours declared statuses, outlines untested states, draws the fix edge and keys what is present', async t => {
+  const { root, cli, mcp, mapFile, checkBoth } = await fixture(t, 'pigeon-status');
+  const rendered = await cli('maps', 'render', 'alerts');
+  assert.equal(rendered.json.diagram, statusGolden);
+  assert.deepEqual(await mcp('render_map', { map: 'alerts' }), rendered.json);
+  assert.ok((await readFile(mapFile, 'utf8')).includes(statusGolden.trimEnd()), 'the fixture carries its written diagram');
+  const lines = statusGolden.split('\n');
+  const styleOf = state => lines.find(line => line.startsWith(`  classDef st_${state} `));
+  const members = state => lines.find(line => line.startsWith('  class ') && line.endsWith(` st_${state}`))?.slice(8, -(` st_${state}`.length)).split(',');
+  assert.deepEqual([members('works'), members('issue'), members('fixed'), members('untested')], [['n_badge'], ['n_two_popups'], ['n_one_popup'], ['n_dot', 'n_watch']]);
+  assert.match(styleOf('works'), /fill:#e5e7eb,stroke:#6b7280/);
+  assert.match(styleOf('issue'), /fill:#fee2e2,stroke:#dc2626/);
+  assert.match(styleOf('fixed'), /fill:#dcfce7,stroke:#16a34a/);
+  assert.match(styleOf('untested'), /fill:#ffffff,stroke:#6b7280,stroke-dasharray/);
+  assert.equal(styleOf('tested'), undefined);
+  assert.ok(lines.includes('  n_two_popups -. "with the fix" .-> n_one_popup'));
+  const key = lines.slice(lines.indexOf('  subgraph status_key["Key"]') + 1, lines.indexOf('  end'));
+  assert.deepEqual(key, ['    direction LR', '    key_works("Works"):::st_works', '    key_issue("Problem TLA+ found"):::st_issue', '    key_fixed("Fixed"):::st_fixed',
+    '    key_untested("No tests yet (derived)"):::st_untested', '    key_works ~~~ key_issue ~~~ key_fixed ~~~ key_untested']);
+  assert.ok(statusGolden.endsWith('  end\n'));
+
+  // A linked test outlines its state as tested, keyed as derived; the written diagram is then outdated.
+  await linkTests(root, 'watch.test.mjs', ['alerts / Watch tap when away']);
+  const outdated = report(await checkBoth('alerts'));
+  assert.deepEqual(outdated.warnings.map(({ code }) => code), ['diagram_outdated']);
+  const tested = (await cli('maps', 'render', 'alerts')).json.diagram;
+  assert.ok(tested.includes('  class n_watch st_tested\n') && tested.includes('  class n_dot st_untested\n'));
+  assert.ok(tested.includes('    key_tested("Has linked tests (derived)"):::st_tested\n    key_untested("No tests yet (derived)"):::st_untested\n'));
+  assert.match(tested, /classDef st_tested fill:#ffffff,stroke:#6b7280,color:#111827\n/);
+});
+
+// spec: behavior-maps / Render a map with a fix
+test('status text from the map is drawn only as escaped text in the key, and notes and evidence never appear', async t => {
+  const { cli, mcp, editMap, checkBoth } = await fixture(t, 'pigeon-status');
+  const finder = `Ann's "click" test: 100% & #2 end`;
+  await editMap(text => text.replace('finder: TLA+', `finder: '${finder.replace(/'/g, "''")}'`)
+    .replace('note: Laptop and tablet both alert when both apps are open', "note: '%%{init: {\"theme\": \"dark\"}}%% click n_dot call alert()'")
+    .replace('evidence: [models/Alerts.tla, "#212"]', 'evidence: [models/Alerts.tla, "https://example.com/%%7Binit%7D"]'));
+  const checked = report(await checkBoth('alerts'));
+  assert.deepEqual(checked.errors, []);
+  const { diagram } = (await cli('maps', 'render', 'alerts')).json;
+  assert.deepEqual(await mcp('render_map', { map: 'alerts' }), { map: 'alerts', format: 'mermaid', diagram });
+  assert.ok(diagram.includes(`    key_issue("Problem Ann's #quot;#99;lick#quot; test#58; 100#37; #38; #35;2 #101;nd found"):::st_issue\n`), diagram);
+  assert.doesNotMatch(diagram, /%%|init|alert\(|example\.com|Alerts\.tla/);
+  // Every classDef and class line is fixed text.
+  for (const line of diagram.split('\n').filter(line => /^\s*class(?:Def)?\s/.test(line))) assert.match(line, /^  class(?:Def st_[a-z]+ [a-z0-9:#,. -]+| [a-z_,]+ st_[a-z]+)$/, line);
+  // A finder is drawn, so it is linted like a label.
+  await editMap(text => text.replace(/finder: '.*'/, "finder: '%%{init}%% TLC'"));
+  const flagged = report(await checkBoth('alerts'));
+  assert.deepEqual(flagged.errors.map(({ code, element }) => [code, element]), [['label', 'two-popups']]);
 });
 
 // The upstream fixture's entries in listing order: files by path, entries in file order.

@@ -9,3 +9,9 @@ flowchart TD
   n_price -->|"Full price#59; #99;lass is over"| n_pick
   n_sale --> n_done
   n_pick --> n_done
+  classDef st_untested fill:#ffffff,stroke:#6b7280,stroke-dasharray:5 4,color:#111827
+  class n_sale,n_pick st_untested
+  subgraph status_key["Key"]
+    direction LR
+    key_untested("No tests yet (derived)"):::st_untested
+  end
