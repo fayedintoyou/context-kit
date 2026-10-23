@@ -514,6 +514,11 @@ async function pathsWorkspace({ base, workspace, env }) {
   const commitAll = async root => { await git(root, 'init', '-q', '-b', 'main'); await git(root, 'add', '-A'); await git(root, 'commit', '-qm', 'start'); };
   await writeFile(join(workspace, 'context-kit.json'), JSON.stringify({ version: 1, addons: ['maps', 'reflect', 'review', 'specs'] }));
   await put(workspace, 'hubs/personal/room.md', '---\ntype: Repository\ntitle: room\nresource: https://github.com/me/room\n---\n\n# room\n');
+  // A hub behavior map citing the hub's own concepts.
+  await put(workspace, 'hubs/personal/maps/flow.md', '---\ntype: BehaviorMap\ntitle: Flow\n---\n\n# Flow\n\n```yaml map\nversion: 1\n' +
+    'source: { kind: hub, hub: personal/main }\nscope: [""]\nnodes:\n  - { id: start, kind: start, label: Work starts }\n' +
+    '  - { id: room, label: Work happens in the room, cites: ["personal/main:/room"] }\n  - { id: done, kind: end, label: Done }\n' +
+    'transitions:\n  - { from: start, to: room }\n  - { from: room, to: done }\n```\n');
   const room = join(base, 'code/room');
   await mkdir(room, { recursive: true });
   await git(room, 'init', '-q');
@@ -599,7 +604,8 @@ const sweepCalls = {
   change_status: [{ change: 'quiet' }, { change: 'embed', store: 'shared' }], next_slices: [{ change: 'quiet' }, { change: 'embed', store: 'shared' }],
   read_slice: [{ change: 'quiet', slice: 'hold' }, { change: 'embed', slice: 'host', store: 'shared' }],
   reconcile_change: [{ change: 'quiet' }, { change: 'embed', store: 'shared' }],
-  list_behaviors: [{ source: 'openspec' }], list_maps: [{}], check_map: [{}, { map: 'alerts' }], render_map: [{ map: 'alerts' }],
+  list_behaviors: [{ source: 'openspec' }, { source: 'hub', hub: 'personal/main', inbox: true, full: true }], list_maps: [{}],
+  check_map: [{}, { map: 'alerts' }, { map: 'personal/main:/maps/flow' }], render_map: [{ map: 'alerts' }, { map: 'personal/main:/maps/flow' }],
 };
 
 // spec: remote-access / Remote client sees whose paths they are
@@ -668,6 +674,9 @@ test('every tool listed over HTTP, called with valid arguments, returns no fixtu
   }
   assert.deepEqual(leaks, []);
   assert.ok(labeledResults > listed.length / 2, `${labeledResults} labeled results`);
+  // The hub map is read as a map, so its calls above swept a real result.
+  const checked = (await http.callTool({ name: 'check_map', arguments: { map: 'personal/main:/maps/flow' } })).structuredContent;
+  assert.deepEqual(checked.maps.map(map => [map.map, map.valid]), [['personal/main:/maps/flow', true]], JSON.stringify(checked));
   // The degraded parties' remedies and the replaced skill's reason name placeholders instead.
   const status = (await http.callTool({ name: 'change_status', arguments: { change: 'embed', store: 'shared' } })).structuredContent;
   const remedies = Object.fromEntries(status.slices.map(slice => [slice.id, slice.remedies]));
