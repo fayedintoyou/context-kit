@@ -1932,6 +1932,8 @@ test('a hostile mount with a thousand repositories and shared aliases keeps vali
   assert.ok(validated.json.warnings.length <= 102, `${validated.json.warnings.length} warnings`);
   assert.ok(validated.json.warnings.every(warning => [...warning].length <= 500));
   assert.match(validated.json.warnings.at(-1), /^and \d+ more warnings, the ones above first$/);
+  // A line about the mount as a whole comes right after those naming workspace repositories.
+  assert.ok(validated.json.warnings.slice(0, 100).some(warning => warning === 'mount a: Repository concepts past the first 200 by concept ID are not registered'));
   const { json } = await cli('repos');
   assert.equal(json.repositories.filter(item => item.mount === 'a').length, 200);
   for (const { name } of await shardsOf(workspace)) {
@@ -1939,7 +1941,7 @@ test('a hostile mount with a thousand repositories and shared aliases keeps vali
     const lines = text.split('\n').filter(line => line.includes(' may mean '));
     assert.ok(lines.length <= 51, `${name}: ${lines.length} dispute lines`);
     assert.ok(lines.every(line => (line.match(/`a:\//g) ?? []).length <= 5), name);
-    assert.ok(Buffer.byteLength(text) < 40 * 1024 && text.split('\n').length < 500, `${name}: ${Buffer.byteLength(text)} bytes`);
+    assert.ok(Buffer.byteLength(text) < 26 * 1024 && text.split('\n').length < 500, `${name}: ${Buffer.byteLength(text)} bytes`);
   }
   // The workspace keeps its own shard; at most four shards hold the mount's repositories.
   const shards = await shardsOf(workspace);
@@ -2043,4 +2045,17 @@ test('which mounted repositories pass the 200 cap is the same under Swedish and 
   };
   assert.deepEqual(await registered('sv_SE.UTF-8'), ['team:/repos/z']);
   assert.deepEqual(await registered('en_US.UTF-8'), ['team:/repos/z']);
+  // The generated skills, which list a mount's repositories in order and only up to their bounds,
+  // are byte for byte the same too.
+  const skills = async locale => {
+    await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, 'repos', 'sync'], { env: { ...env, LC_ALL: locale, LANG: locale } });
+    const directory = join(workspace, '.state/generated');
+    const names = (await readdir(directory)).filter(name => name.startsWith('my-repos')).sort();
+    return Promise.all(names.map(async name => [name, await readFile(join(directory, name, 'SKILL.md'), 'utf8')]));
+  };
+  const swedish = await skills('sv_SE.UTF-8');
+  // Four mounted shards, the rest left to repos: which ones those are is decided in code point order.
+  assert.equal(swedish.length, 4);
+  assert.match(swedish.at(-1)[1], /more repositories from mounted hubs are not listed/);
+  assert.deepEqual(await skills('en_US.UTF-8'), swedish);
 });

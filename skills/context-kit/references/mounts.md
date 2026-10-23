@@ -195,7 +195,7 @@ warning, since the mount change is already made.
   mounted ones only when everything fits one description, none of the workspace's
   names is skipped and the mounted part of the body is small; otherwise they get
   their own shard(s) first and the mounts' repositories follow in theirs. A mounted
-  shard's body is bounded (about 24 KiB and 400 lines), and at most four shards
+  shard's body is bounded (about 24 KiB and under 500 lines), and at most four shards
   hold mounted repositories; the last says how many more there are, which `repos`
   lists and `repos open <id>` opens.
 - **Recovery.** For each declared mount that is not fetched or is broken, the
