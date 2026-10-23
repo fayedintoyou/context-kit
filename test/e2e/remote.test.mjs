@@ -4,8 +4,8 @@ import { execFile, spawn } from 'node:child_process';
 import { request } from 'node:http';
 import { connect } from 'node:net';
 import { promisify } from 'node:util';
-import { mkdir, mkdtemp, readFile, readdir, rm, realpath, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, realpath, symlink, writeFile } from 'node:fs/promises';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -98,6 +98,12 @@ function socketRequest(port, headerLines, body) {
 }
 const bearer = { Authorization: `Bearer ${token}` };
 const toolCall = (name, args) => rpc('tools/call', { name, arguments: args }, 2);
+// A copy of a stdio result as HTTP gives it: the named keys renamed with the servingMachine
+// prefix in place, and machine first when any was there.
+function labeled(result, keys, machine) {
+  const entries = Object.entries(result).map(([key, value]) => keys.includes(key) ? [`servingMachine${key[0].toUpperCase()}${key.slice(1)}`, value] : [key, value]);
+  return machine === undefined ? Object.fromEntries(entries) : { machine, ...Object.fromEntries(entries) };
+}
 
 // spec: remote-access / Same tools over HTTP
 test('HTTP lists the same tools and returns the same context as stdio', async t => {
@@ -107,12 +113,17 @@ test('HTTP lists the same tools and returns the same context as stdio', async t 
   // The same tools apart from the local-only ones, which only stdio lists.
   const localTools = (await local.listTools()).tools;
   assert.ok(localTools.some(tool => tool.name === 'which_repo'));
-  assert.deepEqual((await http.listTools()).tools, localTools.filter(tool => !localOnlyOperations().includes(tool.name)));
+  // Descriptions match too, except where a tool's says its paths are the serving machine's.
+  const httpTools = (await http.listTools()).tools;
+  const withoutDescription = ({ description, ...tool }) => tool;
+  assert.deepEqual(httpTools.map(withoutDescription), localTools.filter(tool => !localOnlyOperations().includes(tool.name)).map(withoutDescription));
+  for (const tool of httpTools) if (tool.name !== 'list_repos') assert.equal(tool.description, localTools.find(item => item.name === tool.name).description, tool.name);
+  // Equivalent results: the same, with the workspace root labeled as the serving machine's.
   const call = client => client.callTool({ name: 'get_context', arguments: { id: 'personal/main' } });
   const [overHttp, overStdio] = [await call(http), await call(local)];
   assert.ok(!overHttp.isError);
-  assert.deepEqual(overHttp.structuredContent, overStdio.structuredContent);
-  assert.deepEqual(parse(overHttp), parse(overStdio));
+  assert.deepEqual(overHttp.structuredContent, labeled(overStdio.structuredContent, ['root'], hostname()));
+  assert.deepEqual(parse(overHttp), overHttp.structuredContent);
 });
 
 // spec: remote-access / Local-only tools stay local
@@ -452,16 +463,177 @@ test('an authorized HTTP client reads a mounted hub exactly as a stdio client do
   const commit = (await exec('git', ['rev-parse', 'HEAD'], { cwd: source, env: gitEnv })).stdout.trim();
   await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, 'mounts', 'add', 'shared', `file://${source}`], { env: gitEnv });
   const mount = { name: 'shared', source: `file://${source}`, path: '', commit };
+  // Over HTTP the file: source is a path on the serving machine, labeled as such.
+  const remoteMount = labeled(mount, ['source']);
 
   const { url } = await serve();
   const [http, local] = [await remote(url), await stdio()];
   for (const [name, args] of [['list_hubs', {}], ['read_concept', { concept: 'shared:/tables/orders' }], ['search_context', { query: 'heron order' }]]) {
     const [overHttp, overStdio] = [await http.callTool({ name, arguments: args }), await local.callTool({ name, arguments: args })];
     assert.ok(!overHttp.isError, JSON.stringify(overHttp.content));
-    assert.deepEqual(overHttp.structuredContent, overStdio.structuredContent, name);
+    const here = overStdio.structuredContent;
     const result = overHttp.structuredContent;
-    if (name === 'list_hubs') assert.deepEqual(result.hubs.find(hub => hub.id === 'shared'), { id: 'shared', description: 'Data.', manifestId: 'team/data', mount });
-    if (name === 'read_concept') assert.deepEqual([result.hub, result.ref, result.mount, result.okf.trust], ['shared', 'shared:/tables/orders', mount, 'unverified']);
-    if (name === 'search_context') assert.deepEqual(result.results.map(({ hub, ref, mount: provenance }) => ({ hub, ref, mount: provenance })), [{ hub: 'shared', ref: 'shared:/tables/orders', mount }]);
+    assert.equal(result.machine, hostname());
+    assert.deepEqual(parse(overHttp), result);
+    if (name === 'list_hubs') {
+      assert.deepEqual(here.hubs.find(hub => hub.id === 'shared'), { id: 'shared', description: 'Data.', manifestId: 'team/data', mount });
+      assert.deepEqual(result.hubs.find(hub => hub.id === 'shared'), { id: 'shared', description: 'Data.', manifestId: 'team/data', mount: remoteMount });
+    }
+    if (name === 'read_concept') {
+      assert.deepEqual([here.hub, here.ref, here.mount, here.okf.trust], ['shared', 'shared:/tables/orders', mount, 'unverified']);
+      assert.deepEqual(result, labeled({ ...here, mount: remoteMount }, ['root'], hostname()));
+    }
+    if (name === 'search_context') {
+      assert.deepEqual(here.results.map(({ hub, ref, mount: provenance }) => ({ hub, ref, mount: provenance })), [{ hub: 'shared', ref: 'shared:/tables/orders', mount }]);
+      assert.deepEqual(result.results.map(({ hub, ref, mount: provenance }) => ({ hub, ref, mount: provenance })), [{ hub: 'shared', ref: 'shared:/tables/orders', mount: remoteMount }]);
+    }
   }
+});
+
+// A workspace with every kind of local path a result can carry, all under the fixture's
+// temporary directory: located repositories, a mounted hub from a file: source, a capture, the
+// workspace's own OpenSpec specs and a sliced change, a map, and a hub declaring a shared store
+// whose party checkout is recorded and which the workspace repository also references.
+// Git and gh are isolated: PATH holds only git, so nothing reaches a network.
+async function pathsWorkspace({ base, workspace, env }) {
+  const bin = join(base, 'bin');
+  await mkdir(bin);
+  await symlink((await exec('sh', ['-c', 'command -v git'])).stdout.trim(), join(bin, 'git'));
+  Object.assign(env, { PATH: bin, HOME: join(base, 'home'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' });
+  await mkdir(env.HOME);
+  const put = async (root, path, content) => { await mkdir(join(root, path, '..'), { recursive: true }); await writeFile(join(root, path), content); };
+  const git = (cwd, ...args) => exec('git', args, { cwd, env });
+  const hub = (...args) => exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, ...args], { env });
+  const commitAll = async root => { await git(root, 'init', '-q', '-b', 'main'); await git(root, 'add', '-A'); await git(root, 'commit', '-qm', 'start'); };
+  await writeFile(join(workspace, 'context-kit.json'), JSON.stringify({ version: 1, addons: ['maps', 'reflect', 'review', 'specs'] }));
+  await put(workspace, 'hubs/personal/room.md', '---\ntype: Repository\ntitle: room\nresource: https://github.com/me/room\n---\n\n# room\n');
+  const room = join(base, 'code/room');
+  await mkdir(room, { recursive: true });
+  await git(room, 'init', '-q');
+  await git(room, 'remote', 'add', 'origin', 'https://github.com/me/room');
+  await hub('repos', 'locate', 'room', room);
+  // The workspace repository's specs, a map over them and a sliced change.
+  const pigeon = join(kit, 'test/e2e/fixtures/maps/pigeon');
+  await cp(join(pigeon, 'openspec'), join(workspace, 'openspec'), { recursive: true });
+  await cp(join(pigeon, 'maps'), join(workspace, 'maps'), { recursive: true });
+  const requirement = (name, text) => `## ADDED Requirements\n### Requirement: ${name}\n${text}\n\n#### Scenario: ${name} works\n- **WHEN** it is used\n- **THEN** it works\n`;
+  await put(workspace, 'openspec/config.yaml', 'schema: spec-driven\nreferences:\n  - shared\n');
+  await put(workspace, 'openspec/changes/quiet/proposal.md', '# Why\n\nQuiet hours.\n');
+  await put(workspace, 'openspec/changes/quiet/specs/alerts/spec.md', requirement('Quiet hours', 'The app SHALL hold alerts during quiet hours.'));
+  await put(workspace, 'openspec/changes/quiet/tasks.md', '- [ ] 1.1 Build\n');
+  await put(workspace, 'openspec/changes/quiet/slices.yaml', 'slices:\n  - id: hold\n    implements: [alerts / Quiet hours]\n');
+  // A team hub declaring store shared, planned in its party site, whose checkout is recorded.
+  await put(workspace, 'hubs/team/README.md', '---\ntype: Guide\n---\n\nTeam\n');
+  await put(workspace, 'hubs/team/hub.json', JSON.stringify({ version: 1, id: 'team/shared', description: 'Team', documents: ['README.md'], skills: [], links: [], specStores: ['shared'] }));
+  await put(workspace, 'hubs/team/site.md', '---\ntype: Repository\ntitle: site\nresource: https://github.com/example/site\n---\n\n# site\n');
+  const store = join(base, 'store');
+  await put(store, 'openspec/config.yaml', 'schema: spec-driven\n');
+  await cp(join(pigeon, 'openspec/specs'), join(store, 'openspec/specs'), { recursive: true });
+  await put(store, 'openspec/parties.yaml', 'parties:\n  site: https://github.com/example/site\n');
+  await put(store, 'openspec/changes/embed/proposal.md', '# Why\n\nEmbed.\n');
+  await put(store, 'openspec/changes/embed/specs/alerts/spec.md', requirement('Embed', 'The site SHALL embed alerts.'));
+  await put(store, 'openspec/changes/embed/slices.yaml', 'slices:\n  - id: host\n    repo: site\n    implements: [alerts / Embed]\n');
+  await commitAll(store);
+  await exec(process.execPath, [join(kit, 'node_modules/@fission-ai/openspec/bin/openspec.js'), 'store', 'register', store, '--id', 'shared', '--yes', '--json'], { env });
+  const site = join(base, 'code/site');
+  await mkdir(site, { recursive: true });
+  await git(site, 'init', '-q', '-b', 'main');
+  await git(site, 'commit', '-q', '--allow-empty', '-m', 'start');
+  await git(site, 'remote', 'add', 'origin', 'https://github.com/example/site');
+  await git(site, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  await git(site, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  await hub('repos', 'locate', 'site', site);
+  // A hub mounted from a local git repository.
+  const mounted = join(base, 'mounted');
+  await put(mounted, 'hub.json', JSON.stringify({ version: 1, id: 'other/hub', description: 'Other', documents: ['README.md'], skills: [], links: [] }));
+  await put(mounted, 'README.md', '---\ntype: Guide\n---\n\n# Other\n\nHerons gather here.\n');
+  await commitAll(mounted);
+  await hub('mounts', 'add', 'other', `file://${mounted}`);
+  // A captured note (body on stdin), so inbox reads have one.
+  await new Promise((done, failed) => {
+    const child = execFile(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', workspace, 'capture', 'personal/main', 'A note', '--by', 'human:test'], { env }, error => error ? failed(error) : done());
+    child.stdin.end('Captured before the sweep.\n');
+  });
+  await commitAll(workspace);
+  return { room: await realpath(room) };
+}
+// Valid arguments for every tool the HTTP server may list; each set is one call. A tool listed
+// over HTTP that is missing here fails the sweep, so a new tool is swept as soon as it is added.
+const sweepCalls = {
+  help: [{}, { topic: 'remote' }], list_hubs: [{}], list_addons: [{}], list_repos: [{}], list_skills: [{}], validate_hubs: [{}], list_mounts: [{}], list_spec_stores: [{}],
+  get_context: [{ id: 'personal/main', includeInbox: true }, { id: 'other' }], search_context: [{ query: 'room' }, { query: 'herons' }],
+  browse_hub: [{ id: 'personal/main' }, { id: 'other' }], read_concept: [{ id: 'personal/main', concept: 'room' }, { concept: 'other:/README' }],
+  read_skill: [{ id: 'personal/main', reference: 'kit:context-kit' }],
+  capture_note: [{ id: 'personal/main', title: 'Swept', body: 'A note.' }], add_repo: [{ id: 'personal/main', upstream: 'https://github.com/me/garden' }],
+  list_specs: [{}, { store: 'shared' }], read_spec: [{ id: 'alerts' }, { id: 'alerts', store: 'shared' }], list_parties: [{ store: 'shared' }],
+  garden_specs: [{}, { store: 'shared' }], audit_specs: [{}, { store: 'shared' }], archivable_changes: [{}, { store: 'shared' }],
+  change_status: [{ change: 'quiet' }, { change: 'embed', store: 'shared' }], next_slices: [{ change: 'quiet' }, { change: 'embed', store: 'shared' }],
+  read_slice: [{ change: 'quiet', slice: 'hold' }, { change: 'embed', slice: 'host', store: 'shared' }],
+  reconcile_change: [{ change: 'quiet' }, { change: 'embed', store: 'shared' }],
+  list_behaviors: [{ source: 'openspec' }], list_maps: [{}], check_map: [{}, { map: 'alerts' }], render_map: [{ map: 'alerts' }],
+};
+
+// spec: remote-access / Remote client sees whose paths they are
+test('over HTTP list_repos names the serving machine and gives servingMachinePath, never path', async t => {
+  const context = await fixture(t);
+  const { room } = await pathsWorkspace(context);
+  const { url } = await context.serve(['--machine-name', 'studio']);
+  const http = await context.remote(url);
+  const tool = (await http.listTools()).tools.find(item => item.name === 'list_repos');
+  assert.match(tool.description, /servingMachinePath/);
+  assert.match(tool.description, /serving machine/);
+  const listed = await http.callTool({ name: 'list_repos', arguments: {} });
+  assert.deepEqual(parse(listed), listed.structuredContent);
+  const result = listed.structuredContent;
+  assert.equal(result.machine, 'studio');
+  assert.equal(result.servingMachineRoot, context.workspace);
+  assert.equal(result.root, undefined);
+  const repository = result.repositories.find(item => item.id === 'personal/main/room');
+  assert.equal(repository.servingMachinePath, room);
+  assert.ok(!('path' in repository));
+  assert.ok(result.repositories.every(item => !('path' in item) && 'servingMachinePath' in item));
+  // --machine-name needs --http and a usable name.
+  await assert.rejects(context.serve(['--machine-name', '']), /machine-name/);
+});
+
+// spec: remote-access / Remote client sees no unlabelled paths
+test('every tool listed over HTTP, called with valid arguments, returns no fixture path outside a servingMachine field', async t => {
+  const context = await fixture(t);
+  const raw = context.base.replace(/^\/private(?=\/)/, '');
+  await pathsWorkspace(context);
+  const { url } = await context.serve(['--machine-name', 'studio', '--allow-write']);
+  const http = await context.remote(url);
+  const listed = (await http.listTools()).tools.map(tool => tool.name);
+  assert.deepEqual(listed.filter(name => !sweepCalls[name]), [], 'every tool listed over HTTP has arguments in the sweep');
+  const leaks = [];
+  let labeledResults = 0;
+  // Every string under the fixture's directory must sit in a servingMachine-prefixed field (or
+  // below one); a result with such a field names the machine.
+  const walk = (value, trail, inside, call) => {
+    if (typeof value === 'string') { if (!inside && (value.includes(context.base) || value.includes(raw))) leaks.push(`${call} ${trail.join('.')}: ${value}`); return false; }
+    if (!value || typeof value !== 'object') return false;
+    let found = false;
+    for (const [key, item] of Object.entries(value)) {
+      if (key.includes(context.base) || key.includes(raw)) leaks.push(`${call} ${trail.join('.')} key ${key}`);
+      const labeledField = key.startsWith('servingMachine');
+      found = walk(item, [...trail, Array.isArray(value) ? '*' : key], inside || labeledField, call) || labeledField || found;
+    }
+    return found;
+  };
+  for (const name of listed) {
+    for (const args of sweepCalls[name]) {
+      const call = `${name} ${JSON.stringify(args)}`;
+      const result = await http.callTool({ name, arguments: args });
+      assert.ok(!result.isError, `${call}: ${result.content[0].text}`);
+      // Both representations: the structured result and the text a client may read instead.
+      assert.deepEqual(parse(result), result.structuredContent, call);
+      if (walk(result.structuredContent, [], false, call)) {
+        labeledResults++;
+        assert.equal(result.structuredContent.machine, 'studio', call);
+      }
+    }
+  }
+  assert.deepEqual(leaks, []);
+  assert.ok(labeledResults > listed.length / 2, `${labeledResults} labeled results`);
 });

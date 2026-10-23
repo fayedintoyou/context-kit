@@ -1410,4 +1410,27 @@ test('repos clone keeps the user\'s git config file (insteadOf, credential helpe
   assert.equal(await readFile(join(destination, 'README.md'), 'utf8'), 'garden\n');
   // The other checkout is untouched: no clone into it and no new remote.
   assert.equal((await exec('git', ['-C', other, 'remote'], { env: f.env })).stdout.trim(), 'origin');
+
+// spec: remote-access / Local clients unchanged
+test('a stdio client gets list_repos paths and list_hubs root as before, with no machine label', async t => {
+  const f = await fixture(t);
+  await f.register('personal', 'room', room);
+  const top = await f.checkout(join(f.base, 'code/room'), { origin: 'https://github.com/me/room' });
+  await f.cli('repos', 'locate', 'room', top);
+  const client = new Client({ name: 'repos-local', version: '1.0.0' });
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(kit, 'bin/mcp.mjs'), '--root', f.workspace], env: f.env, stderr: 'pipe' }));
+  t.after(() => client.close());
+  const listed = (await client.callTool({ name: 'list_repos', arguments: {} })).structuredContent;
+  assert.deepEqual(listed, (await f.cli('repos')).json);
+  assert.equal(listed.root, f.workspace);
+  assert.equal(listed.repositories[0].path, top);
+  const hubs = (await client.callTool({ name: 'list_hubs', arguments: {} })).structuredContent;
+  assert.deepEqual(hubs, (await f.cli('list')).json);
+  assert.equal(hubs.root, f.workspace);
+  for (const result of [listed, hubs]) {
+    assert.ok(!('machine' in result));
+    assert.ok(!JSON.stringify(result).includes('servingMachine'));
+  }
+  const tool = (await client.listTools()).tools.find(item => item.name === 'list_repos');
+  assert.doesNotMatch(tool.description, /servingMachine/);
 });

@@ -69,7 +69,8 @@ CONTEXT_KIT_MCP_TOKEN="$(security find-generic-password -a "$USER" -s CONTEXT_KI
   npm run -s mcp -- --http 8788 --public-host context-origin.example.com
 ```
 
-Add `--allow-write` only if remote hosts should capture notes. To keep it running,
+Add `--allow-write` only if remote hosts should capture notes, and `--machine-name
+<name>` to choose how results name this machine (default: its host name). To keep it running,
 wrap that command in a launch agent (macOS) or a user service (Linux) that reads the
 token at start; without it the server refuses to start rather than run open. A
 login service doesn't load your shell profile, so give the wrapper absolute paths
@@ -82,6 +83,18 @@ client runs somewhere else, so a path it sends, or one it is sent back, would na
 the wrong machine. They are not listed over HTTP, and a call to one fails with
 `UNKNOWN_OPERATION` before anything runs. Each such tool declares `localOnly` where
 it is defined in `lib/operations.mjs`.
+
+Paths in results over HTTP are the serving machine's, never yours, so they are
+labeled. Every result field holding one is renamed with a `servingMachine` prefix
+(the workspace `root` becomes `servingMachineRoot`, a repository's `path` in
+`list_repos` becomes `servingMachinePath`, a party's `checkout` becomes
+`servingMachineCheckout`, a `file:` mount source becomes `servingMachineSource`),
+and the result names the machine as `machine`: `--machine-name <name>`, by default
+its host name. A client that reads `path` gets nothing rather than a directory that
+doesn't exist where it runs. Relative paths, such as a concept's `README.md`, are
+unchanged. Each operation declares its path fields as `localPaths` in
+`lib/operations.mjs`. Stdio and the CLI return results unchanged. Paths in error
+messages are not labeled; the error code is the contract.
 
 ## 2. Create the tunnel
 
