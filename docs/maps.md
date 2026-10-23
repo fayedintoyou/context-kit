@@ -14,8 +14,12 @@ mechanical, so Context Kit does that: whether every state cites a real behavior,
 which behaviors in scope no state covers, whether a cited behavior changed since
 someone reviewed the map, whether labels are in plain words, and how the map is
 drawn. Context Kit never runs tests, checkers or models; it reads OpenSpec specs
-only through the pinned OpenSpec CLI and linked-intent development spec files as
-plain text.
+only through the pinned OpenSpec CLI, and linked-intent development spec files and
+hub concepts as plain text.
+
+The same kind of map can show how a team or a persona works: the states their work
+moves through and the decisions between them, each state citing the hub concepts
+(policies, guides, decisions) that define it. See [Working states](#working-states).
 
 The `maps` addon provides the operations and the skill. It is opt-in: enable it
 with `init --addons maps,...` or in `context-kit.json`. The `maps` help topic
@@ -32,6 +36,9 @@ with `init --addons maps,...` or in `context-kit.json`. The `maps` help topic
    way (`docs/intent/**/*-specs.md` or `docs/specs/*.md`): each `**<ID>**:` list
    item with its text and status marker (`[x]` implemented, `[ ]` a gap, `[D]`
    deferred, or none). A map over them cites entry IDs and scopes ID prefixes.
+   `--source hub --hub <id>` lists a workspace hub's concepts as
+   `<hub-id>:/<concept-id>`, each summarized with its description, trust and
+   freshness at `--at <time>` (or now); `--full` adds each concept's text.
 2. **Draft** `maps/<name>.md`: an OKF concept with `type: BehaviorMap` and one
    fenced `yaml map` block naming its source, its scope (capabilities or
    requirements; ID prefixes for `lid`), its nodes (`start`, `state`, `choice`, `end`) and transitions,
@@ -45,7 +52,7 @@ with `init --addons maps,...` or in `context-kit.json`. The `maps` help topic
    one, a label that reads as code or spec language, evidence that is not a
    file committed to the repository, a fix that names no state declared fixed) and warnings (a scenario in
    scope nothing covers, a citation not yet pinned or changed since it was, an
-   outdated diagram). The CLI exits non-zero on an error,
+   outdated diagram, a cited hub concept that has aged). The CLI exits non-zero on an error,
    and with `--strict` on a warning too, so `context-kit maps check --strict` can
    gate CI. The report also gives each node's statuses: the declared one, if any,
    and one derived from the repository's linked tests: `tested` when every
@@ -87,6 +94,33 @@ fix" edge to *One pop-up appears, on the device you used last* (green, fixed in
 a pull request); the badge is declared working (grey), and the states with no
 linked tests yet are outlined dashed, keyed as derived.
 
+## Working states
+
+"Explore context state" means a team's or a persona's working states and
+decisions, drawn as an ordinary map over their hub, not a report on the hub's
+documents. A hub map is a concept with `type: BehaviorMap` in one of the
+workspace's own hubs, named `<hub-id>:/<concept-id>`, with
+`source: { kind: hub, hub: <hub-id> }` and a scope of hub directories (`""` for the
+whole hub). `maps list` shows it beside the repository's maps, and `maps check`,
+`render` and `pin` take that name.
+
+The fictional support team Brightdesk keeps its triage policy, escalation rules and
+service hours in the hub `brightdesk/support`. Its map
+[test/e2e/fixtures/maps/brightdesk/hubs/support/maps/working-states.md](../test/e2e/fixtures/maps/brightdesk/hubs/support/maps/working-states.md)
+follows a request from *A request comes in* through *Is it urgent?* to *Triage
+within the hour* or *Triage on the next working day*, then *Waiting on the
+customer* or *Escalated to engineering*, to *Solved*, each state citing the policy
+behind it.
+
+Maps are never behaviors: the hub source never lists them, a map can't cite one,
+and a map scoped to its whole hub never counts itself or another map as
+uncovered. Knowledge ages, so `maps check` warns `context_stale` when a cited
+concept is due for a check, out of date or deprecated at the evaluation instant
+(`--at`, an ISO 8601 time with an offset, or now), naming the state that rests on
+it. That is a check warning only: the diagram and the JSON never depend on the
+clock. Only the workspace's own hubs are read; maps of mounted hubs are planned
+for a later change.
+
 ## Labels
 
 Labels are checked mechanically and small: node labels up to 70 characters, `when`
@@ -102,6 +136,6 @@ to review.
 
 ## Later
 
-Planned in the `behavior-maps` change: hub maps of a persona's or team's working
-states. Test results (JUnit or otherwise) don't set a status: a result can't yet
-be bound to the commit it tested and matched to exactly one linked test.
+Read-only maps of mounted hubs are left to a later change. Test results (JUnit or
+otherwise) don't set a status: a result can't yet be bound to the commit it tested
+and matched to exactly one linked test.

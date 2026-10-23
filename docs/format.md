@@ -66,7 +66,9 @@ help topic).
 A concept with `type: BehaviorMap` is a behavior map: one fenced `yaml map` block
 with a source, a scope, nodes and transitions, and optionally a generated Mermaid
 diagram between `context-kit:diagram` markers. A repository keeps its maps in
-`maps/<name>.md`; `maps check` validates them (see [maps](maps.md)).
+`maps/<name>.md`; a hub may hold maps too, as concepts anywhere in it (outside
+`inbox/`), named `<hub-id>:/<concept-id>`. `maps check` validates them (see
+[maps](maps.md)); `validate` treats them as ordinary concepts.
 
 `index.md` files carry no frontmatter, except `okf_version` in the hub-root index.
 Every `##` heading in a `log.md` is a `YYYY-MM-DD` date.

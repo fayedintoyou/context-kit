@@ -21,10 +21,10 @@ Also done: addons with an agent installer for Claude Code and Codex, the `reflec
 skill, canonical spec auditing and gardening (read-only signals plus reviewed
 maintenance changes), delivering changes in slices with derived progress and
 reconciliation ([delivery](delivery.md)), help through the core `context-kit` skill,
-and behavior maps drafted from OpenSpec specs, checked and rendered as Mermaid
-([maps](maps.md)). Next for maps (`behavior-maps`): pinned fingerprints with stale
-warnings, a linked-intent development source, hub maps of a team's working states,
-and declared and test-derived status in the diagram.
+and behavior maps drafted from OpenSpec specs, linked-intent development specs or a
+hub's concepts (a team's or persona's working states), pinned, checked and rendered
+as Mermaid ([maps](maps.md)). Next for maps (`behavior-maps`): declared and
+test-derived status in the diagram; later, read-only maps of mounted hubs.
 
 ## Decisions
 

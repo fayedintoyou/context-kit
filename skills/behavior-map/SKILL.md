@@ -1,6 +1,6 @@
 ---
 name: behavior-map
-description: Draft a behavior map (a statechart-like picture of what a person sees and the moves between states) from a repository's OpenSpec specs or linked-intent development (LID) specs, citing a spec behind every state, then check and render it with Context Kit. Use when asked to map, diagram or visualize a product journey or user flow from specs, or to keep such a map in step with them.
+description: Draft a behavior map (a statechart-like picture of what a person sees and the moves between states) from a repository's OpenSpec specs or linked-intent development (LID) specs, citing a spec behind every state, or of a team's or persona's working states and decisions from a hub's concepts, then check and render it with Context Kit. Use when asked to map, diagram or visualize a product journey or user flow from specs, how a team or persona works from its hub, or to keep such a map in step with them.
 ---
 
 # Draft a behavior map
@@ -13,6 +13,12 @@ it, because structure, citations, coverage, labels and rendering are mechanical.
 The `maps` help topic has the format and every check code. Maps live in the
 repository whose specs they cite: run the CLI with `--root <repository>`, or use
 the MCP tools when the server's root is that repository.
+
+A map can also show how a team or a persona works: its working states and the
+decisions between them, each state citing the hub concepts (policies, guides,
+decisions) that say what happens there. That map is a concept in the same hub
+(see "Working states from a hub" at the end). It is an ordinary map, not a report on
+the hub's documents: draw how the work goes, not which documents are current.
 
 ## 1. Choose the scope
 
@@ -37,6 +43,13 @@ IDs (`AUTH-UI-001`); `scope` lists ID prefixes. Each entry's `marker` says wheth
 it is implemented, a gap or deferred; that is the spec author's claim, not
 evidence, so it doesn't belong in a label either. A duplicate ID fails with
 `INVALID_SOURCE`: tell the user, since LID IDs must be unique.
+
+For a hub, run `maps behaviors --source hub --hub <hub-id>` instead: the hub's
+concepts as `<hub-id>:/<concept-id>`, each summarized by its title, description,
+trust and freshness action. Read the concepts a state may rest on with `read`
+(MCP `read_concept`), or add `--full` for every concept's text when the hub is
+small. Maps are never listed (a map never cites a map), and inbox notes only with
+`--inbox`; they are unreviewed, so don't cite them.
 
 ## 3. Write it in the person's words
 
@@ -207,3 +220,80 @@ pins:
 In YAML's `{ ... }` style, quote a label with a comma or a leading `@`, as in
 the first `when` above, and an evidence item starting with `#`, which YAML
 would otherwise read as a comment.
+
+## Working states from a hub
+
+When the user asks how a team or a persona works ("what states does a support
+request go through?", "how does our on-call engineer decide?"), map it from their
+hub:
+
+- `source: { kind: hub, hub: <hub-id> }`; `scope` lists directories of the hub
+  (`policies`), or `""` for the whole hub.
+- States are what the team or person is doing or waiting on, in their words
+  ("Waiting on the customer"); choices are the decisions they make ("Is it
+  urgent?"). Cite the concepts that define each state, as `<hub-id>:/<concept-id>`.
+- Save it in the hub as a concept with `type: BehaviorMap` (for example
+  `maps/<name>.md` inside the hub). Its map name is `<hub-id>:/<concept-id>`, as
+  `maps list` shows; use that name with `maps check`, `maps render` and `maps pin`.
+- Freshness depends on the clock, so `maps check` evaluates it at `--at <time>`
+  (ISO 8601 with an offset), or now. It warns `context_stale` when a cited concept
+  is due for a check, out of date or deprecated: tell the user which state rests
+  on it, and suggest they update or verify the concept in the hub. Don't change
+  the map to hide the warning; the diagram never shows it.
+- A declared status's evidence path is relative to the repository (workspace)
+  root, not to the hub: `hubs/support/policies/triage.md`, not `policies/triage.md`.
+- Only the workspace's own hubs are read. A mounted hub's maps aren't listed and
+  its concepts can't be cited.
+
+A fictional support team, Brightdesk, keeps its triage policy, escalation rules
+and service hours in the hub `brightdesk/support`. Its map of a request's working
+states, `maps/working-states.md` in that hub, reviewed and pinned:
+
+````markdown
+---
+type: BehaviorMap
+title: A support request
+description: The working states a Brightdesk support request moves through, from arrival to solved.
+---
+
+# A support request
+
+```yaml map
+version: 1
+source: { kind: hub, hub: brightdesk/support }
+scope: [""]
+nodes:
+  - { id: arrives, kind: start, label: A request comes in, cites: [brightdesk/support:/README] }
+  - { id: urgent, kind: choice, label: Is it urgent? }
+  - id: within-the-hour
+    label: Triage within the hour
+    cites: [brightdesk/support:/policies/triage]
+  - id: next-working-day
+    label: Triage on the next working day
+    cites: [brightdesk/support:/policies/triage, brightdesk/support:/policies/service-hours]
+  - { id: answer, kind: choice, label: Can support answer it? }
+  - id: waiting
+    label: Waiting on the customer
+    cites: [brightdesk/support:/policies/triage]
+  - id: escalated
+    label: Escalated to engineering
+    cites: [brightdesk/support:/policies/escalation]
+  - { id: solved, kind: end, label: Solved }
+transitions:
+  - { from: arrives, to: urgent }
+  - { from: urgent, to: within-the-hour, when: "Yes, an outage or lost data" }
+  - { from: urgent, to: next-working-day, when: No }
+  - { from: within-the-hour, to: answer }
+  - { from: next-working-day, to: answer }
+  - { from: answer, to: solved, when: "Yes, we reply with the answer" }
+  - { from: answer, to: waiting, when: We need more from the customer }
+  - { from: answer, to: escalated, when: "It's a bug we can't work around" }
+  - { from: waiting, to: answer, when: The customer replies }
+  - { from: escalated, to: solved, when: Engineering ships a fix }
+pins:
+  brightdesk/support:/README: 61b57ca753bb
+  brightdesk/support:/policies/triage: edf35bcb698e
+  brightdesk/support:/policies/service-hours: 799e6a4d6c72
+  brightdesk/support:/policies/escalation: 3a7f439cdf9e
+```
+````
