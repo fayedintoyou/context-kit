@@ -1342,7 +1342,10 @@ test('a hub map of a team\'s working states is listed, checked and rendered like
   const at = '2026-03-01T09:00:00Z';
   const checked = await cli('maps', 'check', WORKING_STATES, '--strict', '--at', at);
   assert.equal(checked.code, 0);
-  assert.deepEqual(report(checked, WORKING_STATES), { map: WORKING_STATES, valid: true, errors: [], warnings: [], at });
+  const { statuses, ...rest } = report(checked, WORKING_STATES);
+  assert.deepEqual(rest, { map: WORKING_STATES, valid: true, errors: [], warnings: [], at });
+  // A hub has no test links, so every node's derived status is unknown.
+  assert.deepEqual(Object.values(statuses).map(status => [status.derived.state, status.declared]), Array(8).fill(['unknown', undefined]));
   assert.deepEqual(await mcp('check_map', { map: WORKING_STATES, at }), checked.json);
   assert.deepEqual((await cli('maps', 'check', '--at', at)).json, checked.json);
 
@@ -1522,4 +1525,30 @@ test('the skill\'s working-states example passes maps check over the Brightdesk 
   await writeFile(mapPath, example);
   const checked = report(await cli('maps', 'check', WORKING_STATES, '--strict', '--at', AT), WORKING_STATES);
   assert.deepEqual([checked.valid, checked.errors, checked.warnings], [true, [], []]);
+});
+
+test('a hub map declares status with evidence like a repository map, beside a derived unknown', async t => {
+  const { cli, mcp, checkBoth, mapPath } = await brightdesk(t);
+  await writeFile(mapPath, (await readFile(mapPath, 'utf8')).replace(`  - id: waiting
+    label: Waiting on the customer
+    cites: [brightdesk/support:/policies/triage]`, `  - id: waiting
+    label: Waiting on the customer
+    cites: [brightdesk/support:/policies/triage]
+    status: { state: works, evidence: [hubs/support/policies/triage.md, "#212"] }`));
+  const checked = report(await checkBoth(WORKING_STATES, AT), WORKING_STATES);
+  assert.deepEqual([checked.valid, codes(checked.warnings)], [true, ['diagram_outdated']]);
+  assert.equal(checked.statuses.waiting.declared.state, 'works');
+  assert.deepEqual(checked.statuses.waiting.declared.evidence.map(item => item.value), ['hubs/support/policies/triage.md', '#212']);
+  assert.equal(checked.statuses.waiting.derived.state, 'unknown');
+  const json = (await cli('maps', 'render', WORKING_STATES, '--format', 'json')).json;
+  assert.deepEqual(json.nodes.find(node => node.id === 'waiting').status, checked.statuses.waiting);
+  assert.deepEqual(await mcp('render_map', { map: WORKING_STATES, format: 'json' }), { map: WORKING_STATES, format: 'json', ...json });
+  assert.equal((await cli('maps', 'render', WORKING_STATES, '--write')).json.written, true);
+  assert.match(await readFile(mapPath, 'utf8'), /Works/);
+  assert.equal((await cli('maps', 'check', WORKING_STATES, '--strict', '--at', AT)).code, 0);
+
+  // Evidence is a path in the repository; a missing one is an error naming the state.
+  await writeFile(mapPath, (await readFile(mapPath, 'utf8')).replace('hubs/support/policies/triage.md', 'hubs/support/policies/missing.md'));
+  const missing = report(await checkBoth(WORKING_STATES, AT), WORKING_STATES);
+  assert.deepEqual(missing.errors.map(({ code, element }) => [code, element]), [['evidence_missing', 'waiting']]);
 });
