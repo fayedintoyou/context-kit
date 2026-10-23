@@ -91,10 +91,12 @@ flowchart TD
   classDef st_untested fill:#ffffff,stroke:#6b7280,stroke-dasharray:5 4,color:#111827
   class n_dot,n_watch st_untested
   subgraph status_key["Key"]
+    direction LR
     key_works("Works"):::st_works
     key_issue("Problem TLA+ found"):::st_issue
     key_fixed("Fixed"):::st_fixed
     key_untested("No tests yet (derived)"):::st_untested
+    key_works ~~~ key_issue ~~~ key_fixed ~~~ key_untested
   end
 ```
 <!-- context-kit:diagram:end -->

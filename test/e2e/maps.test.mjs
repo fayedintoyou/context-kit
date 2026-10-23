@@ -683,8 +683,8 @@ test('a diagram colours declared statuses, outlines untested states, draws the f
   assert.equal(styleOf('tested'), undefined);
   assert.ok(lines.includes('  n_two_popups -. "with the fix" .-> n_one_popup'));
   const key = lines.slice(lines.indexOf('  subgraph status_key["Key"]') + 1, lines.indexOf('  end'));
-  assert.deepEqual(key, ['    key_works("Works"):::st_works', '    key_issue("Problem TLA+ found"):::st_issue', '    key_fixed("Fixed"):::st_fixed',
-    '    key_untested("No tests yet (derived)"):::st_untested']);
+  assert.deepEqual(key, ['    direction LR', '    key_works("Works"):::st_works', '    key_issue("Problem TLA+ found"):::st_issue', '    key_fixed("Fixed"):::st_fixed',
+    '    key_untested("No tests yet (derived)"):::st_untested', '    key_works ~~~ key_issue ~~~ key_fixed ~~~ key_untested']);
   assert.ok(statusGolden.endsWith('  end\n'));
 
   // A linked test outlines its state as tested, keyed as derived; the written diagram is then outdated.
