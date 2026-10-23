@@ -614,6 +614,40 @@ test('clone, locate and concept read commands for a missing repository run throu
   assert.equal(workspace, JSON.parse(stdout).root);
 });
 
+// spec: repository-context / One call to start
+test('the routing body tells agents to open each repository first, by MCP tool and launcher command, and context leaves the frontmatter alone', async t => {
+  const context = await fixture(t);
+  const { base, env, workspace, register, checkout, cli } = context;
+  await register('personal', 'room', { title: 'the room', resource: 'https://github.com/me/room' });
+  const lemon = `---\ntype: Repository\ntitle: lemon grove\nresource: https://github.com/me/lemon\ncontext:\n  verify: ["npm test"]\n---\n\n# lemon\n`;
+  await writeFile(join(workspace, 'hubs/personal/lemon.md'), lemon);
+  await cli('repos', 'locate', 'room', await checkout(join(base, 'room'), { origin: 'https://github.com/me/room' }));
+  await installFor(context, ['--name', 'context-home']);
+  const launcher = join(env.HOME, '.local/bin/context-kit');
+  const skill = join(base, 'claude/skills/my-repos');
+  const { text, front, body } = await agentSkill(skill);
+  const ids = ['personal/main/lemon', 'personal/main/room'];
+  // The MCP tool and the launcher command name the same repositories, each opened before work starts.
+  assert.ok(body.includes('open it\nfirst') && body.includes('`open_repo` tool of the `context-home` MCP server'), body);
+  const opened = [...body.matchAll(/^- [^:\n]+: open with `([^`]+) repos open ([^`\s]+)`$/gm)];
+  assert.deepEqual(opened.map(match => match[1]), [launcher, launcher]);
+  assert.deepEqual(opened.map(match => match[2]), ids);
+  assert.deepEqual(Object.keys(front.metadata), ids);
+  assert.doesNotMatch(body, /--role/);  // roles arrive with the packs slice
+  assert.doesNotMatch(body, /list_repos|\bcd\s|npm run/);
+  // Run as written from another directory, the open command resolves the repository.
+  const room = body.match(/- the room: open with `([^`]+)`/)[1];
+  const { stdout } = await exec('/bin/sh', ['-c', room], { cwd: base, env: { HOME: env.HOME, PATH: '/usr/bin:/bin' } });
+  const result = JSON.parse(stdout);
+  assert.equal(result.repository.id, 'personal/main/room');
+  assert.equal(result.status, 'located');
+  // Removing the context key changes nothing in the frontmatter.
+  const head = value => value.slice(0, value.indexOf('\n---\n') + 5);
+  await writeFile(join(workspace, 'hubs/personal/lemon.md'), lemon.replace('context:\n  verify: ["npm test"]\n', ''));
+  assert.equal((await cli('repos', 'sync')).code, 0);
+  assert.equal(head((await agentSkill(skill)).text), head(text));
+});
+
 // spec: repository-registry / No repositories
 test('a workspace without repositories generates no routing skill', async t => {
   const { workspace, cli } = await fixture(t);
