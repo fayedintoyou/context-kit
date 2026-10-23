@@ -1,0 +1,18 @@
+# Slices merge to main one at a time. The gate (tasks.md 0.1) cleared: remote-mcp-access archived at b02d3ee.
+slices:
+  - id: local-only
+    title: Local-only tools - repos which, which_repo, and withholding local-only tools over HTTP
+    implements:
+      - repository-registry / Which repository is this
+      - repository-registry / Which repository over MCP
+      - remote-access / Local-only tools
+      - remote-access / HTTP transport
+    paths: ["lib/repos.mjs", "lib/operations.mjs", "lib/mcp/**", "bin/mcp.mjs", "bin/hub.mjs", "test/e2e/repos.test.mjs", "test/e2e/remote.test.mjs", "skills/context-kit/references/**", "openspec/changes/local-only-tools/tasks.md"]
+  - id: remote-paths
+    title: Tool results over HTTP carry no unlabeled serving-machine paths
+    implements:
+      - remote-access / HTTP transport
+      - remote-access / Serving machine paths
+      - repository-registry / Read-only repository listing over MCP
+    depends_on: [local-only]
+    paths: ["lib/operations.mjs", "lib/mcp/**", "bin/mcp.mjs", "test/e2e/remote.test.mjs", "test/e2e/repos.test.mjs", "skills/context-kit/references/remote.md", "openspec/changes/local-only-tools/tasks.md"]
