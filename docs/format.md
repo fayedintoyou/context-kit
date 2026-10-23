@@ -63,6 +63,44 @@ title with another, with a title over 80 characters or an alias or keyword over
 or alias. `repos add` refuses names over these bounds. Local checkout paths are never stored in hubs (see the `repositories`
 help topic).
 
+A Repository concept may also carry `context`: what `repos open` hands an agent
+beyond the defaults (see the `repositories` help topic). It is a closed mapping
+with optional keys:
+
+- `verify`: up to 10 single-line commands, each at most 200 characters, that
+  agents are told to run to check work. They are text: Context Kit never runs them.
+- `concepts`: concept references, `/<concept-id>` for a concept of the
+  Repository's own hub or `<hub-id>:/<concept-id>` for one in another workspace
+  hub. An unqualified reference never resolves outside its hub; inbox notes are
+  not referenceable.
+- `skills`: skill references in hub manifest form (`kit:<name>` or a workspace
+  `SKILL.md` path), declared by some hub and, for `kit:`, provided by an enabled
+  addon.
+- `mcp`: MCP server names (lowercase letters, digits, `-`, `_`, at most 64
+  characters), never URLs, commands or configuration.
+- `areas`: a list of `{path, concepts, skills, mcp}`, `path` a literal directory
+  relative to the checkout root, without a leading `/`, `.` or `..` segments,
+  backslashes or glob characters, distinct within the repository.
+- `roles`: names mapped to `{exclude, omit, concepts, skills, mcp}`: `exclude`
+  globs, `omit` the references or MCP names to withhold.
+- `packs`: names other than `default` mapped to `{description, files, exclude,
+  concepts, skills, mcp, limits}`, with `description` and `files` required and
+  `limits` holding `files` (1 to 500) and `bytes` (1 to 4 MiB).
+
+Globs are relative to the checkout and use only `*`, `**` and `?` as wildcards,
+with no `.` or `..` segment, leading `/` or backslash. Bounds: at most 50
+entries per list, 50 areas, 8 roles and 20 packs; role and pack names
+lowercase-hyphenated up to 40 characters; references, paths and globs up to 200
+characters; pack descriptions up to 300. `validate` fails (`INVALID_CONTEXT`) on
+any other key at any level, a value out of bounds or malformed, or a reference
+that does not resolve, naming the concept and key path. Other concept types keep
+OKF's permissiveness: a `context` key on them means nothing. Reads are lenient:
+`repos open` refuses only a structurally invalid `context`, and returns a
+reference that stopped resolving as a pointer marked `missing`.
+
+The bounds don't cap the file: a `context` within every bound can still make the
+concept file larger than the 128 KiB a concept may be, which fails as `TOO_LARGE`.
+
 A concept with `type: BehaviorMap` is a behavior map: one fenced `yaml map` block
 with a source, a scope, nodes and transitions, and optionally a generated Mermaid
 diagram between `context-kit:diagram` markers. A repository keeps its maps in

@@ -285,8 +285,11 @@ test('omitted directories open on their own, and an omitted path too long to sho
   assert.equal(listed.length, 200);
   const omittedFile = tree.first.endsWith('/') ? `${tree.first}file.md` : tree.first;
   assert.ok(listed.includes(omittedFile), omittedFile);
-  // The directory command, run through the CLI, opens the first omitted directory.
-  const directory = (tree.first.endsWith('/') ? tree.first : `${dirname(tree.first)}/`).slice(0, -1);
+  // The directory command, run through the CLI, opens the first omitted directory: the first
+  // omitted entry when that is a directory, else (the cut fell between a directory and its file,
+  // which depends on the checkout path's length) the next directory after it.
+  const shown = json.tree.entries.filter(entry => entry.endsWith('/')).length;
+  const directory = `dir ${String(shown).padStart(3, '0')}-${'x'.repeat(30)}`;
   assert.equal(open, `repos open team/fruit/orchard '${directory}'`);
   const opened = await cli(['repos', 'open', 'team/fruit/orchard', directory]);
   assert.deepEqual([opened.json.path, opened.json.tree.entries], [directory, [`${directory}/file.md`]]);
@@ -564,4 +567,389 @@ test('the routing body names open_repo and repos open as the way to resolve, and
   await writeFile(join(fruit, 'lemon.md'), withContext.replace('context:\n  verify: ["npm test"]\n', ''));
   assert.equal((await cli(['repos', 'sync'])).code, 0);
   assert.equal(front(await skill()), front(text));
+});
+
+// ---- The `context` field (slice `fields`) ----------------------------------------------------
+
+// A concept file in a hub directory, its frontmatter given as JSON values.
+const writeConcept = async (hub, id, fields, body = `# ${fields.title ?? id}\n`) => {
+  await mkdir(dirname(join(hub, `${id}.md`)), { recursive: true });
+  await writeFile(join(hub, `${id}.md`), `---\n${Object.entries(fields).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n')}\n---\n\n${body}`);
+};
+const guide = (hub, id, extra = {}) => writeConcept(hub, id, { type: 'Guide', title: `Guide ${id}`, description: `About ${id}.`, ...extra });
+// Rewrites a hub's manifest fields in place.
+const manifest = async (hub, fields) => {
+  const file = join(hub, 'hub.json');
+  await writeFile(file, JSON.stringify({ ...JSON.parse(await readFile(file, 'utf8')), ...fields }));
+};
+const call = async (client, name, args) => {
+  const result = await client.callTool({ name, arguments: args });
+  return result.isError ? { error: JSON.parse(result.content[0].text).error } : { json: result.structuredContent };
+};
+
+// spec: repository-context / Declared context validates
+test('a Repository declaring every context key, each well formed and resolvable, validates', async t => {
+  const { workspace, fruit, cli, register } = await fixture(t);
+  const notes = join(workspace, 'hubs/notes');
+  await mkdir(notes);
+  await writeFile(join(notes, 'hub.json'), JSON.stringify({ version: 1, id: 'personal/notes', description: 'Notes.', documents: ['README.md'], skills: [], links: [] }));
+  await guide(notes, 'README');
+  await guide(notes, 'orchard/ideas');
+  for (const id of ['guides/harvest', 'guides/billing-ledger', 'guides/release-builder', 'guides/review-checklist', 'guides/release-checklist']) await guide(fruit, id);
+  await manifest(fruit, { skills: ['kit:independent-review'] });
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'], context: {
+    verify: ['npm test', 'npm run lint'],
+    concepts: ['/guides/harvest', 'personal/notes:/orchard/ideas'],
+    skills: ['kit:independent-review'],
+    mcp: ['orchard-tracker'],
+    areas: [{ path: 'services/billing', concepts: ['/guides/billing-ledger'], skills: [], mcp: ['ledger-db'] }],
+    roles: { reviewer: { exclude: ['notes/builder/**'], omit: ['/guides/release-builder'], concepts: ['/guides/review-checklist'], skills: [], mcp: [] } },
+    packs: { release: { description: 'Cut a release of the orchard.', files: ['CHANGELOG.md', 'docs/release/**', 'notes/**'], exclude: ['**/*.tmp'],
+      concepts: ['/guides/release-builder', '/guides/release-checklist'], skills: ['kit:independent-review'], mcp: ['orchard-tracker'], limits: { files: 60, bytes: 262144 } } },
+  } });
+  const validated = await cli(['validate']);
+  assert.equal(validated.code, 0, JSON.stringify(validated.error));
+  assert.equal(validated.json.valid, true);
+});
+
+// spec: repository-context / Unknown keys at any level
+test('validate names every unknown context key by concept and full key path, and ignores other types', async t => {
+  const { fruit, cli, register } = await fixture(t);
+  await register('apple', { title: 'apple', resource: 'https://github.com/example/apple', context: { commands: ['make'] } });
+  await register('banana', { title: 'banana', resource: 'https://github.com/example/banana', context: { packs: { release: { description: 'r', files: ['*.md'], include: ['x'] } } } });
+  await register('cherry', { title: 'cherry', resource: 'https://github.com/example/cherry', context: { roles: { reviewer: { files: ['x'] } } } });
+  await writeConcept(fruit, 'guides/notes', { type: 'Guide', title: 'notes', context: 'hello' });
+  const { error } = await cli(['validate']);
+  assert.equal(error.code, 'INVALID_CONTEXT');
+  assert.match(error.message, /team\/fruit\/apple: context\.commands: unknown key/);
+  assert.match(error.message, /team\/fruit\/banana: context\.packs\.release\.include: unknown key/);
+  assert.match(error.message, /team\/fruit\/cherry: context\.roles\.reviewer\.files: unknown key/);
+  assert.doesNotMatch(error.message, /guides\/notes|hello/);
+  assert.equal(error.message.split('; ').length, 3);
+});
+
+// spec: repository-context / Over the bounds
+test('validate names each field over its bound with the bound', async t => {
+  const { fruit, cli, register } = await fixture(t);
+  await guide(fruit, 'guides/harvest');
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, context: {
+    concepts: Array(51).fill('/guides/harvest'),
+    roles: { Reviewer: {} },
+    packs: { release: { description: 'd'.repeat(301), files: ['g'.repeat(201)], limits: { files: 501 } } },
+  } });
+  const { error } = await cli(['validate']);
+  assert.equal(error.code, 'INVALID_CONTEXT');
+  for (const expected of ['context.concepts: 51 entries; at most 50', 'context.packs.release.description: 301 characters; at most 300',
+    'context.packs.release.files[0]: 201 characters; at most 200', 'context.packs.release.limits.files: 501; must be an integer from 1 to 500',
+    'context.roles.Reviewer: role names are lowercase letters, digits and single hyphens, at most 40 characters']) {
+    assert.ok(error.message.includes(`team/fruit/orchard: ${expected}`), expected);
+  }
+});
+
+// spec: repository-context / Declared checks are returned, not run
+test('declared verify commands are returned in order over CLI and MCP and never run', async t => {
+  const { base, cli, register, checkout, locate, stdio } = await fixture(t);
+  const marker = join(base, 'marker');
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'], context: { verify: ['npm test', 'node bin/check.mjs'] } });
+  const path = await checkout(join(base, 'code/orchard'), ORCHARD, { 'AGENTS.md': 'a\n', 'bin/check.mjs': `require('fs').writeFileSync(${JSON.stringify(marker)}, 'ran')\n`,
+    'package.json': JSON.stringify({ scripts: { test: `touch ${marker}` } }) });
+  await locate('orchard', path);
+  assert.equal((await cli(['validate'])).code, 0);
+  const opened = await cli(['repos', 'open', 'orchard']);
+  assert.deepEqual(opened.json.verify, ['npm test', 'node bin/check.mjs']);
+  assert.deepEqual((await tool(await stdio(), { repository: 'orchard' })).json, opened.json);
+  await assert.rejects(readFile(marker), { code: 'ENOENT' });
+});
+
+// spec: repository-context / Invalid verification commands
+test('validate refuses verify as a bare string or with a multi-line command', async t => {
+  const { cli, register } = await fixture(t);
+  await register('apple', { title: 'apple', resource: 'https://github.com/example/apple', context: { verify: 'npm test' } });
+  await register('banana', { title: 'banana', resource: 'https://github.com/example/banana', context: { verify: ['npm test\nrm -rf /'] } });
+  // Line and paragraph separators and other control characters break a line as surely as a newline.
+  await register('cherry', { title: 'cherry', resource: 'https://github.com/example/cherry', context: { verify: ['npm test', 'npm test\u2028rm -rf /', 'npm\ttest', 'npm test\u0085x'] } });
+  const { error } = await cli(['validate']);
+  assert.equal(error.code, 'INVALID_CONTEXT');
+  assert.match(error.message, /team\/fruit\/apple: context\.verify: must be a list/);
+  assert.match(error.message, /team\/fruit\/banana: context\.verify\[0\]: must be a single line/);
+  for (const index of [1, 2, 3]) assert.ok(error.message.includes(`team/fruit/cherry: context.verify[${index}]: must be a single line`), String(index));
+  assert.doesNotMatch(error.message, /cherry: context\.verify\[0\]/);
+});
+
+// spec: repository-context / References across hubs
+test('references to the own hub and another workspace hub validate and open with their hubs', async t => {
+  const { base, workspace, fruit, cli, register, checkout, locate } = await fixture(t);
+  const notes = join(workspace, 'hubs/notes');
+  await mkdir(notes);
+  await writeFile(join(notes, 'hub.json'), JSON.stringify({ version: 1, id: 'personal/notes', description: 'Notes.', documents: ['README.md'], skills: [], links: [] }));
+  await guide(notes, 'README');
+  await guide(notes, 'orchard/ideas');
+  await guide(fruit, 'guides/harvest');
+  // Unqualified references stay in the declaring hub: personal/notes has no guides/harvest, fruit no orchard/ideas.
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'], context: { concepts: ['/guides/harvest', 'personal/notes:/orchard/ideas'] } });
+  await locate('orchard', await checkout(join(base, 'code/orchard'), ORCHARD, { 'AGENTS.md': 'a\n' }));
+  assert.equal((await cli(['validate'])).code, 0);
+  const { json } = await cli(['repos', 'open', 'orchard']);
+  assert.deepEqual(json.pointers.concepts.map(item => [item.hub, item.concept]), [['team/fruit', 'guides/harvest'], ['personal/notes', 'orchard/ideas']]);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'], context: { concepts: ['/orchard/ideas'] } });
+  assert.match((await cli(['validate'])).error.message, /context\.concepts\[0\]: "\/orchard\/ideas" does not resolve: no such concept/);
+});
+
+// spec: repository-context / Unresolvable references
+test('validate names each unresolvable reference and why', async t => {
+  const { fruit, cli, register } = await fixture(t);
+  await guide(fruit, 'guides/harvest');
+  const note = '1700000000000-00000000-0000-4000-8000-000000000000';
+  await mkdir(join(fruit, 'inbox'));
+  await writeConcept(fruit, `inbox/${note}`, { type: 'Note', title: 'n', status: 'draft' });
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, context: { concepts: ['/guides/missing', 'nowhere:/guides/harvest', 'guides/harvest', `/inbox/${note}`] } });
+  const { error } = await cli(['validate']);
+  assert.equal(error.code, 'INVALID_CONTEXT');
+  for (const [index, ref, why] of [[0, '/guides/missing', 'does not resolve: no such concept'], [1, 'nowhere:/guides/harvest', 'does not resolve: unknown hub'],
+    [2, 'guides/harvest', 'is malformed'], [3, `/inbox/${note}`, 'does not resolve: inbox note']]) {
+    assert.ok(error.message.includes(`team/fruit/orchard: context.concepts[${index}]: "${ref}" ${why}`), `${ref}: ${error.message}`);
+  }
+});
+
+// spec: repository-context / Every emitted skill pointer reads
+test('every skill pointer open emits reads with read-skill and read_skill', async t => {
+  const { base, workspace, fruit, cli, register, checkout, locate, stdio } = await fixture(t);
+  await mkdir(join(workspace, 'skills/orchard-ops'), { recursive: true });
+  await writeFile(join(workspace, 'skills/orchard-ops/SKILL.md'), '---\nname: orchard-ops\ndescription: Operate the orchard.\n---\n\n# Orchard ops\n');
+  await manifest(fruit, { skills: ['kit:independent-review'] });
+  const personal = join(workspace, 'hubs/personal');
+  await manifest(personal, { skills: [...JSON.parse(await readFile(join(personal, 'hub.json'), 'utf8')).skills, 'skills/orchard-ops/SKILL.md'] });
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'], context: { skills: ['kit:independent-review', 'skills/orchard-ops/SKILL.md'] } });
+  await locate('orchard', await checkout(join(base, 'code/orchard'), ORCHARD, { 'AGENTS.md': 'a\n' }));
+  assert.equal((await cli(['validate'])).code, 0);
+  const { json } = await cli(['repos', 'open', 'orchard']);
+  assert.deepEqual(json.pointers.skills.map(item => [item.reference, item.name]), [['kit:independent-review', 'independent-review'], ['skills/orchard-ops/SKILL.md', 'orchard-ops']]);
+  assert.equal(json.pointers.skills[1].description, 'Operate the orchard.');
+  assert.equal(json.pointers.skills[1].hub, 'personal/main');
+  const client = await stdio();
+  for (const { hub, reference } of json.pointers.skills) {
+    const read = await cli(['read-skill', hub, reference]);
+    assert.equal(read.code, 0, `${hub} ${reference}: ${JSON.stringify(read.error)}`);
+    assert.match(read.json.content, /^---\nname: /);
+    const viaMcp = await call(client, 'read_skill', { id: hub, reference });
+    assert.equal(viaMcp.json?.content, read.json.content, reference);
+  }
+});
+
+// spec: repository-context / Unreadable skill references
+test('validate refuses a workspace skill no hub declares and a kit skill of a disabled addon', async t => {
+  const { workspace, fruit, cli, register } = await fixture(t);
+  await mkdir(join(workspace, 'skills/orphan'), { recursive: true });
+  await writeFile(join(workspace, 'skills/orphan/SKILL.md'), '---\nname: orphan\ndescription: Nobody declares me.\n---\n');
+  // The maps addon is opt-in, so disabled here, though a hub may still list its skill.
+  await manifest(fruit, { skills: ['kit:behavior-map'] });
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, context: { skills: ['skills/orphan/SKILL.md', 'kit:behavior-map'] } });
+  const { error } = await cli(['validate']);
+  assert.equal(error.code, 'INVALID_CONTEXT');
+  assert.ok(error.message.includes('team/fruit/orchard: context.skills[0]: "skills/orphan/SKILL.md" is not readable: no hub declares it'), error.message);
+  assert.ok(error.message.includes('team/fruit/orchard: context.skills[1]: "kit:behavior-map" is not readable: its addon is not enabled'), error.message);
+});
+
+// spec: repository-context / Names, not configuration
+test('MCP entries are server names only; URLs, command lines and mappings are refused', async t => {
+  const { cli, register } = await fixture(t);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, context: { mcp: ['orchard-tracker', 'https://mcp.example.com', 'npx orchard-mcp --token x', { command: 'orchard-mcp' }] } });
+  const { error } = await cli(['validate']);
+  assert.equal(error.code, 'INVALID_CONTEXT');
+  assert.doesNotMatch(error.message, /mcp\[0\]/);
+  for (const [index, value] of [[1, '"https://mcp.example.com"'], [2, '"npx orchard-mcp --token x"'], [3, '{"command":"orchard-mcp"}']]) {
+    assert.ok(error.message.includes(`team/fruit/orchard: context.mcp[${index}]: ${value} is not an MCP server name`), value);
+  }
+});
+
+// spec: repository-context / Bad area paths
+test('validate refuses escaping, glob and duplicate area paths and accepts the first', async t => {
+  const { cli, register } = await fixture(t);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, context: { areas: [{ path: 'services/billing' }, { path: '../shared' }, { path: 'src/**' }, { path: 'services/billing' }, { path: 'Services/Billing' }] } });
+  const { error } = await cli(['validate']);
+  assert.equal(error.code, 'INVALID_CONTEXT');
+  assert.doesNotMatch(error.message, /areas\[0\]\.path/);
+  assert.match(error.message, /context\.areas\[1\]\.path: "\.\.\/shared" must be a directory/);
+  assert.match(error.message, /context\.areas\[2\]\.path: "src\/\*\*" must be a directory/);
+  assert.match(error.message, /context\.areas\[3\]\.path: "services\/billing" repeats context\.areas\[0\]/);
+  // A case-only difference names the same directory on a caseless file system.
+  assert.match(error.message, /context\.areas\[4\]\.path: "Services\/Billing" repeats context\.areas\[0\]/);
+});
+
+// spec: repository-context / Invalid packs
+test('validate names each invalid pack and field: no description, bad globs, the reserved default', async t => {
+  const { cli, register } = await fixture(t);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, context: { packs: {
+    undescribed: { files: ['*.md'] }, absolute: { description: 'a', files: ['/etc/**'] }, parent: { description: 'p', files: ['../x/**'] },
+    backslash: { description: 'b', files: ['docs\\*.md'] }, braces: { description: 'c', files: ['ok/*.md'], exclude: ['{a,b}.md'] }, default: { description: 'd', files: ['*'] },
+  } } });
+  const { error } = await cli(['validate']);
+  assert.equal(error.code, 'INVALID_CONTEXT');
+  for (const expected of ['context.packs.undescribed.description: required', 'context.packs.absolute.files[0]: "/etc/**": it is absolute',
+    'context.packs.parent.files[0]: "../x/**": it has an empty, . or .. segment', 'context.packs.backslash.files[0]: "docs\\\\*.md": it holds a backslash',
+    'context.packs.braces.exclude[0]: "{a,b}.md": only *, ** and ? are wildcards', 'context.packs.default: default is reserved']) {
+    assert.ok(error.message.includes(`team/fruit/orchard: ${expected}`), `${expected}: ${error.message}`);
+  }
+  assert.doesNotMatch(error.message, /braces\.files/);
+});
+
+// The fixture for opening with declared context: concepts with bodies, a skill, MCP names.
+async function declared(t, context) {
+  const env = await fixture(t);
+  const { base, fruit, register, checkout, locate } = env;
+  for (const id of ['guides/harvest', 'guides/pruning', 'guides/billing', 'guides/invoices', 'guides/shared', 'guides/docs'])
+    await writeConcept(fruit, id, { type: 'Guide', title: `Guide ${id}`, description: `Summary of ${id}.`, verified: { by: 'human:me', at: '2026-01-01T00:00:00Z' } }, `# ${id}\n\nBODY-TEXT-${id}\n`);
+  await manifest(fruit, { skills: ['kit:independent-review'] });
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'], context });
+  const path = await checkout(join(base, 'code/orchard'), ORCHARD, { 'AGENTS.md': 'a\n', 'docs/guide.md': 'g\n', 'services/billing/invoices/x.js': 'x\n', 'services/api.js': 'a\n' });
+  await locate('orchard', path);
+  return { ...env, path };
+}
+
+// spec: repository-context / Pointers without bodies
+test('open lists the repository concept, then declared concepts with summaries and no body, the skill and the MCP name', async t => {
+  const { cli, stdio } = await declared(t, { concepts: ['/guides/harvest', '/guides/pruning'], skills: ['kit:independent-review'], mcp: ['orchard-tracker'] });
+  assert.equal((await cli(['validate'])).code, 0);
+  const { json } = await cli(['repos', 'open', 'orchard']);
+  const keys = Object.keys(json);
+  assert.ok(keys.indexOf('repository') < keys.indexOf('pointers'));
+  assert.deepEqual(json.pointers.concepts, ['harvest', 'pruning'].map(name => ({ hub: 'team/fruit', concept: `guides/${name}`, type: 'Guide', title: `Guide guides/${name}`,
+    description: `Summary of guides/${name}.`, trust: 'human-reviewed', freshness: 'read' })));
+  assert.deepEqual(json.pointers.skills.map(({ hub, reference, name }) => ({ hub, reference, name })), [{ hub: 'personal/main', reference: 'kit:independent-review', name: 'independent-review' }]);
+  assert.ok(json.pointers.skills[0].description.length > 0);
+  assert.deepEqual(json.pointers.mcp, ['orchard-tracker']);
+  assert.doesNotMatch(JSON.stringify(json), /BODY-TEXT/);
+  assert.deepEqual((await tool(await stdio(), { repository: 'orchard' })).json, json);
+});
+
+// spec: repository-context / Summarized declarations
+test('without a subpath areas appear as counts, roles by name and packs with descriptions, unexpanded', async t => {
+  const { cli } = await declared(t, {
+    concepts: ['/guides/harvest'],
+    areas: [{ path: 'services', concepts: ['/guides/shared', '/guides/billing'], mcp: ['ledger-db'] }, { path: 'services/billing', skills: ['kit:independent-review'] }],
+    roles: { reviewer: { omit: ['/guides/harvest'], concepts: ['/guides/pruning'] } },
+    packs: { release: { description: 'Cut a release of the orchard.', files: ['docs/**'], concepts: ['/guides/docs'] } },
+  });
+  assert.equal((await cli(['validate'])).code, 0);
+  const { json } = await cli(['repos', 'open', 'orchard']);
+  assert.deepEqual(json.areas, [{ path: 'services', concepts: 2, skills: 0, mcp: 1 }, { path: 'services/billing', concepts: 0, skills: 1, mcp: 0 }]);
+  assert.deepEqual(json.roles, ['reviewer']);
+  assert.deepEqual(json.packs, [{ name: 'release', description: 'Cut a release of the orchard.' }]);
+  assert.deepEqual(json.pointers, { concepts: [json.pointers.concepts[0]], skills: [], mcp: [] });
+  assert.equal(json.pointers.concepts[0].concept, 'guides/harvest');
+  assert.ok(!('matchedAreas' in json));
+  assert.doesNotMatch(JSON.stringify(json), /guides\/(shared|billing|pruning|docs)|ledger-db/);
+});
+
+// spec: repository-context / Nested areas
+test('opening inside nested areas merges the repository, outer and inner pointers in order, each once', async t => {
+  const { cli, stdio } = await declared(t, {
+    concepts: ['/guides/harvest', '/guides/shared'], mcp: ['orchard-tracker'],
+    areas: [{ path: 'services/billing', concepts: ['/guides/invoices', '/guides/shared'], mcp: ['ledger-db', 'orchard-tracker'] },
+      { path: 'services', concepts: ['/guides/billing', '/guides/harvest'], skills: ['kit:independent-review'] }, { path: 'docs', concepts: ['/guides/docs'] }],
+  });
+  const { json } = await cli(['repos', 'open', 'orchard', 'services/billing/invoices']);
+  assert.equal(json.tree.root, 'services/billing/invoices');
+  assert.deepEqual(json.matchedAreas, ['services', 'services/billing']);
+  assert.deepEqual(json.pointers.concepts.map(item => item.concept), ['guides/harvest', 'guides/shared', 'guides/billing', 'guides/invoices']);
+  assert.deepEqual(json.pointers.skills.map(item => item.reference), ['kit:independent-review']);
+  assert.deepEqual(json.pointers.mcp, ['orchard-tracker', 'ledger-db']);
+  assert.ok(!('areas' in json));
+  assert.deepEqual((await tool(await stdio(), { repository: 'orchard', path: 'services/billing/invoices' })).json, json);
+  // An area matches by whole segments only.
+  assert.deepEqual((await cli(['repos', 'open', 'orchard', 'services'])).json.matchedAreas, ['services']);
+});
+
+// spec: repository-context / Subpath outside every area
+test('a subpath no area contains roots the tree there with only the repository pointers', async t => {
+  const { cli } = await declared(t, { concepts: ['/guides/harvest'], areas: [{ path: 'services', concepts: ['/guides/billing'] }, { path: 'docs/guide', concepts: ['/guides/docs'] }] });
+  const { json } = await cli(['repos', 'open', 'orchard', 'docs']);
+  assert.equal(json.tree.root, 'docs');
+  assert.deepEqual(json.tree.entries, ['docs/guide.md']);
+  assert.deepEqual(json.matchedAreas, []);
+  assert.deepEqual(json.pointers.concepts.map(item => item.concept), ['guides/harvest']);
+});
+
+// spec: repository-context / Deleted concept after validation
+test('a deleted reference opens as a missing pointer with a warning, a non-mapping context fails, and repos lists both', async t => {
+  const { fruit, cli, register, stdio } = await declared(t, { concepts: ['/guides/harvest', '/guides/pruning'] });
+  assert.equal((await cli(['validate'])).code, 0);
+  await rm(join(fruit, 'guides/harvest.md'));
+  await register('lemon', { title: 'lemon grove', resource: 'https://github.com/example/lemon', aliases: ['lemon'], context: ['verify', 'npm test'] });
+  const { json } = await cli(['repos', 'open', 'orchard']);
+  assert.deepEqual(json.pointers.concepts[0], { hub: 'team/fruit', concept: 'guides/harvest', missing: true });
+  assert.equal(json.pointers.concepts[1].concept, 'guides/pruning');
+  assert.deepEqual(json.warnings, ['/guides/harvest no longer resolves (no such concept); run validate']);
+  const lemon = await cli(['repos', 'open', 'lemon']);
+  assert.equal(lemon.error.code, 'INVALID_CONTEXT');
+  assert.match(lemon.error.message, /team\/fruit\/lemon: context: must be a mapping/);
+  const client = await stdio();
+  assert.equal((await tool(client, { repository: 'lemon' })).error.code, 'INVALID_CONTEXT');
+  const listed = await cli(['repos']);
+  assert.deepEqual(listed.json.repositories.map(item => item.id), ['team/fruit/lemon', 'team/fruit/orchard']);
+  assert.deepEqual((await call(client, 'list_repos', {})).json.repositories.map(item => item.id), ['team/fruit/lemon', 'team/fruit/orchard']);
+  assert.equal((await cli(['repos', 'sync'])).code, 0);
+  assert.equal((await cli(['validate'])).error.code, 'INVALID_CONTEXT');
+});
+
+// spec: repository-context / Adversarial metadata
+test('declared items at every bound still fit 8 KiB, trimmed after the tree and before root instructions, with where to read them', async t => {
+  const { base, fruit, cli, register, checkout, locate } = await fixture(t);
+  const wide = '𝔸'.repeat(299);
+  for (let index = 0; index < 50; index++) await writeConcept(fruit, `guides/g${index}`, { type: 'Guide', title: `${wide}`.slice(0, 160), description: wide });
+  const context = {
+    verify: Array.from({ length: 10 }, (_, index) => `${'𝔹'.repeat(190)} ${index}`),
+    concepts: Array.from({ length: 50 }, (_, index) => `/guides/g${index}`), mcp: Array.from({ length: 50 }, (_, index) => `m${'x'.repeat(60)}${index}`),
+    areas: Array.from({ length: 50 }, (_, index) => ({ path: `area-${index}/${'p'.repeat(180)}`, concepts: ['/guides/g0'] })),
+    roles: Object.fromEntries(Array.from({ length: 8 }, (_, index) => [`role-${index}-${'r'.repeat(30)}`, {}])),
+    packs: Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`pack-${index}`, { description: wide, files: ['**'] }])),
+  };
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'], context });
+  assert.equal((await cli(['validate'])).code, 0, 'the fixture is valid');
+  // Missing on this machine: the declared items alone are trimmed to fit.
+  const missing = (await cli(['repos', 'open', 'orchard'])).json;
+  assert.equal(missing.status, 'missing');
+  assert.ok(compact(missing) <= 8192);
+  assert.equal(missing.truncated.declared.next, 'read team/fruit:/orchard --frontmatter');
+  const files = Object.fromEntries(Array.from({ length: 200 }, (_, index) => [`file-${String(index).padStart(3, '0')}-${'n'.repeat(40)}.md`, 'x\n']));
+  const path = await checkout(join(base, 'code/orchard'), ORCHARD, { 'AGENTS.md': 'a\n', 'CLAUDE.md': 'c\n', ...files, [`area-0/${'p'.repeat(180)}/deep/AGENTS.md`]: 'd\n' });
+  await locate('orchard', path);
+  for (const subpath of [undefined, `area-0/${'p'.repeat(180)}/deep`]) {
+    const { json } = await cli(['repos', 'open', 'orchard', ...(subpath ? [subpath] : [])]);
+    assert.ok(compact(json) <= 8192, `${subpath}: ${compact(json)}`);
+    assert.deepEqual(json.instructions.slice(0, 2).map(item => item.path), ['AGENTS.md', 'CLAUDE.md']);
+    assert.equal(json.resolution.path, path);
+    // The tree went first, then declared items from the end; verify commands come first.
+    assert.deepEqual(json.tree.entries, []);
+    assert.ok(json.truncated.tree.omitted > 0);
+    const { omitted, first, next } = json.truncated.declared;
+    assert.ok(omitted > 0 && typeof first === 'string');
+    assert.equal(next, 'read team/fruit:/orchard --frontmatter');
+    // Ten commands of 200 four-byte characters cannot all fit: a prefix is kept, in order.
+    assert.ok(json.verify.length > 0 && json.verify.length < 10 && json.verify.every((command, index) => command === context.verify[index]), 'verify is a prefix');
+    assert.equal(first, 'verify');
+    // Everything after the kept commands: matched area or area summaries, 50 concepts, 50 MCP names, 8 roles, 20 packs.
+    assert.equal(omitted, 10 - json.verify.length + (subpath ? 1 : 50) + 50 + 50 + 8 + 20);
+  }
+});
+
+// spec: repository-context / Adversarial metadata
+test('the command to read a trimmed context in full is shell-quoted and, run by a shell, returns the frontmatter', async t => {
+  const { base, workspace, fruit, cli } = await fixture(t);
+  const marker = join(base, 'marker');
+  const name = `my repo $(touch ${marker})`;
+  const wide = '𝔸'.repeat(299);
+  await writeConcept(fruit, name, { type: 'Repository', title: 'the orchard', resource: ORCHARD, aliases: ['orchard'],
+    context: { packs: Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`pack-${index}`, { description: wide, files: ['**'] }])) } });
+  assert.equal((await cli(['validate'])).code, 0, 'the fixture is valid');
+  const { json } = await cli(['repos', 'open', 'orchard']);
+  assert.ok(compact(json) <= 8192);
+  const { next } = json.truncated.declared;
+  assert.equal(next, `read 'team/fruit:/${name}' --frontmatter`);
+  const quoted = word => `'${word.replaceAll("'", `'\\''`)}'`;
+  const { stdout } = await exec('/bin/sh', ['-c', `${quoted(process.execPath)} ${quoted(join(kit, 'bin/hub.mjs'))} --root ${quoted(workspace)} ${next}`], { env: { ...process.env, CONTEXT_KIT_ROOT: '' } });
+  const read = JSON.parse(stdout);
+  assert.equal(read.id, name);
+  assert.equal(Object.keys(read.frontmatter.context.packs).length, 20);
+  await assert.rejects(readFile(marker), { code: 'ENOENT' });
 });

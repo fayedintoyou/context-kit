@@ -110,9 +110,24 @@ machine recorded, ignoring the current directory, and returns, read-only:
 
 - `status`: `located`, or `missing` when no checkout is recorded or the recorded
   directory is gone or no longer a checkout's top. `missing` gives a `reason` and
-  `next`, the exact `repos locate` and `repos clone` commands, and no
-  instruction files or tree. It never clones, records or searches.
+  `next`, the exact `repos locate` and `repos clone` commands, its declared
+  context below, and no instruction files or tree. It never clones, records or
+  searches.
 - `repository` (`id`, `title`, `aliases`, `hub`, `concept`): the concept to read.
+- What the concept's `context` declares (below), all empty without one:
+  - `verify`: the commands to run to check work there, in order, as declared
+    text. Context Kit never runs them.
+  - `pointers`: `concepts` (`hub`, `concept`, `type`, `title`, `description` up to
+    300 characters, `trust`, `freshness` action; never the body), `skills`
+    (`hub` and `reference`, the arguments `read-skill` takes, with `name` and
+    `description`) and `mcp` server names, in declaration order. With a subpath,
+    every area whose path equals or contains it adds its pointers after the
+    repository's, outermost first, each once; `matchedAreas` names them.
+    A reference that no longer resolves is a pointer marked `missing: true`
+    with a warning.
+  - Without a subpath, `areas` (`path` and counts of `concepts`, `skills`,
+    `mcp`), unexpanded; always `roles` by name and `packs` (`name`,
+    `description`).
 - `resolution`: how it resolved. `matched` is the field (`id`, `title`, `alias`
   or `upstreamName`); `concept` and `alternateIds`, the upstream (its clean form),
   and the `path` from this machine's record (`source: machine`).
@@ -133,7 +148,10 @@ machine recorded, ignoring the current directory, and returns, read-only:
   bounded (`repository`: aliases cut from the end), the tree is cut from the end
   (`tree`: `omitted`, the `first` left out, and `next`: a `git ls-files` command
   that lists every tracked file below the tree's root the way Context Kit reads
-  them, plus `repos open <id> <directory>` for the first omitted directory), and
+  them, plus `repos open <id> <directory>` for the first omitted directory), the
+  declared items are cut from the end (`declared`: `omitted`, the `first` kind
+  left out, such as `pointers.mcp` or `packs`, and `next`: `read
+  <hub>:/<concept> --frontmatter`, which shows the whole `context`), and
   deeper instruction pointers go innermost first (`instructions`: `omitted` and
   `from`, the first directory whose `AGENTS.md` and `CLAUDE.md` you then read
   yourself, down to `path`). `fields` lists every value clipped or withheld; a
@@ -153,9 +171,50 @@ and system config, hooks and fsmonitor off, so the checkout's own git
 configuration (filters, fsmonitor, hooks) never runs; files are hashed by Context
 Kit itself. `AMBIGUOUS_REPOSITORY` names every candidate id.
 
+Reading `context` is lenient: opening fails with `INVALID_CONTEXT`, naming the
+problems, only when it is structurally invalid (not a mapping, an unknown key, a
+value over its bound or malformed). References that stopped resolving are
+pointers marked `missing`. `repos`, `list_repos` and the routing skill work for
+every repository whatever its `context`; `validate` fails on all of it, unknown
+references included.
+
 Over MCP it is `open_repo` (`repository`, optional `path`), offered only over stdio
 (see `remote`), with the same result. It is the operation the routing skill and
 the global rule name for resolving a repository.
+
+### Declaring context
+
+A Repository concept may carry `context`, a closed mapping (fictional example):
+
+```yaml
+context:
+  verify: ["npm test", "npm run lint"]          # up to 10 single-line commands, never run
+  concepts: [/guides/harvest, personal/notes:/orchard/ideas]
+  skills: [kit:independent-review]              # as a hub manifest lists them
+  mcp: [orchard-tracker]                        # server names only
+  areas:
+    - path: services/billing                    # a literal directory
+      concepts: [/guides/billing-ledger]
+  roles:
+    reviewer: { exclude: ["notes/builder/**"], omit: [/guides/release-builder], concepts: [/guides/review-checklist] }
+  packs:
+    release: { description: Cut a release., files: [CHANGELOG.md, "docs/release/**"], limits: { files: 60, bytes: 262144 } }
+```
+
+`/<id>` is a concept of the declaring hub (never another), `<hub-id>:/<id>` one
+in another workspace hub; inbox notes can't be referenced. A skill must be
+declared by some hub and, for `kit:`, provided by an enabled addon, so every
+skill pointer reads with `read-skill`. `validate` refuses any other key at any
+level and enforces the bounds: 50 entries per list, 50 areas, 8 roles, 20
+packs, names lowercase-hyphenated up to 40 characters, references, paths and
+globs up to 200, pack descriptions up to 300, `limits.files` 1 to 500 and
+`limits.bytes` 1 to 4 MiB. Area paths have no leading `/`, `.` or `..` segment,
+backslash or glob character, and differ within a repository. Packs need a
+`description` and `files`, and `default` is reserved; globs use only `*`, `**`
+and `?`. MCP names are lowercase letters, digits, `-` and `_`, up to 64
+characters. Problems are `INVALID_CONTEXT`, each naming the concept and key path.
+This version validates and lists roles and packs; it does not yet apply a role
+or build a pack.
 
 ### A new machine
 
