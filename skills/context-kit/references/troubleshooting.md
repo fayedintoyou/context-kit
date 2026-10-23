@@ -25,6 +25,8 @@
 | `DUPLICATE_REQUIREMENT` | A spec repeats a requirement name |
 | `INVALID_REPOSITORY` | A Repository concept lacks a git `resource`, has bad `aliases`, or shares an alias (see `repositories`) |
 | `INVALID_CONTEXT` | A Repository concept's `context` breaks its closed schema or bounds, or (in `validate`) names a concept or skill that doesn't resolve; each problem names the concept and key path (see docs/format.md) |
+| `UNKNOWN_ROLE`, `UNKNOWN_PACK` | `--role` or a pack name the repository's `context` doesn't declare; the message and `details` list the declared roles, or `default` and the declared packs |
+| `CHECKOUT_MISSING` | `repos pack` needs this machine's recorded checkout; run the `repos locate` or `repos clone` command it gives |
 | `UNKNOWN_REPOSITORY`, `AMBIGUOUS_REPOSITORY` | No repository, or more than one, has that name; use `repos` and the id |
 | `NOT_A_CHECKOUT`, `REMOTE_MISMATCH` | `repos locate` needs the top of a git checkout whose remote is the upstream |
 | `REPOSITORY_EXISTS`, `CONCEPT_EXISTS` | `repos add` found the upstream, an alias or the concept already in use |

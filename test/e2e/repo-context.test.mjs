@@ -64,6 +64,10 @@ const tool = async (client, args) => {
   return result.isError ? { error: JSON.parse(result.content[0].text).error } : { json: result.structuredContent };
 };
 const compact = value => Buffer.byteLength(JSON.stringify(value));
+const call = async (client, name, args) => {
+  const result = await client.callTool({ name, arguments: args });
+  return result.isError ? { error: JSON.parse(result.content[0].text).error } : { json: result.structuredContent };
+};
 
 // spec: repository-context / Open by alias
 test('repos open and open_repo return the same resolution, AGENTS.md pointer, concept and tree', async t => {
@@ -454,9 +458,10 @@ test('subpaths leaving the checkout are invalid and ones that do not exist are u
 });
 
 // spec: repository-context / Symlinked parent
-test('a tracked directory replaced by a symlink to outside fails to open with PATH_ESCAPE and nothing outside is read', async t => {
+test('a tracked directory replaced by a symlink to outside fails to open with PATH_ESCAPE, its files are skipped in a pack, and nothing outside is read', async t => {
   const { base, cli, register, checkout, locate, stdio } = await fixture(t);
-  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'] });
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'],
+    context: { packs: { notes: { description: 'Notes.', files: ['AGENTS.md', 'notes/**'] } } } });
   const path = await checkout(join(base, 'code/orchard'), ORCHARD, { 'AGENTS.md': 'a\n', 'notes/x.md': 'x\n', 'notes/sub/y.md': 'y\n' });
   const outside = join(base, 'outside');
   await mkdir(join(outside, 'sub'), { recursive: true });
@@ -476,12 +481,21 @@ test('a tracked directory replaced by a symlink to outside fails to open with PA
   const { json } = await cli(['repos', 'open', 'orchard']);
   assert.deepEqual(json.instructions.map(item => item.path), ['AGENTS.md']);
   assert.ok(!JSON.stringify(json).includes(sha256('OUTSIDE\n')));
+  // A pack including notes/** lists nothing under notes/ and counts both tracked files as skipped.
+  const packed = await cli(['repos', 'pack', 'orchard', 'notes']);
+  assert.equal(packed.code, 0, JSON.stringify(packed.error));
+  assert.deepEqual(packed.json.payload.files.map(file => file.path), ['AGENTS.md']);
+  assert.equal(packed.json.payload.skipped.underSymlink, 2);
+  assert.deepEqual(packed.json.payload.missing, []);
+  assert.ok(!JSON.stringify(packed.json).includes(sha256('OUTSIDE\n')));
+  assert.deepEqual((await call(client, 'context_pack', { repository: 'orchard', pack: 'notes' })).json, packed.json);
 });
 
 // spec: repository-context / Hostile checkout configuration
-test('fsmonitor, clean and process filters, hooks and injected git settings never run when opening', async t => {
+test('fsmonitor, clean and process filters, hooks and injected git settings never run when opening or building a pack', async t => {
   const { base, env, cli, register, checkout, locate, stdio } = await fixture(t);
-  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'] });
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'],
+    context: { packs: { markdown: { description: 'Markdown.', files: ['**/*.md'] } } } });
   const markers = join(base, 'markers');
   await mkdir(markers);
   // Each writes its marker; filters pass content through, the rest exit at once.
@@ -516,7 +530,14 @@ test('fsmonitor, clean and process filters, hooks and injected git settings neve
   assert.equal(opened.code, 0, JSON.stringify(opened.error));
   assert.deepEqual([opened.json.resolution.path, opened.json.tree.entries], [path, ['docs/a.md']]);
   assert.deepEqual(opened.json.instructions, [{ path: 'AGENTS.md', size: 8, sha256: sha256('changed\n'), tracked: true }]);
-  assert.equal((await tool(await stdio(hostile), { repository: 'orchard' })).json.status, 'located');
+  const client = await stdio(hostile);
+  assert.equal((await tool(client, { repository: 'orchard' })).json.status, 'located');
+  // The pack reads the same checkout's index, and its raw bytes differ from the indexed blobs.
+  const packed = await cli(['repos', 'pack', 'orchard', 'markdown'], { extra: hostile });
+  assert.equal(packed.code, 0, JSON.stringify(packed.error));
+  assert.deepEqual(packed.json.payload.files.map(file => [file.path, file.sha256]), [['AGENTS.md', sha256('changed\n')], ['docs/a.md', sha256('changed too\n')]]);
+  assert.equal(packed.json.payload.dirty, true);
+  assert.deepEqual((await call(client, 'context_pack', { repository: 'orchard', pack: 'markdown' })).json.payload, packed.json.payload);
   assert.deepEqual(await readdir(markers), []);
   // The fixture is live: plain git in that checkout runs it.
   await exec('git', ['add', '-A'], { cwd: path, env }).catch(() => {});
@@ -524,7 +545,7 @@ test('fsmonitor, clean and process filters, hooks and injected git settings neve
 });
 
 // spec: repository-context / Not offered over HTTP
-test('open_repo is listed over stdio, not over HTTP, where a call to it is unknown', async t => {
+test('open_repo and context_pack are listed over stdio, not over HTTP, where a call to either is unknown', async t => {
   const { base, env, workspace, register, checkout, locate, stdio } = await fixture(t);
   await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'] });
   await locate('orchard', await checkout(join(base, 'code/orchard'), ORCHARD, { 'AGENTS.md': 'a\n' }));
@@ -545,9 +566,13 @@ test('open_repo is listed over stdio, not over HTTP, where a call to it is unkno
   const called = await http.callTool({ name: 'open_repo', arguments: { repository: 'orchard' } });
   assert.equal(called.isError, true);
   assert.equal(JSON.parse(called.content[0].text).error.code, 'UNKNOWN_OPERATION');
+  const packed = await http.callTool({ name: 'context_pack', arguments: { repository: 'orchard', pack: 'default' } });
+  assert.equal(packed.isError, true);
+  assert.equal(JSON.parse(packed.content[0].text).error.code, 'UNKNOWN_OPERATION');
   const local = await stdio();
-  const listed = (await local.listTools()).tools.find(item => item.name === 'open_repo');
-  assert.equal(listed.annotations.readOnlyHint, true);
+  const tools = (await local.listTools()).tools;
+  for (const name of ['open_repo', 'context_pack']) assert.equal(tools.find(item => item.name === name)?.annotations.readOnlyHint, true, name);
+  assert.equal((await call(local, 'context_pack', { repository: 'orchard', pack: 'default' })).json.payload.files[0].path, 'AGENTS.md');
   assert.equal((await tool(local, { repository: 'orchard' })).json.status, 'located');
 });
 
@@ -582,11 +607,6 @@ const manifest = async (hub, fields) => {
   const file = join(hub, 'hub.json');
   await writeFile(file, JSON.stringify({ ...JSON.parse(await readFile(file, 'utf8')), ...fields }));
 };
-const call = async (client, name, args) => {
-  const result = await client.callTool({ name, arguments: args });
-  return result.isError ? { error: JSON.parse(result.content[0].text).error } : { json: result.structuredContent };
-};
-
 // spec: repository-context / Declared context validates
 test('a Repository declaring every context key, each well formed and resolvable, validates', async t => {
   const { workspace, fruit, cli, register } = await fixture(t);
@@ -952,4 +972,280 @@ test('the command to read a trimmed context in full is shell-quoted and, run by 
   assert.equal(read.id, name);
   assert.equal(Object.keys(read.frontmatter.context.packs).length, 20);
   await assert.rejects(readFile(marker), { code: 'ENOENT' });
+});
+
+// ---- Packs and roles (slice `packs`) ----------------------------------------------------------
+
+const RELEASE = { description: 'Cut a release of the orchard.', files: ['CHANGELOG.md', 'docs/release/**', 'notes/**'], exclude: ['**/*.tmp'],
+  concepts: ['/guides/release-builder', '/guides/release-checklist'] };
+// A located orchard declaring the release pack (and whatever else context adds), with guides.
+async function packed(t, { context = {}, files = {}, untracked = {} } = {}) {
+  const env = await fixture(t);
+  const { base, fruit, register, checkout, locate } = env;
+  for (const id of ['guides/release-builder', 'guides/release-checklist', 'guides/review-checklist', 'guides/harvest']) await guide(fruit, id);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'], context: { packs: { release: RELEASE }, ...context } });
+  const path = await checkout(join(base, 'code/orchard'), ORCHARD, { 'AGENTS.md': '# Orchard\n', ...files }, untracked);
+  await locate('orchard', path);
+  const pack = (name, ...flags) => env.cli(['repos', 'pack', 'orchard', name, ...flags]);
+  return { ...env, path, pack };
+}
+const listed = result => result.json.payload.files.map(file => file.path);
+
+// spec: repository-context / Pack for a release
+test('a release pack lists the matching tracked files with size, SHA-256 and binary flag, the AGENTS.md pointer and HEAD, without content', async t => {
+  const logo = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]);
+  const { env, path, pack } = await packed(t, { files: { 'CHANGELOG.md': '# Changes\n', 'docs/release/steps.md': 'Step one.\n',
+    'docs/release/draft.tmp': 'draft\n', 'docs/release/logo.png': logo, 'src/app.js': 'app\n' } });
+  const result = await pack('release');
+  assert.equal(result.code, 0, JSON.stringify(result.error));
+  const { payload, hash, annotations } = result.json;
+  const head = (await exec('git', ['rev-parse', 'HEAD'], { cwd: path, env })).stdout.trim();
+  assert.deepEqual(payload.files, [
+    { path: 'CHANGELOG.md', size: 10, sha256: sha256('# Changes\n'), binary: false },
+    { path: 'docs/release/logo.png', size: logo.length, sha256: sha256(logo), binary: true },
+    { path: 'docs/release/steps.md', size: 10, sha256: sha256('Step one.\n'), binary: false }]);
+  assert.deepEqual(payload.instructions, [{ path: 'AGENTS.md', size: 10, sha256: sha256('# Orchard\n'), tracked: true }]);
+  assert.deepEqual([payload.repository, payload.upstream, payload.pack, payload.role, payload.head, payload.dirty], ['team/fruit/orchard', ORCHARD, 'release', null, head, false]);
+  assert.deepEqual(payload.concepts, [{ hub: 'team/fruit', concept: 'guides/release-builder' }, { hub: 'team/fruit', concept: 'guides/release-checklist' }]);
+  assert.match(hash, /^[0-9a-f]{64}$/);
+  assert.equal(annotations.path, path);
+  assert.deepEqual(annotations.concepts.map(item => item.title), ['Guide guides/release-builder', 'Guide guides/release-checklist']);
+  const text = JSON.stringify(result.json);
+  for (const content of ['Step one', '# Changes', 'draft', 'app\\n']) assert.ok(!text.includes(content), content);
+});
+
+// spec: repository-context / Pack for a release
+test('pack globs: **/ matches zero or more directories, * stays in one segment', async t => {
+  const files = Object.fromEntries(['a/b', 'a/x/b', 'a/x/y/b', 'a/xb', 'x', 'deep/x', 'deep/er/x', 'xx', 'docs/one.md', 'docs/sub/two.md'].map(name => [name, `${name}\n`]));
+  const { pack } = await packed(t, { files, context: { packs: {
+    nested: { description: 'a/**/b', files: ['a/**/b'] }, anywhere: { description: '**/x', files: ['**/x'] }, flat: { description: 'docs/*', files: ['docs/*'] } } } });
+  assert.deepEqual(listed(await pack('nested')), ['a/b', 'a/x/b', 'a/x/y/b']);
+  assert.deepEqual(listed(await pack('anywhere')), ['deep/er/x', 'deep/x', 'x']);
+  assert.deepEqual(listed(await pack('flat')), ['docs/one.md']);
+});
+
+// spec: repository-context / Same over MCP
+test('a declared pack and default give equal results over the CLI and stdio MCP', async t => {
+  const { pack, stdio } = await packed(t, { context: { concepts: ['/guides/harvest'], mcp: ['orchard-tracker'] },
+    files: { 'CHANGELOG.md': 'c\n', 'README.md': 'r\n', 'src/app.js': 'a\n', 'src/lib/deep.js': 'd\n', 'docs/release/steps.md': 's\n' } });
+  const client = await stdio();
+  for (const name of ['release', 'default']) {
+    const cli = await pack(name);
+    assert.equal(cli.code, 0, JSON.stringify(cli.error));
+    assert.deepEqual((await call(client, 'context_pack', { repository: 'orchard', pack: name })).json, cli.json, name);
+  }
+  // default: the tree's files (depth 1 and 2) and the repository's own references.
+  const { json } = await pack('default');
+  assert.deepEqual(json.payload.files.map(file => file.path), ['AGENTS.md', 'CHANGELOG.md', 'README.md', 'src/app.js']);
+  assert.deepEqual([json.payload.concepts, json.payload.mcp], [[{ hub: 'team/fruit', concept: 'guides/harvest' }], ['orchard-tracker']]);
+});
+
+// spec: repository-context / Rebuild, edit and delete
+test('rebuilding is byte-identical; editing AGENTS.md changes the hash and is dirty; a deleted file is missing and dirty', async t => {
+  const { path, pack } = await packed(t, { files: { 'CHANGELOG.md': 'c\n', 'docs/release/steps.md': 's\n' } });
+  const first = await pack('release'), second = await pack('release');
+  assert.equal(JSON.stringify(second.json.payload), JSON.stringify(first.json.payload));
+  assert.equal(second.json.hash, first.json.hash);
+  assert.equal(first.json.payload.dirty, false);
+  await writeFile(join(path, 'AGENTS.md'), '# Orchard, edited\n');
+  const edited = await pack('release');
+  assert.notEqual(edited.json.hash, first.json.hash);
+  assert.equal(edited.json.payload.dirty, true);
+  await rm(join(path, 'docs/release/steps.md'));
+  const deleted = await pack('release');
+  assert.deepEqual([deleted.json.payload.missing, listed(deleted), deleted.json.payload.dirty], [['docs/release/steps.md'], ['CHANGELOG.md'], true]);
+  assert.notEqual(deleted.json.hash, edited.json.hash);
+});
+
+// spec: repository-context / Concepts age
+test('a concept passing its stale_after shows as refresh in repos open, and the pack hash does not change', async t => {
+  const { fruit, cli, pack } = await packed(t, { context: { concepts: ['/guides/release-builder'] }, files: { 'CHANGELOG.md': 'c\n' } });
+  const staleAt = new Date(Math.ceil((Date.now() + 3000) / 1000) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  await guide(fruit, 'guides/release-builder', { stale_after: staleAt });
+  const before = await pack('release');
+  assert.equal(before.json.annotations.concepts[0].freshness, 'read');
+  assert.equal((await cli(['repos', 'open', 'orchard'])).json.pointers.concepts[0].freshness, 'read');
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(staleAt) - Date.now()) + 200));
+  assert.equal((await cli(['repos', 'open', 'orchard'])).json.pointers.concepts[0].freshness, 'refresh');
+  const after = await pack('release');
+  assert.equal(after.json.annotations.concepts[0].freshness, 'refresh');
+  assert.equal(after.json.hash, before.json.hash);
+  assert.equal(JSON.stringify(after.json.payload), JSON.stringify(before.json.payload));
+});
+
+// spec: repository-context / Same pack on two machines
+test('the same commit checked out at two paths, each recorded in its own workspace copy, gives equal pack hashes', async t => {
+  const { base, env, workspace, path, pack } = await packed(t, { files: { 'CHANGELOG.md': 'c\n', 'docs/release/steps.md': 's\n' } });
+  const copy = join(base, 'elsewhere/workspace-copy');
+  await mkdir(dirname(copy), { recursive: true });
+  await cp(workspace, copy, { recursive: true });
+  const other = join(base, 'elsewhere/a/much/longer/path/to/the/orchard');
+  await mkdir(dirname(other), { recursive: true });
+  await exec('git', ['clone', '-q', path, other], { env });
+  await exec('git', ['remote', 'set-url', 'origin', ORCHARD], { cwd: other, env });
+  const run = async args => JSON.parse((await exec(process.execPath, [join(kit, 'bin/hub.mjs'), '--root', copy, ...args], { env, cwd: base })).stdout);
+  await run(['repos', 'locate', 'orchard', other]);
+  const here = await pack('release');
+  const there = await run(['repos', 'pack', 'orchard', 'release']);
+  assert.notEqual(there.annotations.path, here.json.annotations.path);
+  assert.equal(there.hash, here.json.hash);
+  assert.deepEqual(there.payload, here.json.payload);
+});
+
+// spec: repository-context / Skipped files
+test('a pack lists only tracked files, never mentions untracked ones, and counts tracked symlinks and submodules as skipped', async t => {
+  const { base, env, path, pack } = await packed(t, { context: { packs: { docs: { description: 'Docs.', files: ['docs/**'] } } },
+    files: { 'docs/a.md': 'a\n' }, untracked: { 'docs/untracked-note.md': 'u\n' } });
+  await writeFile(join(base, 'outside.md'), 'OUTSIDE\n');
+  await symlink(join(base, 'outside.md'), join(path, 'docs/link.md'));
+  const head = (await exec('git', ['rev-parse', 'HEAD'], { cwd: path, env })).stdout.trim();
+  await exec('git', ['add', 'docs/link.md'], { cwd: path, env });
+  await exec('git', ['update-index', '--add', '--cacheinfo', `160000,${head},docs/sub`], { cwd: path, env });
+  await exec('git', ['commit', '-q', '-m', 'links'], { cwd: path, env: { ...env, ...gitEnv } });
+  const { json } = await pack('docs');
+  assert.deepEqual(json.payload.files.map(file => file.path), ['docs/a.md']);
+  assert.deepEqual([json.payload.skipped.symlink, json.payload.skipped.submodule, json.payload.missing], [1, 1, []]);
+  const text = JSON.stringify(json);
+  assert.ok(!text.includes('untracked-note') && !text.includes(sha256('OUTSIDE\n')));
+});
+
+// spec: repository-context / Truncated by bytes
+test('a byte budget stops before the file that would pass it, reports what was left out, and never opens the large file', async t => {
+  const four = letter => letter.repeat(4096);
+  const { path, pack } = await packed(t, { context: { packs: { data: { description: 'Data.', files: ['data/*'] } } },
+    files: { 'data/a.txt': four('a'), 'data/b.txt': four('b'), 'data/c.txt': four('c'), 'data/d.bin': Buffer.alloc(10 * 1024 * 1024, 1) } });
+  // Unreadable, so opening it would show as a skipped, unreadable file.
+  await chmod(join(path, 'data/d.bin'), 0o000);
+  const small = await pack('data', '--budget', '9000');
+  assert.equal(small.code, 0, JSON.stringify(small.error));
+  assert.deepEqual(listed(small), ['data/a.txt', 'data/b.txt']);
+  assert.deepEqual(small.json.payload.truncated, { limit: 'bytes', max: 9000, omitted: 2, first: 'data/c.txt' });
+  const larger = await pack('data', '--budget', '20000');
+  assert.deepEqual(listed(larger), ['data/a.txt', 'data/b.txt', 'data/c.txt']);
+  assert.deepEqual(larger.json.payload.truncated, { limit: 'bytes', max: 20000, omitted: 1, first: 'data/d.bin' });
+  assert.equal(larger.json.payload.skipped.unreadable, 0);
+  assert.ok(larger.json.payload.files.reduce((sum, file) => sum + file.size, 0) <= 20000);
+  // The file limit stops the same way.
+  const { json } = await packed(t, { context: { packs: { data: { description: 'Data.', files: ['data/*'], limits: { files: 2 } } } },
+    files: { 'data/a.txt': 'a', 'data/b.txt': 'b', 'data/c.txt': 'c' } }).then(fixture => fixture.pack('data'));
+  assert.deepEqual(json.payload.truncated, { limit: 'files', max: 2, omitted: 1, first: 'data/c.txt' });
+});
+
+// spec: repository-context / Budget above the limit
+test('a budget above the pack limit leaves the limit in force and reports the effective budget', async t => {
+  const { pack, stdio } = await packed(t, { context: { packs: { data: { description: 'Data.', files: ['data/*'], limits: { bytes: 5000 } } } },
+    files: { 'data/a.txt': 'a'.repeat(3000), 'data/b.txt': 'b'.repeat(3000) } });
+  const result = await pack('data', '--budget', '100000');
+  assert.deepEqual(result.json.payload.limits, { files: 100, bytes: 5000 });
+  assert.deepEqual(result.json.annotations.budget, { requested: 100000, effective: 5000 });
+  assert.deepEqual([listed(result), result.json.payload.truncated.limit], [['data/a.txt'], 'bytes']);
+  const lowered = await pack('data', '--budget', '2000');
+  assert.deepEqual([lowered.json.payload.limits.bytes, listed(lowered)], [2000, []]);
+  const tool = await call(await stdio(), 'context_pack', { repository: 'orchard', pack: 'data', budget: 100000 });
+  assert.deepEqual(tool.json, result.json);
+  assert.equal((await pack('data', '--budget', 'lots')).error.code, 'INVALID_INPUT');
+});
+
+// spec: repository-context / Pack without a checkout
+test('a pack of a repository missing here fails with CHECKOUT_MISSING and both remedies; an undeclared pack is UNKNOWN_PACK', async t => {
+  const { base, workspace, cli, register, stdio } = await fixture(t);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'], context: { packs: { release: RELEASE } } });
+  await mkdir(join(base, 'code'));
+  const state = join(workspace, '.state/checkouts.json');
+  const before = await readFile(state).catch(() => null);
+  const entries = await readdir(join(base, 'code'));
+  const client = await stdio();
+  for (const result of [await cli(['repos', 'pack', 'orchard', 'release']), await call(client, 'context_pack', { repository: 'orchard', pack: 'release' })]) {
+    assert.equal(result.error.code, 'CHECKOUT_MISSING');
+    assert.deepEqual(result.error.details.next, ['repos locate team/fruit/orchard <path>', 'repos clone team/fruit/orchard [<path>]']);
+    assert.ok(result.error.message.includes('repos locate team/fruit/orchard <path>') && result.error.message.includes('repos clone team/fruit/orchard [<path>]'));
+  }
+  for (const result of [await cli(['repos', 'pack', 'orchard', 'harvest']), await call(client, 'context_pack', { repository: 'orchard', pack: 'harvest' })]) {
+    assert.equal(result.error.code, 'UNKNOWN_PACK');
+    assert.deepEqual(result.error.details.packs, ['default', 'release']);
+    assert.match(result.error.message, /default, release/);
+  }
+  assert.deepEqual(await readFile(state).catch(() => null), before);
+  assert.deepEqual(await readdir(join(base, 'code')), entries);
+});
+
+// spec: repository-context / A fresh reviewer never sees builder notes
+test('with the reviewer role neither open nor the release pack names the builder notes or concept, and both report withheld counts', async t => {
+  const { cli, pack, stdio } = await packed(t, {
+    context: { concepts: ['/guides/release-builder', '/guides/harvest'], roles: { reviewer: { exclude: ['notes/builder/**'], omit: ['/guides/release-builder'], concepts: ['/guides/review-checklist'] } } },
+    files: { 'notes/builder/plan.md': 'plan\n', 'notes/builder/deep/more.md': 'more\n', 'notes/review.md': 'review\n', 'CHANGELOG.md': 'c\n' } });
+  const client = await stdio();
+  const opened = await cli(['repos', 'open', 'orchard', '--role', 'reviewer']);
+  const built = await pack('release', '--role', 'reviewer', '--seed');
+  const atNotes = await cli(['repos', 'open', 'orchard', 'notes', '--role', 'reviewer']);
+  const tools = [await call(client, 'open_repo', { repository: 'orchard', role: 'reviewer' }), await call(client, 'context_pack', { repository: 'orchard', pack: 'release', role: 'reviewer', seed: true })];
+  assert.deepEqual(tools.map(item => item.json), [opened.json, built.json]);
+  for (const result of [opened, built, atNotes]) {
+    assert.equal(result.code, 0, JSON.stringify(result.error));
+    const text = JSON.stringify(result.json);
+    assert.ok(!text.includes('notes/builder') && !text.includes('release-builder'), text);
+  }
+  assert.deepEqual(opened.json.instructions.map(item => item.path), ['AGENTS.md']);
+  assert.deepEqual(built.json.payload.instructions.map(item => item.path), ['AGENTS.md']);
+  assert.deepEqual([opened.json.role, opened.json.withheld], ['reviewer', { files: 2, pointers: 1 }]);
+  assert.deepEqual(opened.json.pointers.concepts.map(item => item.concept), ['guides/harvest', 'guides/review-checklist']);
+  assert.deepEqual(atNotes.json.tree.entries, ['notes/review.md']);
+  assert.deepEqual(atNotes.json.withheld, { files: 2, pointers: 1 });
+  assert.deepEqual([built.json.payload.role, built.json.payload.withheld], ['reviewer', { files: 2, pointers: 1 }]);
+  assert.deepEqual(listed(built), ['CHANGELOG.md', 'notes/review.md']);
+  assert.deepEqual(built.json.payload.concepts.map(item => item.concept), ['guides/release-checklist', 'guides/review-checklist']);
+  // Without the role the same calls do show them: the fixture is live.
+  assert.ok(JSON.stringify((await pack('release')).json).includes('notes/builder/plan.md'));
+});
+
+// spec: repository-context / Unknown role
+test('a role the repository does not declare fails with UNKNOWN_ROLE naming the declared roles', async t => {
+  const { cli, pack, stdio } = await packed(t, { context: { roles: { reviewer: { exclude: ['notes/**'] }, auditor: {} } } });
+  const client = await stdio();
+  for (const result of [await cli(['repos', 'open', 'orchard', '--role', 'evaluator']), await pack('release', '--role', 'evaluator'),
+    await call(client, 'open_repo', { repository: 'orchard', role: 'evaluator' }), await call(client, 'context_pack', { repository: 'orchard', pack: 'default', role: 'evaluator' })]) {
+    assert.equal(result.error?.code, 'UNKNOWN_ROLE');
+    assert.match(result.error.message, /its roles are reviewer, auditor/);
+    assert.deepEqual(result.error.details.roles, ['reviewer', 'auditor']);
+  }
+  assert.equal((await cli(['repos', '--role', 'reviewer'])).error.code, 'INVALID_INPUT');
+});
+
+// spec: repository-context / Seed becomes a concept
+test('a seeded pack gives deterministic ContextPack frontmatter that validates as a draft, unverified concept', async t => {
+  const { fruit, cli, pack } = await packed(t, { files: { 'CHANGELOG.md': 'c\n', 'docs/release/steps.md': 's\n' } });
+  const first = await pack('release', '--seed');
+  assert.equal(first.code, 0, JSON.stringify(first.error));
+  assert.equal((await pack('release', '--seed')).json.seed, first.json.seed);
+  assert.equal((await pack('release')).json.hash, first.json.hash);
+  const { seed, hash, payload } = first.json;
+  assert.doesNotMatch(seed, /verified|generated|\d{4}-\d{2}-\d{2}T/);
+  await mkdir(join(fruit, 'notes'), { recursive: true });
+  await writeFile(join(fruit, 'notes/release-pack.md'), `${seed}\n# Release notes\n\nAnything at all.\n`);
+  const validated = await cli(['validate']);
+  assert.equal(validated.code, 0, JSON.stringify(validated.json ?? validated.error));
+  const read = await cli(['read', 'team/fruit', 'notes/release-pack', '--frontmatter']);
+  assert.equal(read.code, 0, JSON.stringify(read.error));
+  assert.deepEqual([read.json.okf.type, read.json.okf.status, read.json.okf.trust], ['ContextPack', 'draft', 'unverified']);
+  assert.match(read.json.okf.title, /the orchard.*release/);
+  assert.match(read.json.okf.description, /team\/fruit\/orchard/);
+  const front = read.json.frontmatter ?? read.json;
+  const text = JSON.stringify(front);
+  for (const value of [ORCHARD, hash, payload.head, 'team/fruit:/guides/release-builder', 'team/fruit:/guides/release-checklist', 'CHANGELOG.md', 'docs/release/steps.md'])
+    assert.ok(seed.includes(value) && text.includes(value), value);
+});
+
+// spec: repository-context / A fresh reviewer never sees builder notes
+test('a role that withholds files offers no command listing them when the tree is cut, and opens omitted directories with the role', async t => {
+  const files = { 'notes/builder/plan.md': 'plan\n', 'zz/later/x.md': 'x\n' };
+  for (let n = 0; n < 200; n++) files[`file-${String(n).padStart(3, '0')}.md`] = `${n}\n`;
+  const { cli } = await packed(t, { context: { roles: { reviewer: { exclude: ['notes/builder/**'] } } }, files });
+  const plain = await cli(['repos', 'open', 'orchard']);
+  assert.ok(plain.json.truncated.tree.next.some(command => command.includes('ls-files')));
+  const { json } = await cli(['repos', 'open', 'orchard', '--role', 'reviewer']);
+  assert.ok(json.truncated.tree.omitted > 0);
+  assert.ok(!json.truncated.tree.next.some(command => command.includes('ls-files')), JSON.stringify(json.truncated));
+  assert.ok(json.truncated.tree.next.includes('repos open team/fruit/orchard zz --role reviewer'), JSON.stringify(json.truncated));
+  assert.ok(!JSON.stringify(json).includes('notes/builder'));
+  assert.deepEqual(json.withheld, { files: 1, pointers: 0 });
 });
