@@ -124,13 +124,21 @@ machine recorded, ignoring the current directory, and returns, read-only:
   never appear. Paths at depth 1 and 2 below the root or subpath in code-point
   order (`entries`, directories ending in `/`), at most 150, with each listed
   directory's tracked-file count in `counts` and `files` the total.
-- `truncated`: `null`, or what didn't fit. The whole result is at most 8 KiB of
-  compact JSON (about 2k tokens), so the tree is cut from the end: `omitted` counts
-  the entries left out and `first` is the first of them.
+- `truncated`: `null`, or what didn't fit, each with `next`, where to get the rest.
+  Any result is at most 8 KiB of compact JSON (about 2k tokens). The resolution and
+  the root's instruction pointers are always kept, each string bounded and clipped
+  with a trailing `…` (listed in `fields`). Then, in order: the concept summary is
+  bounded (`repository`: aliases cut from the end), the tree is cut from the end
+  (`tree`: `omitted` and the `first` left out), and deeper instruction pointers
+  go innermost first (`instructions`: `omitted` and `from`, the first directory
+  whose `AGENTS.md` and `CLAUDE.md` you then read yourself, down to `path`).
 
 The subpath is a directory relative to the checkout's root without `.`, `..` or
-`.git` segments, backslashes or a leading `/`, at most 200 characters
-(`INVALID_PATH`); one that isn't a directory in the checkout is `UNKNOWN_PATH`.
+`.git` segments, backslashes, control characters or a leading `/`, at most 200
+characters (`INVALID_PATH`). It is matched in Unicode NFC against the tracked
+paths, so an NFD spelling (which macOS accepts) opens the same directory, reported
+in the index's spelling. One holding no tracked files is `UNKNOWN_PATH`; a name
+that two tracked spellings share once normalized is ambiguous (`INVALID_PATH`).
 Every read walks from the checkout's real root and stops at any symlink below it:
 a symlinked subpath directory fails with `PATH_ESCAPE`. Git is read only through
 `rev-parse` and `ls-files -z --stage`, with every `GIT_*` variable removed, global

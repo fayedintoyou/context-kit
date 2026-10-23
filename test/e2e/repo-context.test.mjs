@@ -256,11 +256,120 @@ test('400 long root file names fit 8 KiB as a code-point-ordered prefix, with th
   const shown = json.tree.entries.length;
   assert.ok(shown > 10 && shown < 150, `${shown} entries`);
   assert.deepEqual(json.tree.entries, sorted.slice(0, shown));
-  assert.deepEqual(json.truncated, { omitted: 400 - shown, first: sorted[shown] });
+  assert.deepEqual(json.truncated, { tree: { omitted: 400 - shown, first: sorted[shown], next: 'repos open team/fruit/orchard <directory>' } });
   assert.equal(json.tree.files, 400);
   const mcp = (await tool(await stdio(), { repository: 'orchard' })).json;
   assert.deepEqual(mcp, json);
   assert.ok(compact(mcp) <= 8192);
+});
+
+// A checkout whose directories d, d/d, ... nest `depth` levels deep, each with a tracked
+// AGENTS.md and CLAUDE.md, and `files` long-named tracked files in the innermost one.
+async function deepCheckout(checkout, path, depth, files = 0) {
+  const directories = Array.from({ length: depth + 1 }, (_, level) => Array(level).fill('d').join('/'));
+  const content = {};
+  for (const directory of directories) for (const name of ['AGENTS.md', 'CLAUDE.md']) content[directory ? `${directory}/${name}` : name] = `# rules for ${directory || 'the root'}\n`;
+  for (let index = 0; index < files; index++) content[`${directories.at(-1)}/${String(index).padStart(3, '0')}-${'long-name-'.repeat(6)}.txt`] = 'x\n';
+  return { path: await checkout(path, ORCHARD, content), directories, deepest: directories.at(-1) };
+}
+const pointersFor = directories => directories.flatMap(directory => ['AGENTS.md', 'CLAUDE.md'].map(name => directory ? `${directory}/${name}` : name));
+
+// spec: repository-context / Deep instructions
+test('opening 98 levels down keeps both root pointers and drops the innermost ones, saying where to read on', async t => {
+  const { base, cli, register, checkout, locate, stdio } = await fixture(t);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'] });
+  const { path, directories, deepest } = await deepCheckout(checkout, join(base, 'code/orchard'), 98, 20);
+  assert.equal([...deepest].length, 195);
+  await locate('orchard', path);
+  const { json } = await cli(['repos', 'open', 'orchard', deepest]);
+  assert.ok(compact(json) <= 8192, `${compact(json)} bytes`);
+  const expected = pointersFor(directories);
+  const got = json.instructions.map(item => item.path);
+  assert.deepEqual(got.slice(0, 2), ['AGENTS.md', 'CLAUDE.md']);
+  assert.ok(got.length > 2 && got.length < expected.length, `${got.length} pointers`);
+  assert.deepEqual(got, expected.slice(0, got.length), 'outermost first, a prefix');
+  assert.deepEqual(json.tree.entries, [], 'the tree goes before any instruction pointer');
+  assert.equal(json.truncated.tree.omitted, 22, 'twenty files and the two instruction files');
+  assert.deepEqual(json.truncated.instructions, { omitted: expected.length - got.length, from: dirname(expected[got.length]),
+    next: 'read AGENTS.md and CLAUDE.md in each directory from `from` down to `path`' });
+  assert.deepEqual((await tool(await stdio(), { repository: 'orchard', path: deepest })).json, json);
+});
+
+// spec: repository-context / Adversarial metadata
+test('every mix of long metadata, deep subpaths and big trees fits 8 KiB and keeps the resolution and root pointers', async t => {
+  const { base, fruit, cli, register, checkout, locate, stdio } = await fixture(t);
+  const { path, directories } = await deepCheckout(checkout, join(base, 'code/orchard'), 98, 400);
+  const nested = join(fruit, ...Array(30).fill('deep'));
+  await mkdir(nested, { recursive: true });
+  const concept = `${Array(30).fill('deep').join('/')}/orchard`;
+  const id = `team/fruit/${concept}`;
+  const title = '🍎'.repeat(80);
+  const many = Array.from({ length: 160 }, (_, index) => `orchard-alias-${String(index).padStart(3, '0')}-${'ü'.repeat(40)}`);
+  const client = await stdio();
+  let located = false;
+  for (const aliases of [[], ['orchard'], ['orchard', ...many]]) {
+    await register('orchard', { title, resource: ORCHARD, aliases, keywords: Array.from({ length: 50 }, (_, index) => `keyword ${index}`), description: 'd'.repeat(3000) }, nested);
+    if (!located) { await locate(id, path); located = true; }
+    for (const depth of [0, 1, 50, 98]) {
+      const subpath = directories[depth];
+      for (const name of [id, title, ...(aliases.length ? [aliases.at(-1)] : [])]) {
+        const args = ['repos', 'open', name, ...(subpath ? [subpath] : [])];
+        const { json, error } = await cli(args);
+        const label = `${aliases.length} aliases, depth ${depth}, by ${[...name].slice(0, 20).join('')}`;
+        assert.ok(json, `${label}: ${JSON.stringify(error)}`);
+        assert.ok(compact(json) <= 8192, `${label}: ${compact(json)} bytes`);
+        assert.deepEqual([json.status, json.resolution.concept, json.resolution.path, json.resolution.upstream], ['located', id, path, ORCHARD], label);
+        const expected = pointersFor(directories.slice(0, depth + 1));
+        const got = json.instructions.map(item => item.path);
+        assert.deepEqual(got.slice(0, 2), ['AGENTS.md', 'CLAUDE.md'], label);
+        assert.deepEqual(got, expected.slice(0, got.length), label);
+        assert.equal(json.truncated?.instructions?.omitted ?? 0, expected.length - got.length, label);
+        assert.equal(json.truncated?.repository?.aliases ?? 0, aliases.length - json.repository.aliases.length, label);
+        assert.deepEqual(json.repository.aliases, aliases.slice(0, json.repository.aliases.length), label);
+        if (json.truncated?.repository) assert.equal(json.truncated.repository.next, `read team/fruit:/${concept}`, label);
+        // Every depth-2 entry is shown or counted: 400 files and two instruction files in the innermost directory, else two files and a directory twice over.
+        assert.equal(json.tree.entries.length + (json.truncated?.tree?.omitted ?? 0), depth === 98 ? 402 : 6, label);
+        if (depth === 98 && name === id) assert.deepEqual((await tool(client, { repository: name, path: subpath })).json, json, label);
+      }
+    }
+  }
+  // Fields past their allowance are clipped with a marker, listed, and said where to read in full.
+  const long = '€'.repeat(150); // 450 bytes: over both the title's and the name's allowance
+  await register('orchard', { title: long, resource: ORCHARD, aliases: ['orchard'] }, nested);
+  const { json } = await cli(['repos', 'open', long]);
+  assert.ok(compact(json) <= 8192);
+  assert.ok(json.repository.title.endsWith('…') && json.resolution.name.endsWith('…'));
+  assert.deepEqual(json.truncated.fields, ['repository.title', 'resolution.name']);
+  assert.equal(json.truncated.next, `repos, read team/fruit:/${concept}`);
+});
+
+// spec: repository-context / Unicode spelling
+test('an NFD spelling of a tracked NFC directory opens it in the index spelling; untracked or ambiguous ones fail', async t => {
+  const { base, env, cli, register, checkout, locate, stdio } = await fixture(t);
+  await register('orchard', { title: 'the orchard', resource: ORCHARD, aliases: ['orchard'] });
+  const nfc = 'café';
+  const path = await checkout(join(base, 'code/orchard'), ORCHARD, { [`${nfc}/file.md`]: 'unicode\n', [`${nfc}/AGENTS.md`]: 'rules\n' }, { 'scratch/notes.md': 'untracked\n' });
+  await locate('orchard', path);
+  const client = await stdio();
+  const canonical = (await cli(['repos', 'open', 'orchard', nfc])).json;
+  assert.deepEqual(canonical.tree.entries, [`${nfc}/AGENTS.md`, `${nfc}/file.md`]);
+  for (const spelling of ['café', 'café/']) {
+    assert.deepEqual((await cli(['repos', 'open', 'orchard', spelling])).json, canonical, spelling);
+    assert.deepEqual((await tool(client, { repository: 'orchard', path: spelling })).json, canonical, spelling);
+  }
+  assert.deepEqual(canonical.instructions.map(item => item.path), [`${nfc}/AGENTS.md`]);
+  const untracked = await cli(['repos', 'open', 'orchard', 'scratch']);
+  assert.equal(untracked.error.code, 'UNKNOWN_PATH');
+  assert.match(untracked.error.message, /holds no tracked files/);
+  // Two tracked directories whose names differ only in normalization: refused, not merged.
+  await writeFile(join(base, 'blob.txt'), 'x\n');
+  const sha = (await exec('git', ['hash-object', '-w', join(base, 'blob.txt')], { cwd: path, env })).stdout.trim();
+  await exec('git', ['-c', 'core.precomposeUnicode=false', 'update-index', '--add', '--cacheinfo', `100644,${sha},café/other.md`], { cwd: path, env });
+  for (const spelling of [nfc, 'café']) {
+    const ambiguous = await cli(['repos', 'open', 'orchard', spelling]);
+    assert.equal(ambiguous.error?.code, 'INVALID_PATH', spelling);
+    assert.match(ambiguous.error.message, /differ only in Unicode normalization/);
+  }
 });
 
 // spec: repository-context / Escaping or missing subpath

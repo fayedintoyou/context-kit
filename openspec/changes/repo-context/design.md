@@ -151,9 +151,14 @@
    index (decision 7). It holds paths at depth 1 and 2 in code-point order,
    directories with their tracked-file counts, and nothing deeper, with at
    most 150 entries. The whole `open` result must fit 8 KiB of compact JSON
-   (`JSON.stringify` without spacing), about 2k tokens. When it doesn't, the
-   tree is trimmed from the end first, then declared pointers from the end,
-   and `truncated` reports what went and the first omitted path.
+   (`JSON.stringify` without spacing), about 2k tokens, for every input. The
+   resolution and the root's instruction pointers are always kept, their
+   strings bounded per field and clipped with a marker. Then, in order: the
+   concept summary is bounded (aliases cut from the end), the tree is trimmed
+   from the end, declared pointers from the end, and deeper instruction
+   pointers innermost directory first. `truncated` reports each cut with how
+   to get the rest (the concept read, `repos open` at a directory, or the
+   first directory whose instruction files to read directly).
 
    Instruction files are `AGENTS.md` and `CLAUDE.md` exactly, at the root and
    in each directory down to the subpath. They're the deliberate exception to
