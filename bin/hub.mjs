@@ -24,8 +24,8 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   repos add <hub-id> [<upstream>] [--path <checkout>] [--alias a,b] [--title <t>] [--concept <id>] [--description <d>]
   repos | repos locate <repo> <path> | repos clone <repo> [<path>] | repos scan <directory> [--depth <n>] | repos sync
   repos which [<path>]   (which registered repository the innermost checkout at a path, default here, belongs to)
-  repos open <repo> [<subpath>] [--role <role>]   (resolve a repository to this machine's checkout: instruction files and a bounded tree)
-  repos pack <repo> <pack> [--role <role>] [--budget <bytes>] [--seed]   (a declared pack or default: a canonical, hashed list of its files and references)
+  repos open <repo> [<subpath>] [--role <role>] [--check-mcp]   (resolve a repository to this machine's checkout: instruction files and a bounded tree)
+  repos pack <repo> <pack> [--role <role>] [--budget <bytes>] [--seed] [--check-mcp]   (a declared pack or default: a canonical, hashed list of its files and references)
   repos setup [--scan <directory>]... [--depth <n>] [--clone a,b] [--ask]   (scan, then clone only what is named or answered)
   mounts | mounts add <name> <source> [--ref <ref>] [--path <dir>] | mounts fetch [<name>] | mounts remove <name>
   mounts upgrade <name> [--to <rev>] [--check]   (rev: a branch, tag or full commit)
@@ -43,7 +43,7 @@ Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
   const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--adopt', '--allow-write', '--global-mcp', '--global-rule', '--no-global-rule', '--name', '--help', '--path', '--ref', '--to', '--check', '--alias', '--title', '--concept', '--description', '--ready', '--rehearse',
     '--sha', '--repo', '--wait', '--timeout', '--method', '--skip-review', '--no-checks', '--bootstrap-policy', '--depth', '--scan', '--clone', '--ask',
-    '--source', '--strict', '--format', '--write', '--hub', '--at', '--full', '--role', '--budget', '--seed'], ['--scan']);
+    '--source', '--strict', '--format', '--write', '--hub', '--at', '--full', '--role', '--budget', '--seed', '--check-mcp'], ['--scan']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
     const [command, ...args] = positional;
@@ -106,7 +106,8 @@ try {
       if (options['--role'] !== undefined && !repoOpen && !repoPack) fail('INVALID_INPUT', '--role applies only to repos open and repos pack');
       if ((options['--budget'] !== undefined || options['--seed']) && !repoPack) fail('INVALID_INPUT', '--budget and --seed apply only to repos pack');
       if (options['--budget'] !== undefined && !/^[0-9]+$/.test(options['--budget'])) fail('INVALID_INPUT', '--budget takes a whole number of bytes');
-      const role = options['--role'] === undefined ? {} : { role: options['--role'] };
+      if (options['--check-mcp'] && !repoOpen && !repoPack) fail('INVALID_INPUT', '--check-mcp applies only to repos open and repos pack');
+      const role = { ...(options['--role'] === undefined ? {} : { role: options['--role'] }), ...(options['--check-mcp'] ? { checkMcp: true } : {}) };
       if (command === 'mounts') {
         if (args.length === 0) result = await execute(selection, 'list_mounts');
         else if (mountAdd && args.length === 3) result = await execute(selection, 'add_mount', { name: args[1], source: args[2],
