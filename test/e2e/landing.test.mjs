@@ -575,6 +575,16 @@ test('a change only to exempt paths is routine and names the exemption', async t
   assert.equal(json.review.status, 'not_required');
 });
 
+// spec: pull-request-landing / A docs-only change is routine
+test('exempt and excluded globs match file names holding a newline', async t => {
+  const { land } = await machine(t);
+  const json = landed(await land(routes({ files: [file('docs/odd\nname.md')] }), LAND));
+  assert.equal(json.substantial.value, false);
+  const result = await land(routes({ files: [file('openspec/odd\nname.md')] }), LAND);
+  refused(result, 'REVIEW_MISSING');
+  assert.deepEqual(result.error.details.substantial.files, [{ file: 'openspec/odd\nname.md', reason: 'excluded from the routine exemption' }]);
+});
+
 // spec: pull-request-landing / Stale, planning and malformed records
 test('stale, plan-phase and malformed records are reported and do not count', async t => {
   const { land } = await machine(t);

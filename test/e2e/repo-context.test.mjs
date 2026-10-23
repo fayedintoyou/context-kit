@@ -1187,10 +1187,10 @@ test('with the reviewer role neither open nor the release pack names the builder
   }
   assert.deepEqual(opened.json.instructions.map(item => item.path), ['AGENTS.md']);
   assert.deepEqual(built.json.payload.instructions.map(item => item.path), ['AGENTS.md']);
-  assert.deepEqual([opened.json.role, opened.json.withheld], ['reviewer', { files: 2, pointers: 1 }]);
+  assert.deepEqual([opened.json.role, opened.json.withheld], ['reviewer', { files: 2, pointers: 1, areas: 0 }]);
   assert.deepEqual(opened.json.pointers.concepts.map(item => item.concept), ['guides/harvest', 'guides/review-checklist']);
   assert.deepEqual(atNotes.json.tree.entries, ['notes/review.md']);
-  assert.deepEqual(atNotes.json.withheld, { files: 2, pointers: 1 });
+  assert.deepEqual(atNotes.json.withheld, { files: 2, pointers: 1, areas: 0 });
   assert.deepEqual([built.json.payload.role, built.json.payload.withheld], ['reviewer', { files: 2, pointers: 1 }]);
   assert.deepEqual(listed(built), ['CHANGELOG.md', 'notes/review.md']);
   assert.deepEqual(built.json.payload.concepts.map(item => item.concept), ['guides/release-checklist', 'guides/review-checklist']);
@@ -1247,5 +1247,114 @@ test('a role that withholds files offers no command listing them when the tree i
   assert.ok(!json.truncated.tree.next.some(command => command.includes('ls-files')), JSON.stringify(json.truncated));
   assert.ok(json.truncated.tree.next.includes('repos open team/fruit/orchard zz --role reviewer'), JSON.stringify(json.truncated));
   assert.ok(!JSON.stringify(json).includes('notes/builder'));
-  assert.deepEqual(json.withheld, { files: 1, pointers: 0 });
+  assert.deepEqual(json.withheld, { files: 1, pointers: 0, areas: 0 });
+});
+
+// Adds an index entry without a working-tree file (a name the file system may not keep as spelled).
+async function indexOnly(env, path, name, content = 'x\n', mode = '100644') {
+  await writeFile(join(path, '.git/blob-input'), content);
+  const sha = (await exec('git', ['hash-object', '-w', '.git/blob-input'], { cwd: path, env })).stdout.trim();
+  await exec('git', ['-c', 'core.ignoreCase=false', '-c', 'core.precomposeUnicode=false', 'update-index', '--add', '--cacheinfo', `${mode},${sha},${name}`], { cwd: path, env });
+}
+
+// spec: repository-context / A fresh reviewer never sees builder notes
+test('under any role open offers no full-context read, neither for cut declared items nor for clipped fields', async t => {
+  const concepts = Array.from({ length: 50 }, (_, n) => `/guides/g${String(n).padStart(2, '0')}`);
+  const { fruit, cli } = await packed(t, { context: { concepts, roles: { reviewer: { exclude: ['notes/builder/**'] } } }, files: { 'notes/builder/plan.md': 'p\n' } });
+  for (const id of concepts) await guide(fruit, id.slice(1), { description: 'd'.repeat(290) });
+  // A title of 4-byte characters is clipped, so `fields` is reported too.
+  const title = '𝔬'.repeat(80);
+  const file = join(fruit, 'orchard.md');
+  await writeFile(file, (await readFile(file, 'utf8')).replace('title: "the orchard"', `title: ${JSON.stringify(title)}`));
+  const plain = await cli(['repos', 'open', 'orchard']);
+  assert.equal(plain.code, 0, JSON.stringify(plain.error));
+  assert.match(plain.json.truncated.declared.next, /--frontmatter$/);
+  assert.match(plain.json.truncated.next, /^repos, read /);
+  const { json } = await cli(['repos', 'open', 'orchard', '--role', 'reviewer']);
+  assert.ok(json.truncated.declared && json.truncated.fields.length, JSON.stringify(json.truncated));
+  assert.deepEqual([json.truncated.declared.next, json.truncated.next], [null, 'repos']);
+  assert.ok(!JSON.stringify(json).includes('read ') && !JSON.stringify(json).includes('notes/builder'));
+});
+
+// spec: repository-context / A fresh reviewer never sees builder notes
+test('under a role an area whose files are all withheld is left out of the summaries and counted, and counts leave out omitted pointers', async t => {
+  const { cli, path } = await packed(t, {
+    context: { areas: [{ path: 'notes/builder', concepts: ['/guides/harvest'] }, { path: 'services', concepts: ['/guides/release-builder', '/guides/harvest'] }],
+      roles: { reviewer: { exclude: ['notes/builder/**'], omit: ['/guides/release-builder'] } } },
+    files: { 'notes/builder/plan.md': 'p\n', 'services/api.js': 'a\n' } });
+  const plain = await cli(['repos', 'open', 'orchard']);
+  assert.deepEqual(plain.json.areas.map(area => area.path), ['notes/builder', 'services']);
+  const reviewed = await cli(['repos', 'open', 'orchard', '--role', 'reviewer']);
+  assert.deepEqual(reviewed.json.areas, [{ path: 'services', concepts: 1, skills: 0, mcp: 0 }]);
+  assert.deepEqual(reviewed.json.withheld, { files: 1, pointers: 0, areas: 1 });
+  // Missing here, the role's globs still hide the area.
+  await rm(path, { recursive: true, force: true });
+  const missing = await cli(['repos', 'open', 'orchard', '--role', 'reviewer']);
+  assert.equal(missing.json.status, 'missing');
+  assert.deepEqual([missing.json.areas.map(area => area.path), missing.json.withheld.areas], [['services'], 1]);
+  for (const result of [reviewed, missing]) assert.ok(!JSON.stringify(result.json).includes('notes/builder') && !JSON.stringify(result.json).includes('release-builder'));
+});
+
+// spec: repository-context / A fresh reviewer never sees builder notes
+test('role excludes cover names with newlines, other Unicode spellings and case, and the excluded directory entry itself', async t => {
+  const { env, path, cli, pack } = await packed(t, {
+    context: { packs: { all: { description: 'Everything.', files: ['**'] } },
+      roles: { reviewer: { exclude: ['notes/builder/**', 'café/**', 'vendor/secret/**'] } } },
+    files: { 'notes/builder/we\nird.md': 'odd\n', 'notes/review.md': 'r\n' } });
+  await indexOnly(env, path, 'café/plan.md');
+  const head = (await exec('git', ['rev-parse', 'HEAD'], { cwd: path, env })).stdout.trim();
+  await indexOnly(env, path, 'vendor/secret', head, '160000');
+  const everything = await pack('all');
+  assert.ok(listed(everything).includes('notes/builder/we\nird.md'), JSON.stringify(listed(everything)));
+  const opened = await cli(['repos', 'open', 'orchard', '--role', 'reviewer']);
+  assert.equal(opened.code, 0, JSON.stringify(opened.error));
+  assert.deepEqual(opened.json.tree.entries, ['AGENTS.md', 'notes/', 'notes/review.md']);
+  assert.deepEqual(opened.json.withheld.files, 3);
+  assert.equal((await cli(['repos', 'open', 'orchard', 'notes/builder', '--role', 'reviewer'])).error.code, 'UNKNOWN_PATH');
+  const built = await pack('all', '--role', 'reviewer');
+  assert.deepEqual([listed(built), built.json.payload.withheld.files, built.json.payload.skipped.submodule], [['AGENTS.md', 'notes/review.md'], 3, 0]);
+  for (const result of [opened, built]) assert.ok(!/builder|caf|secret/.test(JSON.stringify(result.json)), JSON.stringify(result.json));
+  // On a caseless file system another case of the glob withholds the same files.
+  if (await realpath(join(path, '.GIT')).then(() => true, () => false)) {
+    const { pack: other } = await packed(t, { context: { roles: { reviewer: { exclude: ['NOTES/Builder/**'] } } }, files: { 'notes/builder/plan.md': 'p\n' } });
+    assert.deepEqual(listed(await other('release', '--role', 'reviewer')), []);
+  }
+});
+
+// spec: repository-context / Unknown role
+test('validate warns about a directory-form exclude that matches no file and suggests the ** form', async t => {
+  const { cli } = await packed(t, { context: { roles: { reviewer: { exclude: ['notes/builder', 'notes/review.md'] } } },
+    files: { 'notes/builder/plan.md': 'p\n', 'notes/review.md': 'r\n' } });
+  const { code, json } = await cli(['validate']);
+  assert.equal(code, 0);
+  assert.deepEqual(json.warnings, ['team/fruit/orchard: context.roles.reviewer.exclude[0]: "notes/builder" matches no file but names a directory; write "notes/builder/**" to withhold its files']);
+});
+
+// spec: repository-context / Rebuild, edit and delete
+test('a selected file, or its directory, replaced by a symlink makes the pack dirty', async t => {
+  const { base, path, pack } = await packed(t, { files: { 'CHANGELOG.md': 'c\n', 'docs/release/steps.md': 's\n' } });
+  assert.equal((await pack('release')).json.payload.dirty, false);
+  await writeFile(join(base, 'elsewhere.md'), 'c\n');
+  await rm(join(path, 'CHANGELOG.md'));
+  await symlink(join(base, 'elsewhere.md'), join(path, 'CHANGELOG.md'));
+  const file = await pack('release');
+  assert.deepEqual([file.json.payload.dirty, file.json.payload.skipped.symlink], [true, 1]);
+  await rm(join(path, 'CHANGELOG.md'));
+  await writeFile(join(path, 'CHANGELOG.md'), 'c\n');
+  await rename(join(path, 'docs/release'), join(base, 'release-moved'));
+  await symlink(join(base, 'release-moved'), join(path, 'docs/release'));
+  const parent = await pack('release');
+  assert.deepEqual([parent.json.payload.dirty, parent.json.payload.skipped.underSymlink], [true, 1]);
+});
+
+// spec: repository-context / Hostile checkout configuration
+test('an index git cannot read fails with NOT_A_CHECKOUT and a fixed message, never git\'s own output', async t => {
+  const { path, cli, pack, stdio } = await packed(t, { files: { 'CHANGELOG.md': 'c\n' } });
+  await writeFile(join(path, '.git/index'), 'not an index at all');
+  const client = await stdio();
+  for (const result of [await cli(['repos', 'open', 'orchard']), await pack('release'),
+    await call(client, 'open_repo', { repository: 'orchard' }), await call(client, 'context_pack', { repository: 'orchard', pack: 'release' })]) {
+    assert.equal(result.error?.code, 'NOT_A_CHECKOUT');
+    assert.equal(result.error.message, 'git ls-files could not read the recorded checkout');
+  }
 });

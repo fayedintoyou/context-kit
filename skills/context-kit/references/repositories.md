@@ -221,14 +221,29 @@ characters. Problems are `INVALID_CONTEXT`, each naming the concept and key path
 repository declares, from the first call. Its `exclude` globs remove tracked files
 from the tree and from every pack, as if untracked; `omit` removes declared concept,
 skill or MCP pointers (the repository's, an area's or a pack's); the role's own
-`concepts`, `skills` and `mcp` are added after them. Instruction files are never
-withheld. The result gives `role` and `withheld` (`files`, `pointers`): counts only,
-never the paths or IDs withheld, so a fresh reviewer opened with `--role reviewer`
-never sees the builder's notes. With a role that withholds something, `truncated`
-offers no command that would list it (no `git ls-files`, no full `context` read);
-`repos open <id> <directory> --role <role>` still opens an omitted directory. A role
-the repository doesn't declare fails with `UNKNOWN_ROLE`, naming the declared ones
-(`details.roles`).
+`concepts`, `skills` and `mcp` are added after them. Excludes are matched in
+Unicode NFC, and caselessly when the checkout's file system ignores case, as
+subpaths are; `x/**` also withholds an entry named `x` itself (a symlink or
+submodule tracked at that name). Without a subpath, an area whose directory the
+role excludes, or all of whose tracked files it excludes, is left out of `areas`,
+and the other areas' counts leave out omitted pointers. The result gives `role` and
+`withheld` (`files`, `pointers`, `areas`; a pack's has `files` and `pointers`):
+counts only, never the paths or IDs withheld, so a fresh reviewer opened with
+`--role reviewer` never sees the builder's notes.
+
+Under a role, `truncated` never offers a command that would show what it withholds:
+no full read of the Repository concept (`truncated.declared.next` is `null` and a
+clipped field's `next` is just `repos`), and no `git ls-files` listing when the role
+withholds files below the tree's root. `repos open <id> <directory> --role <role>`
+still opens an omitted directory; when the cut tree held only files, `next` can be
+`[]`. A withheld directory can't be opened (`UNKNOWN_PATH`), so the `AGENTS.md` or
+`CLAUDE.md` inside it is not pointed at either; the root's and those of every
+directory you can open always are.
+
+An exclude without wildcards withholds only the entry of that name. `validate`
+warns when one names no tracked file but a tracked directory in this machine's
+checkout, suggesting `<dir>/**`. A role the repository doesn't declare fails with
+`UNKNOWN_ROLE`, naming the declared ones (`details.roles`).
 
 ### Context packs
 
@@ -265,7 +280,9 @@ a symlinked directory), `notRegular`, `changed` (while it was read) and
 `binary` means a NUL byte in the first 8 KiB; binary files are listed with their
 size and hash and count toward the budget like text. `dirty` is true when a listed
 or tracked instruction file's raw bytes differ from its index blob (compared as git
-blob IDs, in the checkout's object format), or one is missing. Context Kit hashes
+blob IDs, in the checkout's object format), when one is missing, and when a selected
+tracked file, or a directory above it, has been replaced by a symlink or something
+other than a file. Context Kit hashes
 the raw working-tree bytes itself and never runs git's filters, so a file whose
 index content went through a filter (CRLF conversion, LFS) shows as dirty: check it.
 
@@ -276,7 +293,8 @@ the byte budget, never raises it; the effective one is in `payload.limits.bytes`
 A file's size is checked before it is opened, so one over budget is never read.
 Missing files count toward the file limit. When files are left out, `truncated`
 gives the `limit` (`files` or `bytes`), its `max`, the count `omitted` and the
-`first` path left out. Budgets are in bytes because bytes are the same for every
+`first` path left out. Globs match any character in a name, newlines included.
+Budgets are in bytes because bytes are the same for every
 model; as a rough rule, 4 bytes is about one token.
 
 **Seeding a note.** With `--seed` (MCP `seed`) the result also has `seed`: OKF

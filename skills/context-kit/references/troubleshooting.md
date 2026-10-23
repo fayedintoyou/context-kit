@@ -28,7 +28,7 @@
 | `UNKNOWN_ROLE`, `UNKNOWN_PACK` | `--role` or a pack name the repository's `context` doesn't declare; the message and `details` list the declared roles, or `default` and the declared packs |
 | `CHECKOUT_MISSING` | `repos pack` needs this machine's recorded checkout; run the `repos locate` or `repos clone` command it gives |
 | `UNKNOWN_REPOSITORY`, `AMBIGUOUS_REPOSITORY` | No repository, or more than one, has that name; use `repos` and the id |
-| `NOT_A_CHECKOUT`, `REMOTE_MISMATCH` | `repos locate` needs the top of a git checkout whose remote is the upstream |
+| `NOT_A_CHECKOUT`, `REMOTE_MISMATCH` | `repos locate` needs the top of a git checkout whose remote is the upstream. From `repos open` or `repos pack`, git could not read the recorded checkout's index (corrupt or unreadable); the message never quotes git's output, so run `git status` there yourself and repair it |
 | `REPOSITORY_EXISTS`, `CONCEPT_EXISTS` | `repos add` found the upstream, an alias or the concept already in use |
 | `DESTINATION_EXISTS`, `CLONE_FAILED` | `repos clone` needs a new path and a reachable upstream |
 | `MOUNT_EXISTS` | A mount or workspace hub already has that name; pick another mount name |
