@@ -73,7 +73,8 @@ untracked `.state/checkouts.json`:
   registered repository's checkout: that one is recorded, not entered.
 - `repos setup` sets up a new machine, below.
 - `repos which [<path>]` says which repository a path belongs to, below.
-- `repos open <repo> [<subpath>]` opens a repository to start work on it, below.
+- `repos open <repo> [<subpath>] [--role <role>]` opens a repository to start work on it, below.
+- `repos pack <repo> <pack> [--role <role>] [--budget <bytes>] [--seed]` builds a context pack, below.
 
 Recording and cloning are CLI-only; agents run them when you ask.
 
@@ -178,7 +179,7 @@ pointers marked `missing`. `repos`, `list_repos` and the routing skill work for
 every repository whatever its `context`; `validate` fails on all of it, unknown
 references included.
 
-Over MCP it is `open_repo` (`repository`, optional `path`), offered only over stdio
+Over MCP it is `open_repo` (`repository`, optional `path` and `role`), offered only over stdio
 (see `remote`), with the same result. It is the operation the routing skill and
 the global rule name for resolving a repository.
 
@@ -213,8 +214,116 @@ backslash or glob character, and differ within a repository. Packs need a
 `description` and `files`, and `default` is reserved; globs use only `*`, `**`
 and `?`. MCP names are lowercase letters, digits, `-` and `_`, up to 64
 characters. Problems are `INVALID_CONTEXT`, each naming the concept and key path.
-This version validates and lists roles and packs; it does not yet apply a role
-or build a pack.
+
+### Roles
+
+`--role <role>` on `repos open` and `repos pack` (MCP `role`) applies a role the
+repository declares, from the first call. Its `exclude` globs remove tracked files
+from the tree and from every pack, as if untracked; `omit` removes declared concept,
+skill or MCP pointers (the repository's, an area's or a pack's); the role's own
+`concepts`, `skills` and `mcp` are added after them. Excludes are matched in
+Unicode NFC, and caselessly when the checkout's file system ignores case, as
+subpaths are; `x/**` also withholds an entry named `x` itself (a symlink or
+submodule tracked at that name). Without a subpath, an area whose directory the
+role excludes, or all of whose tracked files it excludes, is left out of `areas`,
+and the other areas' counts leave out omitted pointers. The result gives `role` and
+`withheld` (`files`, `pointers`, `areas`; a pack's has `files` and `pointers`):
+counts only, never the paths or IDs withheld, so a fresh reviewer opened with
+`--role reviewer` never sees the builder's notes.
+
+Under a role, `truncated` never offers a command that would show what it withholds:
+no full read of the Repository concept (`truncated.declared.next` is `null` and a
+clipped field's `next` is just `repos`), and no `git ls-files` listing when the role
+withholds files below the tree's root. `repos open <id> <directory> --role <role>`
+still opens an omitted directory; when the cut tree held only files, `next` can be
+`[]`. A withheld directory can't be opened (`UNKNOWN_PATH`), so the `AGENTS.md` or
+`CLAUDE.md` inside it is not pointed at either; the root's and those of every
+directory you can open always are. A subpath the role's excludes match is
+`UNKNOWN_PATH` whatever the checkout's state, and so is one inside a withheld area,
+which `matchedAreas` never names. Without a checkout here the role is applied by its
+globs alone and errs on withholding: an area is withheld when, compared caselessly,
+an exclude matches its directory or literally names it or a directory inside it (as
+`dir/*.md` or `dir/drafts/**` do). Under a role, an invalid `context`
+(`INVALID_CONTEXT`) is reported by key paths only, never quoting values.
+
+Free text is not filtered: `verify` commands, pack names and descriptions, and role
+names are shown under every role as declared. `validate` warns when one of them
+names a path a role excludes; reword it so it doesn't.
+
+An exclude without wildcards withholds only the entry of that name. `validate`
+warns when one names no tracked file but a tracked directory in this machine's
+checkout (compared caselessly on a caseless file system), suggesting `<dir>/**`.
+It reads only a recorded checkout that is still the top of a git checkout, and
+never over HTTP, where `validate_hubs` says nothing about this machine's checkouts.
+`?` matches one Unicode code point, so an emoji or astral letter counts as one,
+but a letter written with a separate combining mark (such as `q̃`) is two. A role the repository doesn't declare fails with
+`UNKNOWN_ROLE`, naming the declared ones (`details.roles`).
+
+### Context packs
+
+`repos pack <repo> <pack>` (MCP `context_pack`: `repository`, `pack`, optional
+`role`, `budget`, `seed`) expands a declared pack, or `default`, against this
+machine's recorded checkout. It is read-only, local-only like `open_repo`, and never
+returns file contents. The result is `{ root, payload, hash, annotations }`:
+
+- `payload`, the canonical part: `repository` (id), `upstream`, `pack`, `role`,
+  `head` (the HEAD commit, or `null` before the first commit), `instructions` (the
+  root's `AGENTS.md`/`CLAUDE.md` pointers, tracked or not), `files` (`path`, `size`,
+  `sha256`, `binary`), `missing`, `skipped` counts, `concepts` (`hub`, `concept`),
+  `skills` (references), `mcp` (names), `dirty`, `limits` (the effective `files` and
+  `bytes`), `truncated` and `withheld` (with a role, else `null`).
+- `hash`: SHA-256 of the payload as canonical JSON (keys sorted, no spacing). The
+  payload depends only on the registry entry, the pack and role declarations, HEAD,
+  the index and the selected files' bytes, so the same commit gives the same hash on
+  any machine, at any path, at any time. Files are in code-point order.
+- `annotations`, beside it and not hashed: the checkout `path`, `budget`
+  (`requested`, `effective`), concept pointers with titles, trust and `freshness`,
+  skill pointers as `repos open` gives them, and `warnings`. A concept going stale
+  changes its annotation, never the hash.
+
+A declared pack selects index paths matching any of its `files` globs and none of
+its `exclude` globs (`**/` is zero or more directories, `*` and `?` stay within a
+segment); `default` selects the tree's files (depth 1 and 2) and the repository's
+own `concepts`, `skills` and `mcp`, and a declared pack its own. Only files in the
+index are considered: untracked files are never listed or counted. Each is reached
+by the same per-component walk as `repos open`. `skipped` counts, by reason,
+`submodule`, `symlink` (tracked as one, or replaced by one), `underSymlink` (below
+a symlinked directory), `notRegular`, `changed` (while it was read) and
+`unreadable`; a tracked file absent from the working tree is listed in `missing`.
+
+`binary` means a NUL byte in the first 8 KiB; binary files are listed with their
+size and hash and count toward the budget like text. `dirty` is true when a listed
+or tracked instruction file's raw bytes differ from its index blob (compared as git
+blob IDs, in the checkout's object format), when one is missing, and when a selected
+tracked file, or a directory above it, has been replaced by a symlink or something
+other than a file. Context Kit hashes
+the raw working-tree bytes itself and never runs git's filters, so a file whose
+index content went through a filter (CRLF conversion, LFS) shows as dirty: check it.
+
+**Budgets.** Files are listed in order until the next would pass the file limit or
+the byte budget: by default 100 files and 512 KiB, which a pack's `limits` (`files`
+up to 500, `bytes` up to 4 MiB) replace. `--budget <bytes>` (MCP `budget`) lowers
+the byte budget, never raises it; the effective one is in `payload.limits.bytes`.
+A file's size is checked before it is opened, so one over budget is never read.
+Missing files count toward the file limit. When files are left out, `truncated`
+gives the `limit` (`files` or `bytes`), its `max`, the count `omitted` and the
+`first` path left out. Globs match any character in a name, newlines included.
+Budgets are in bytes because bytes are the same for every
+model; as a rough rule, 4 bytes is about one token.
+
+**Seeding a note.** With `--seed` (MCP `seed`) the result also has `seed`: OKF
+frontmatter for a working note about the pack, `type: ContextPack`, a `title` and
+`description` naming the repository, pack and role, `status: draft`, the upstream
+as `resource`, and `context_pack` (`repository`, `pack`, `role`, `commit`, `hash`,
+`concepts` as `<hub>:/<id>`, `files`). It is deterministic and carries no
+`verified` or timestamps; add `generated` and a body when you write the note into a
+hub, and `validate` accepts it as a draft, unverified concept.
+
+A repository with no recorded checkout here, or a stale one, fails with
+`CHECKOUT_MISSING`, giving the exact `repos locate` and `repos clone` commands in
+the message and `details.next`; a pack name the repository doesn't declare fails
+with `UNKNOWN_PACK`, naming `default` and its packs (`details.packs`). Neither
+records or clones anything.
 
 ### A new machine
 

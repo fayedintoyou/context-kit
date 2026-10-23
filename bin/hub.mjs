@@ -24,7 +24,8 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   repos add <hub-id> [<upstream>] [--path <checkout>] [--alias a,b] [--title <t>] [--concept <id>] [--description <d>]
   repos | repos locate <repo> <path> | repos clone <repo> [<path>] | repos scan <directory> [--depth <n>] | repos sync
   repos which [<path>]   (which registered repository the innermost checkout at a path, default here, belongs to)
-  repos open <repo> [<subpath>]   (resolve a repository to this machine's checkout: instruction files and a bounded tree)
+  repos open <repo> [<subpath>] [--role <role>]   (resolve a repository to this machine's checkout: instruction files and a bounded tree)
+  repos pack <repo> <pack> [--role <role>] [--budget <bytes>] [--seed]   (a declared pack or default: a canonical, hashed list of its files and references)
   repos setup [--scan <directory>]... [--depth <n>] [--clone a,b] [--ask]   (scan, then clone only what is named or answered)
   mounts | mounts add <name> <source> [--ref <ref>] [--path <dir>] | mounts fetch [<name>] | mounts remove <name>
   mounts upgrade <name> [--to <rev>] [--check]   (rev: a branch, tag or full commit)
@@ -42,7 +43,7 @@ Root precedence: --root, CONTEXT_KIT_ROOT, toolkit checkout (read-only).`;
 try {
   const { options, positional } = parseArgs(process.argv.slice(2), ['--root', '--inbox', '--store', '--kit', '--by', '--offset', '--frontmatter', '--file', '--addons', '--agent', '--scope', '--project', '--link', '--force', '--adopt', '--allow-write', '--global-mcp', '--global-rule', '--no-global-rule', '--name', '--help', '--path', '--ref', '--to', '--check', '--alias', '--title', '--concept', '--description', '--ready', '--rehearse',
     '--sha', '--repo', '--wait', '--timeout', '--method', '--skip-review', '--no-checks', '--bootstrap-policy', '--depth', '--scan', '--clone', '--ask',
-    '--source', '--strict', '--format', '--write', '--hub', '--at', '--full'], ['--scan']);
+    '--source', '--strict', '--format', '--write', '--hub', '--at', '--full', '--role', '--budget', '--seed'], ['--scan']);
   if (options['--help']) { process.stdout.write(help + '\n'); }
   else {
     const [command, ...args] = positional;
@@ -101,6 +102,11 @@ try {
       if (setupFlags.some(flag => options[flag]) && !(command === 'repos' && args[0] === 'setup')) fail('INVALID_INPUT', `${setupFlags.join(', ')} apply only to repos setup`);
       if (options['--depth'] !== undefined && !(command === 'repos' && ['scan', 'setup'].includes(args[0]))) fail('INVALID_INPUT', '--depth applies only to repos scan and repos setup');
       const depth = options['--depth'] === undefined ? {} : { depth: Number(options['--depth']) };
+      const repoOpen = command === 'repos' && args[0] === 'open', repoPack = command === 'repos' && args[0] === 'pack';
+      if (options['--role'] !== undefined && !repoOpen && !repoPack) fail('INVALID_INPUT', '--role applies only to repos open and repos pack');
+      if ((options['--budget'] !== undefined || options['--seed']) && !repoPack) fail('INVALID_INPUT', '--budget and --seed apply only to repos pack');
+      if (options['--budget'] !== undefined && !/^[0-9]+$/.test(options['--budget'])) fail('INVALID_INPUT', '--budget takes a whole number of bytes');
+      const role = options['--role'] === undefined ? {} : { role: options['--role'] };
       if (command === 'mounts') {
         if (args.length === 0) result = await execute(selection, 'list_mounts');
         else if (mountAdd && args.length === 3) result = await execute(selection, 'add_mount', { name: args[1], source: args[2],
@@ -118,7 +124,9 @@ try {
         else if (args[0] === 'locate' && args.length === 3) result = await execute(selection, 'locate_repo', { repository: args[1], path: args[2] });
         else if (args[0] === 'clone' && [2, 3].includes(args.length)) result = await execute(selection, 'clone_repo', { repository: args[1], ...(args[2] ? { path: args[2] } : {}) });
         else if (args[0] === 'sync' && args.length === 1) result = await execute(selection, 'sync_repos');
-        else if (args[0] === 'open' && [2, 3].includes(args.length)) result = await execute(selection, 'open_repo', { repository: args[1], ...(args[2] === undefined ? {} : { path: args[2] }) });
+        else if (repoOpen && [2, 3].includes(args.length)) result = await execute(selection, 'open_repo', { repository: args[1], ...(args[2] === undefined ? {} : { path: args[2] }), ...role });
+        else if (repoPack && args.length === 3) result = await execute(selection, 'context_pack', { repository: args[1], pack: args[2], ...role,
+          ...(options['--budget'] === undefined ? {} : { budget: Number(options['--budget']) }), seed: Boolean(options['--seed']) });
         else if (args[0] === 'which' && [1, 2].includes(args.length)) result = await execute(selection, 'which_repo', { path: resolve(args[1] ?? process.cwd()) });
         else if (args[0] === 'scan' && args.length === 2) result = await execute(selection, 'scan_repos', { directory: args[1], ...depth });
         else if (args[0] === 'setup' && args.length === 1) {
