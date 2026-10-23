@@ -16,7 +16,7 @@ try {
   const http = options['--http'] === undefined ? undefined : httpOptions(options, process.env);
   if (!http && ['--host', '--public-host', '--allow-origin', '--max-sessions', '--session-idle'].some(name => name in options)) fail('INVALID_INPUT', 'HTTP options require --http. ' + usage);
   const selection = { ...await selectRoot(options['--root'] || process.env.CONTEXT_KIT_ROOT),
-    allowWrite: Boolean(options['--allow-write']), source: 'mcp' };
+    allowWrite: Boolean(options['--allow-write']), source: 'mcp', transport: http ? 'http' : 'stdio' };
   const create = await serverFactory(selection, { skillPrompts: !options['--no-skill-prompts'] });
   if (http) await serveHttp(create, http);
   else await create().connect(new StdioServerTransport());

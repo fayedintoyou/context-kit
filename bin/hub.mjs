@@ -2,6 +2,7 @@
 import { initWorkspace, selectRoot, KIT_ACTOR } from '../lib/workspace.mjs';
 import { installAgents, agentStatus, uninstallAgents, setupWorkspace } from '../lib/install.mjs';
 import { execute } from '../lib/operations.mjs';
+import { resolve } from 'node:path';
 import { parseArgs } from '../lib/arguments.mjs';
 import { fail, errorData } from '../lib/files.mjs';
 
@@ -22,6 +23,7 @@ const help = `Usage: context-kit [--root <directory>] <command>        (context-
   capture <hub-id> <title> [--by <actor>]   (UTF-8 body on stdin)
   repos add <hub-id> [<upstream>] [--path <checkout>] [--alias a,b] [--title <t>] [--concept <id>] [--description <d>]
   repos | repos locate <repo> <path> | repos clone <repo> [<path>] | repos scan <directory> [--depth <n>] | repos sync
+  repos which [<path>]   (which registered repository the innermost checkout at a path, default here, belongs to)
   repos setup [--scan <directory>]... [--depth <n>] [--clone a,b] [--ask]   (scan, then clone only what is named or answered)
   mounts | mounts add <name> <source> [--ref <ref>] [--path <dir>] | mounts fetch [<name>] | mounts remove <name>
   mounts upgrade <name> [--to <rev>] [--check]   (rev: a branch, tag or full commit)
@@ -112,6 +114,7 @@ try {
         else if (args[0] === 'locate' && args.length === 3) result = await execute(selection, 'locate_repo', { repository: args[1], path: args[2] });
         else if (args[0] === 'clone' && [2, 3].includes(args.length)) result = await execute(selection, 'clone_repo', { repository: args[1], ...(args[2] ? { path: args[2] } : {}) });
         else if (args[0] === 'sync' && args.length === 1) result = await execute(selection, 'sync_repos');
+        else if (args[0] === 'which' && [1, 2].includes(args.length)) result = await execute(selection, 'which_repo', { path: resolve(args[1] ?? process.cwd()) });
         else if (args[0] === 'scan' && args.length === 2) result = await execute(selection, 'scan_repos', { directory: args[1], ...depth });
         else if (args[0] === 'setup' && args.length === 1) {
           result = await execute(selection, 'setup_repos', { scan: options['--scan'] ?? [], clone: list(options['--clone']) ?? [], ask: Boolean(options['--ask']), ...depth });
