@@ -140,12 +140,15 @@ A declared `status` says what the map's author can show:
       fixed_by: one-popup          # issue only, optional: a node declared fixed
 ```
 
-- `evidence` lists at least one item: a repository path (relative to the root,
-  without `.` or `..` segments; it must exist, and is looked up without
-  following symlinks, so it can't name anything outside the repository; a
-  symlink on its path, or a directory on it replaced while it is checked, gives
-  one `evidence_missing` message that never depends on what is outside), a pull
-  request as `#<n>`, or an `https://` link. Anything else is `evidence_missing`.
+- `evidence` lists at least one item: a file tracked in the repository's git
+  index (its path relative to the root, compared in Unicode NFC; not a symlink
+  entry, directory or submodule), a pull request as `#<n>`, or an `https://`
+  link. Anything else is `evidence_missing`. A path that fails always reads
+  "… is not a file tracked in the repository": untracked, ignored, absolute,
+  with `.` or `..` segments, or no git repository at all. Paths are looked up
+  only in the index (`git ls-files -z --stage`, with `GIT_*` variables, global
+  and system config, fsmonitor, hooks and the untracked cache off), never on
+  disk, so add or commit evidence before declaring it.
 - `fixed_by` names the node that shows the fix, which must declare `fixed`
   (otherwise `fix_target`). The diagram draws a dashed "with the fix" edge
   between them, and the fix counts as reached through it.
@@ -186,7 +189,7 @@ each node ID to `{ declared?, derived }` (see Status).
 | `uncited_state` | error | A `state` cites nothing (start, choice and end nodes may) |
 | `unknown_citation` | error | A citation, or a scope entry, names no behavior |
 | `ambiguous_citation` | error | A citation names more than one behavior (a requirement and a scenario, or two scenarios, sharing a name), listing them |
-| `evidence_missing` | error | A declared status's evidence item is a path that doesn't exist, isn't relative to the root, has `.` or `..` segments or goes through a symlink, or is neither `#<n>` nor an `https://` link |
+| `evidence_missing` | error | A declared status's evidence item is a path that is not a regular file tracked in the repository's git index, or is neither `#<n>` nor an `https://` link |
 | `fix_target` | error | `fixed_by` names no node of the map, or a node not declared `fixed` |
 | `label` | error | A node label (or an issue's `finder`, up to 40) over 70 characters or a `when` over 50, or a token that reads as code or spec language: a backtick, an underscore, an inner capital (`unreadCount`, also `GitHub` unless in `vocabulary`), a file path, `::`, `()`, `=>`, `==`, diagram or web markup (`<`, `>`, `{`, `}`, `%%`, `:::`, `->`, `[[`, `]]`), a spec ID such as `AUTH-UI-001`, or SHALL, MUST, WHEN, THEN |
 | `uncovered` | warning | A scenario in scope that no element cites, directly or through its requirement, or a `lid` entry in scope that no element cites |

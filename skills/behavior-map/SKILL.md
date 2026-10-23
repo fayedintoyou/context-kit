@@ -75,8 +75,10 @@ missing a behavior (say so to the user) or the state isn't part of this journey.
 ## 5. Declare status only with evidence
 
 A node may carry a `status`, and only when there is evidence a reader can
-follow: a repository path (a model file, a test, a review record), a pull
-request as `#<n>`, or an `https://` link. Each status needs at least one.
+follow: a file tracked in the repository (a model file, a test, a review
+record), a pull request as `#<n>`, or an `https://` link. Each status needs at
+least one. A path counts only once git tracks it: commit the evidence (or at
+least `git add` it) before declaring the status.
 
 - **`issue`** only from a real finding: model checker output, a failing test,
   a review record or a user's report. Say who found it in `found_by`
@@ -101,8 +103,8 @@ telling the user about.
 
 Write `maps/<name>.md` and run `maps check <name>` (MCP `check_map`). Fix every
 error and run it again; a map with errors can't be rendered. An
-`evidence_missing` error means an evidence path doesn't exist in the repository
-(or isn't a plain path inside it), and `fix_target` that `fixed_by` names no
+`evidence_missing` error means an evidence path is not a file git tracks in the
+repository (add or commit it, or fix the path), and `fix_target` that `fixed_by` names no
 node declared `fixed`: fix the map, never the evidence to suit it. Then decide each
 `uncovered` warning: add a state for that scenario, cite it from an existing one,
 or say in the map's prose why it is out of this journey (or narrow `scope`).

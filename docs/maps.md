@@ -37,13 +37,13 @@ with `init --addons maps,...` or in `context-kit.json`. The `maps` help topic
    requirements; ID prefixes for `lid`), its nodes (`start`, `state`, `choice`, `end`) and transitions,
    labelled in the person's words, every state citing behaviors. A node may
    declare a status, `works`, `issue` or `fixed`, only with evidence: a
-   repository path, a pull request (`#<n>`) or an `https://` link. An issue says
+   file tracked in the repository's git index, a pull request (`#<n>`) or an `https://` link. An issue says
    who found it (a model checker, a test, a review, a user's report) and may name
    the state that shows its fix.
 3. **Check.** `maps check [<name>]` (MCP `check_map`) reports errors (schema,
    structure, an uncited state, a citation that names no behavior or more than
-   one, a label that reads as code or spec language, evidence that doesn't exist
-   in the repository, a fix that names no state declared fixed) and warnings (a scenario in
+   one, a label that reads as code or spec language, evidence that is not a
+   file tracked in the repository, a fix that names no state declared fixed) and warnings (a scenario in
    scope nothing covers, a citation not yet pinned or changed since it was, an
    outdated diagram). The CLI exits non-zero on an error,
    and with `--strict` on a warning too, so `context-kit maps check --strict` can
