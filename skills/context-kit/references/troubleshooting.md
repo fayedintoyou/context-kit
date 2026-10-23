@@ -24,6 +24,7 @@
 | `PIN_UNSAFE` | `maps pin` would have changed more than the map's pins, or left it unparseable; nothing was written. Remove the `pins` key and pin again |
 | `DUPLICATE_REQUIREMENT` | A spec repeats a requirement name |
 | `INVALID_REPOSITORY` | A Repository concept lacks a git `resource`, has bad `aliases`, or shares an alias (see `repositories`) |
+| `INVALID_CONTEXT` | A Repository concept's `context` breaks its closed schema or bounds, or (in `validate`) names a concept or skill that doesn't resolve; each problem names the concept and key path (see docs/format.md) |
 | `UNKNOWN_REPOSITORY`, `AMBIGUOUS_REPOSITORY` | No repository, or more than one, has that name; use `repos` and the id |
 | `NOT_A_CHECKOUT`, `REMOTE_MISMATCH` | `repos locate` needs the top of a git checkout whose remote is the upstream |
 | `REPOSITORY_EXISTS`, `CONCEPT_EXISTS` | `repos add` found the upstream, an alias or the concept already in use |
