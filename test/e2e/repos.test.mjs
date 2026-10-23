@@ -1410,6 +1410,7 @@ test('repos clone keeps the user\'s git config file (insteadOf, credential helpe
   assert.equal(await readFile(join(destination, 'README.md'), 'utf8'), 'garden\n');
   // The other checkout is untouched: no clone into it and no new remote.
   assert.equal((await exec('git', ['-C', other, 'remote'], { env: f.env })).stdout.trim(), 'origin');
+});
 
 // spec: remote-access / Local clients unchanged
 test('a stdio client gets list_repos paths and list_hubs root as before, with no machine label', async t => {
